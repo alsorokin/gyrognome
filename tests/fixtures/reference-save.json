@@ -1,0 +1,22 @@
+{
+  "Traits": {
+    "Name": "Reference Hero",
+    "Race": "Gyrognome",
+    "Class": "Robot Monk",
+    "Level": 2
+  },
+  "dna": [0.1, 0.2, 0.3, 1],
+  "seed": [0.4, 0.5, 0.6, 2],
+  "Stats": {"STR": 10},
+  "Inventory": [["Gold", 0]],
+  "Spells": [],
+  "Quests": [],
+  "ExpBar": {"position": 0, "max": 1269},
+  "TaskBar": {"position": 0, "max": 1000},
+  "online": {
+    "realm": "Alpaquil",
+    "host": "https://example.invalid/?",
+    "passkey": 4242
+  },
+  "unrecognized-future-field": {"retained": true}
+}

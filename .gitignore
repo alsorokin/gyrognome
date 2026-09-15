@@ -3,3 +3,6 @@
 
 # Local MCP overrides may contain machine-specific executable paths.
 /.mcp.json
+
+# Rust build output.
+/target/

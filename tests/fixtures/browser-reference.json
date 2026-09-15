@@ -1,0 +1,30 @@
+{
+  "source": {
+    "client": "https://progressquest.com/play/main.js",
+    "revision": "6",
+    "observed_with": "Playwright MCP",
+    "recorded_on": "2026-09-15"
+  },
+  "browser_flow": {
+    "creation": {
+      "operation": "create",
+      "method": "GET",
+      "fields": ["cmd", "name", "realm", "rev"]
+    },
+    "initial_report": {
+      "operation": "progress report",
+      "trigger": "s",
+      "method": "GET",
+      "fields": ["cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "p", "m"]
+    }
+  },
+  "prng": {
+    "state": [0.1, 0.2, 0.3, 1.0],
+    "uint32_values": [3865470567.5, 3436183000.0, 3006895434.0, 432425023.0, 268118227.0]
+  },
+  "validator": {
+    "input": "cmd=b&t=l",
+    "synthetic_salt": 4242,
+    "result": -2052713391
+  }
+}
