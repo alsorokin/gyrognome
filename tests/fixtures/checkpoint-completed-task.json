@@ -1,0 +1,247 @@
+{
+  "_comment": "Disposable single-player browser session captured the same way. TaskBar was incremented to exactly its max (advancing the active task to completion) and Timer1Timer() was called once to run the browser's completion dispatch (Dequeue, XP/quest/plot gating). This transition happens to consume no random state (the completed task was not a 'kill' task, and the next queued item is a plain narrative task), so it is a checkpoint for queue/task-count/elapsed/plot bookkeeping. Exact-match replay is wired once task 3.1 ports completion dispatch.",
+  "ruleset": {
+    "revision": "6",
+    "content_sha256": "cc76f256057d6ddbf7010f1b94e59913b935b9980138ed5e800bdd1e5ff5ec4e"
+  },
+  "advancement_ms": [
+    9451
+  ],
+  "initial": {
+    "Traits": {
+      "Name": "Gyrognome Checkpoint Subject",
+      "Race": "Gyrognome",
+      "Class": "Inner Mason",
+      "Level": 1
+    },
+    "dna": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "seed": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "birthday": "Tue Sep 15 2026 13:00:16 GMT+0400 (Armenia Standard Time)",
+    "birthstamp": 1789462816969,
+    "Stats": {
+      "seed": [
+        0.8798975336831063,
+        0.6199691942892969,
+        0.5015389770269394,
+        1
+      ],
+      "STR": 9,
+      "best": "CON",
+      "CON": 13,
+      "DEX": 10,
+      "INT": 11,
+      "WIS": 11,
+      "CHA": 9,
+      "HP Max": 2,
+      "MP Max": 5
+    },
+    "beststat": "CON 13",
+    "task": "",
+    "tasks": 1,
+    "elapsed": 2,
+    "bestequip": "Sharp Rock",
+    "Equips": {
+      "Weapon": "Sharp Rock",
+      "Shield": "",
+      "Helm": "",
+      "Hauberk": "-3 Burlap",
+      "Brassairts": "",
+      "Vambraces": "",
+      "Gauntlets": "",
+      "Gambeson": "",
+      "Cuisses": "",
+      "Greaves": "",
+      "Sollerets": ""
+    },
+    "Inventory": [
+      [
+        "Gold",
+        0
+      ]
+    ],
+    "Spells": [],
+    "act": 0,
+    "bestplot": "Prologue",
+    "Quests": [],
+    "questmonster": "",
+    "kill": "Experiencing an enigmatic and foreboding night vision...",
+    "ExpBar": {
+      "position": 0,
+      "max": 1269,
+      "percent": 0,
+      "remaining": 1269,
+      "time": "21 minutes",
+      "hint": "1269 XP needed for next level"
+    },
+    "EncumBar": {
+      "position": 0,
+      "max": 19,
+      "percent": 0,
+      "remaining": 19,
+      "time": "19 seconds",
+      "hint": "0/19 cubits"
+    },
+    "PlotBar": {
+      "position": 0,
+      "max": 26,
+      "percent": 0,
+      "remaining": 26,
+      "time": "26 seconds",
+      "hint": "26 seconds remaining"
+    },
+    "QuestBar": {
+      "position": 0,
+      "max": 1,
+      "percent": 0,
+      "remaining": 1,
+      "time": "1 seconds",
+      "hint": "0% complete"
+    },
+    "TaskBar": {
+      "position": 549,
+      "max": 10000,
+      "percent": 5,
+      "remaining": 9451,
+      "time": "2 hours",
+      "hint": "5%"
+    },
+    "queue": [
+      "task|6|Much is revealed about that wise old bastard you'd underestimated",
+      "task|6|A shocking series of events leaves you alone and bewildered, but resolute",
+      "task|4|Drawing upon an unrealized reserve of determination, you set out on a long and dangerous journey",
+      "plot|2|Loading"
+    ],
+    "date": "Tue Sep 15 2026 13:00:17 GMT+0400 (Armenia Standard Time)",
+    "stamp": 1789462817628,
+    "saveName": "Gyrognome Checkpoint Subject",
+    "bestspell": ""
+  },
+  "expected": {
+    "Traits": {
+      "Name": "Gyrognome Checkpoint Subject",
+      "Race": "Gyrognome",
+      "Class": "Inner Mason",
+      "Level": 1
+    },
+    "dna": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "seed": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "birthday": "Tue Sep 15 2026 13:00:16 GMT+0400 (Armenia Standard Time)",
+    "birthstamp": 1789462816969,
+    "Stats": {
+      "seed": [
+        0.8798975336831063,
+        0.6199691942892969,
+        0.5015389770269394,
+        1
+      ],
+      "STR": 9,
+      "best": "CON",
+      "CON": 13,
+      "DEX": 10,
+      "INT": 11,
+      "WIS": 11,
+      "CHA": 9,
+      "HP Max": 2,
+      "MP Max": 5
+    },
+    "beststat": "CON 13",
+    "task": "",
+    "tasks": 2,
+    "elapsed": 12,
+    "bestequip": "Sharp Rock",
+    "Equips": {
+      "Weapon": "Sharp Rock",
+      "Shield": "",
+      "Helm": "",
+      "Hauberk": "-3 Burlap",
+      "Brassairts": "",
+      "Vambraces": "",
+      "Gauntlets": "",
+      "Gambeson": "",
+      "Cuisses": "",
+      "Greaves": "",
+      "Sollerets": ""
+    },
+    "Inventory": [
+      [
+        "Gold",
+        0
+      ]
+    ],
+    "Spells": [],
+    "act": 0,
+    "bestplot": "Prologue",
+    "Quests": [],
+    "questmonster": "",
+    "kill": "Much is revealed about that wise old bastard you'd underestimated...",
+    "ExpBar": {
+      "position": 0,
+      "max": 1269,
+      "percent": 0,
+      "remaining": 1269,
+      "time": "21 minutes",
+      "hint": "1269 XP needed for next level"
+    },
+    "EncumBar": {
+      "position": 0,
+      "max": 19,
+      "percent": 0,
+      "remaining": 19,
+      "time": "19 seconds",
+      "hint": "0/19 cubits"
+    },
+    "PlotBar": {
+      "position": 10,
+      "max": 26,
+      "percent": 38,
+      "remaining": 16,
+      "time": "16 seconds",
+      "hint": "16 seconds remaining"
+    },
+    "QuestBar": {
+      "position": 0,
+      "max": 1,
+      "percent": 0,
+      "remaining": 1,
+      "time": "1 seconds",
+      "hint": "0% complete"
+    },
+    "TaskBar": {
+      "position": 0,
+      "max": 6000,
+      "percent": 0,
+      "remaining": 6000,
+      "time": "100 minutes",
+      "hint": "0%"
+    },
+    "queue": [
+      "task|6|A shocking series of events leaves you alone and bewildered, but resolute",
+      "task|4|Drawing upon an unrealized reserve of determination, you set out on a long and dangerous journey",
+      "plot|2|Loading"
+    ],
+    "date": "Tue Sep 15 2026 13:00:17 GMT+0400 (Armenia Standard Time)",
+    "stamp": 1789462817628,
+    "saveName": "Gyrognome Checkpoint Subject",
+    "bestspell": ""
+  }
+}

@@ -20,6 +20,26 @@ fn imports_complete_ordered_canonical_state() {
 }
 
 #[test]
+fn imports_a_fresh_browser_character_missing_quest_fields() {
+    // A brand-new browser character never assigns `questmonsterindex` or
+    // `bestquest` until a monster-kill quest exists or a quest completes, so
+    // the browser's `JSON.stringify` omits them entirely (observed via a
+    // disposable Playwright session; see
+    // tests/fixtures/checkpoint-incomplete-advancement.json). Importing must
+    // default them rather than reject the save.
+    let mut document: Value =
+        serde_json::from_str(include_str!("fixtures/reference-save.json")).unwrap();
+    document
+        .as_object_mut()
+        .unwrap()
+        .remove("questmonsterindex");
+    document.as_object_mut().unwrap().remove("bestquest");
+    let character = import_text(&STANDARD.encode(serde_json::to_vec(&document).unwrap())).unwrap();
+    assert_eq!(character.activity.questmonsterindex, 0);
+    assert_eq!(character.bestquest, "");
+}
+
+#[test]
 fn imports_fractional_browser_progress_positions() {
     let mut document: Value =
         serde_json::from_str(include_str!("fixtures/reference-save.json")).unwrap();

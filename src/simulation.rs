@@ -9,22 +9,8 @@
 
 use thiserror::Error;
 
+use crate::ruleset::Ruleset;
 use crate::state::{Character, ProgressBarKind};
-
-/// The browser Progress Quest ruleset (task selection, combat, rewards,
-/// equipment, spells, quests, plots, and level-up tables).
-///
-/// This is currently a provenance-only placeholder; the bundled rule tables
-/// are added in a later task. Simulation already requires callers to select a
-/// ruleset explicitly so a later revision cannot silently change behavior for
-/// an existing run.
-#[derive(Debug, Clone, Default)]
-pub struct Ruleset {
-    /// Where the ruleset data was captured from (e.g. the browser client URL).
-    pub source: String,
-    /// The revision identifier recorded alongside the captured data.
-    pub revision: String,
-}
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SimulationError {}

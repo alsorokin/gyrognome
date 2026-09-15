@@ -6,13 +6,13 @@
 
 ## 2. Ruleset and conformance evidence
 
-- [ ] 2.1 Capture the browser rule tables required for task selection, combat, rewards, equipment, spells, quests, plots, and level-ups as ordered, versioned bundled data with source provenance; verify the selected ruleset is immutable for a simulation run.
-- [ ] 2.2 Add a safe synthetic checkpoint schema recording initial canonical state, ruleset revision, elapsed-time inputs, expected canonical state, and expected Alea continuation; verify fixture-safety checks reject prohibited player or leaderboard data.
-- [ ] 2.3 Record disposable-browser-derived checkpoints for incomplete advancement and a completed task; verify replay tests compare full canonical state and Alea continuation exactly.
+- [x] 2.1 Capture the browser rule tables required for task selection, combat, rewards, equipment, spells, quests, plots, and level-ups as ordered, versioned bundled data with source provenance; verify the selected ruleset is immutable for a simulation run.
+- [x] 2.2 Add a safe synthetic checkpoint schema recording initial canonical state, ruleset revision, elapsed-time inputs, expected canonical state, and expected Alea continuation; verify fixture-safety checks reject prohibited player or leaderboard data.
+- [x] 2.3 Record disposable-browser-derived checkpoints for incomplete advancement and a completed task; verify replay tests compare full canonical state and Alea continuation exactly. (Incomplete-advancement checkpoint has a full exact-replay test now. The completed-task checkpoint is captured and committed, but its exact-replay assertion is deferred to 3.1 because exact replay depends on the completion-dispatch logic that task ports; a schema/data-level test covers it in the meantime. Confirmed with user.)
 
 ## 3. Browser task-completion behavior
 
-- [ ] 3.1 Port browser task queue selection and completion dispatch in browser order; verify a completed-task checkpoint updates task count, elapsed time, activity, and random state exactly.
+- [ ] 3.1 Port browser task queue selection and completion dispatch in browser order; verify a completed-task checkpoint updates task count, elapsed time, activity, and random state exactly. (Also add the deferred exact-replay assertion for tests/fixtures/checkpoint-completed-task.json from task 2.3.)
 - [ ] 3.2 Port combat resolution and its experience, quest, and plot progress effects; verify combat checkpoints cover non-leveling and progress-bar-boundary outcomes.
 - [ ] 3.3 Port level-up, attribute, spell, equipment, inventory, quest, and plot/act reward paths using the selected ruleset; verify each behavior family has a browser-derived checkpoint with an exact state/RNG match.
 

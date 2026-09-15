@@ -274,7 +274,11 @@ impl Character {
                 elapsed: integer(root, "elapsed", "elapsed")?,
                 kill: string(root, "kill", "kill")?,
                 questmonster: string(root, "questmonster", "questmonster")?,
-                questmonsterindex: integer(root, "questmonsterindex", "questmonsterindex")?,
+                questmonsterindex: integer_or_default(
+                    root,
+                    "questmonsterindex",
+                    "questmonsterindex",
+                )?,
             },
             bestequip: string(root, "bestequip", "bestequip")?,
             equipment: Equipment {
@@ -321,7 +325,7 @@ impl Character {
                 .transpose()?,
             save_name: string(root, "saveName", "saveName")?,
             bestspell: string(root, "bestspell", "bestspell")?,
-            bestquest: string(root, "bestquest", "bestquest")?,
+            bestquest: string_or_default(root, "bestquest", "bestquest")?,
             document,
         })
     }
@@ -436,11 +440,44 @@ fn string(object: &Map<String, Value>, key: &str, field: &str) -> Result<String,
         .map(str::to_owned)
         .ok_or_else(|| SaveError::invalid(field))
 }
+/// Like [`string`], but defaults to `""` when the key is absent, matching a
+/// browser field the client never assigned for a fresh character (e.g.
+/// `game.bestquest` is unset until the first quest completes, and `undefined`
+/// is omitted by `JSON.stringify`). An explicitly present but invalid value
+/// is still rejected.
+fn string_or_default(
+    object: &Map<String, Value>,
+    key: &str,
+    field: &str,
+) -> Result<String, SaveError> {
+    match object.get(key) {
+        None => Ok(String::new()),
+        Some(value) => value
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| SaveError::invalid(field)),
+    }
+}
 fn integer(object: &Map<String, Value>, key: &str, field: &str) -> Result<u64, SaveError> {
     object
         .get(key)
         .and_then(Value::as_u64)
         .ok_or_else(|| SaveError::invalid(field))
+}
+/// Like [`integer`], but defaults to `0` when the key is absent, matching the
+/// browser client dropping a field it never assigned (e.g. `undefined` is
+/// omitted by `JSON.stringify`, and `StrToIntDef`/`GetI` default to `0` when
+/// reading it back). An explicitly present but invalid value is still
+/// rejected.
+fn integer_or_default(
+    object: &Map<String, Value>,
+    key: &str,
+    field: &str,
+) -> Result<u64, SaveError> {
+    match object.get(key) {
+        None => Ok(0),
+        Some(value) => value.as_u64().ok_or_else(|| SaveError::invalid(field)),
+    }
 }
 fn positive_integer(object: &Map<String, Value>, key: &str, field: &str) -> Result<u64, SaveError> {
     integer(object, key, field).and_then(|value| {
