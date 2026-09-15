@@ -1,0 +1,5 @@
+# Progress Quest saves contain the server-issued leaderboard passkey.
+/saves/
+
+# Local MCP overrides may contain machine-specific executable paths.
+/.mcp.json
