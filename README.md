@@ -140,6 +140,29 @@ fresh worker; it resumes only from the last successfully persisted canonical
 state. Correct an unsupported simulation state before recovering, or it will
 fail again while preserving that state.
 
+### Terminal dashboard
+
+Observe one registered character in a local, full-screen dashboard:
+
+```sh
+gyrognome dashboard <character-id>
+```
+
+The dashboard reads the persisted canonical state and `systemctl --user`
+status every second by default; change that bounded interval with
+`--refresh-ms` (100 through 60000). It never advances simulation, acquires
+the worker lock, writes state, makes HTTP requests, or sends leaderboard data.
+It displays only the credential-safe canonical fields, never browser passkeys,
+the retained original save, or unrecognized source fields.
+
+Press `q` to quit, `r` to refresh, `s` to start, `x` to stop, or `c` to
+recover the selected service. Start, stop, and recover require `Enter`
+confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit through the same
+terminal-restoration path. The same logged-in-user systemd prerequisites
+described above apply to service status and lifecycle actions. If the user
+service manager is unavailable or an action fails, the dashboard preserves the
+last successfully displayed character state and shows the actionable error.
+
 ## Reference fixtures
 
 `tests/fixtures/browser-reference.json` records the observed browser client

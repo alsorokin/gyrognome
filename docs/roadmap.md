@@ -40,22 +40,21 @@ per-character process locking, and `systemd --user` lifecycle control. Managed
 characters progress only while their local runtime is active; stopped time does
 not catch up. The runtime remains local-only and does not report to leaderboards.
 
-## Next: Terminal Dashboard
+## Completed: Terminal Dashboard
 
-Add a terminal dashboard that consumes credential-safe canonical state from the
-local runtime:
+The `terminal-dashboard` capability provides a credential-safe terminal view
+of one managed character:
 
-- Display live identity, activity, progress bars, inventory, spells, quests,
-  plots, and runtime/service status.
-- Refresh persisted state without owning character locks or advancing
+- Displays live identity, human-readable activity, progress bars, equipped
+  items, inventory, spells, plots, quests, and runtime/service status.
+- Refreshes persisted state without owning character locks or advancing
   simulation.
-- Provide lifecycle actions through the existing runtime controls.
-- Surface service and unsupported-simulation failures clearly.
-- Keep browser passkeys, raw save documents, HTTP transport, and leaderboard
+- Provides confirmed lifecycle actions through the existing runtime controls.
+- Restores the terminal on quit, terminal failure, or interrupt.
+- Keeps browser passkeys, raw save documents, HTTP transport, and leaderboard
   reporting out of scope.
 
 ## Planned Sequence
 
-1. Add the terminal dashboard.
-2. Reassess timing and simulation conformance.
-3. Only when that reassessment is proven, add leaderboard reporting.
+1. Reassess timing and simulation conformance.
+2. Only when that reassessment is proven, add leaderboard reporting.

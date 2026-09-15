@@ -1,5 +1,6 @@
 pub mod checkpoint;
 pub mod cli;
+pub mod dashboard;
 pub mod fixtures;
 pub mod lifecycle;
 pub mod protocol;

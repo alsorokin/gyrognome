@@ -10,6 +10,7 @@ use serde_json::to_string_pretty;
 use thiserror::Error;
 
 use crate::{
+    dashboard::{self, DashboardProvider, LocalProvider},
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
     runtime::{CharacterId, CharacterIdentity, StorageError, Store, Worker, WorkerError},
     save::{self, SaveError},
@@ -74,6 +75,13 @@ enum Command {
     },
     /// Clear a failed user service state and start the managed character again.
     Recover { id: String },
+    /// Open an interactive credential-safe dashboard for a managed character.
+    Dashboard {
+        id: String,
+        /// Milliseconds between persisted-state refreshes.
+        #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(100..=60_000))]
+        refresh_ms: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -90,6 +98,8 @@ pub enum CliError {
     Json(#[from] serde_json::Error),
     #[error("could not install worker shutdown handler: {0}")]
     Signal(#[from] std::io::Error),
+    #[error(transparent)]
+    Dashboard(#[from] dashboard::DashboardError),
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -183,6 +193,13 @@ pub fn run() -> Result<(), CliError> {
             let id = parse_id(&id)?;
             Lifecycle::new(&store, SystemctlRunner).recover(&id)?;
             println!("Recovered and started managed character {id}.");
+        }
+        Command::Dashboard { id, refresh_ms } => {
+            let id = parse_id(&id)?;
+            let provider = LocalProvider::open_default()?;
+            provider.refresh(&id)?;
+            let stop = shutdown_flag()?;
+            dashboard::run(&provider, id, Duration::from_millis(refresh_ms), &stop)?;
         }
     }
     Ok(())

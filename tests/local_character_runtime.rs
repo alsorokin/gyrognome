@@ -102,6 +102,17 @@ fn cli_reports_missing_managed_identifiers_without_sensitive_data() {
 }
 
 #[test]
+fn dashboard_rejects_missing_identifiers_before_entering_terminal_mode() {
+    let directory = TestDirectory::new("dashboard-missing");
+    let missing = directory.command(&["dashboard", "00000000-0000-4000-8000-000000000000"]);
+    assert!(!missing.status.success());
+    assert!(stderr(&missing).contains("was not found"));
+    let output = [stdout(&missing), stderr(&missing)].join("");
+    assert!(!output.contains("\u{1b}[?1049h"));
+    assert!(!output.contains("4242"));
+}
+
+#[test]
 fn stopping_a_worker_keeps_its_final_persisted_state_readable() {
     let directory = TestDirectory::new("stop");
     let character =
