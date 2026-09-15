@@ -3,4 +3,5 @@ pub mod fixtures;
 pub mod protocol;
 pub mod rng;
 pub mod save;
+pub mod simulation;
 pub mod state;

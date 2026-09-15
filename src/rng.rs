@@ -1,4 +1,7 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct AleaState(pub [f64; 4]);
 
 #[derive(Debug, Clone)]

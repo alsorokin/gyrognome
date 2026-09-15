@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 
+use crate::rng::AleaState;
 use crate::save::SaveError;
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,10 +55,6 @@ pub struct Traits {
     #[serde(rename = "Level")]
     pub level: u64,
 }
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(transparent)]
-pub struct AleaState(pub [f64; 4]);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Attributes {
@@ -157,6 +154,81 @@ pub struct ProgressBar {
     pub remaining: u64,
     pub time: String,
     pub hint: String,
+}
+
+/// Identifies which of the five browser progress bars a `ProgressBar` value
+/// represents, since each bar renders its `hint` from a different template
+/// (`FormCreate` in the browser client wires up one `ProgressBar(id, tmpl)`
+/// per bar).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgressBarKind {
+    Experience,
+    Encumbrance,
+    Plot,
+    Quest,
+    Task,
+}
+
+impl ProgressBar {
+    /// Ports the browser `ProgressBar.reposition`: clamps to `[0, max]` and
+    /// recomputes the derived percent/remaining/time/hint fields.
+    pub fn reposition(&mut self, kind: ProgressBarKind, new_position: f64) {
+        let max = self.max as f64;
+        self.position = new_position.clamp(0.0, max);
+        let remaining = (max - self.position).floor();
+        self.percent = if max > 0.0 {
+            ((100.0 * self.position) / max).floor() as u64
+        } else {
+            0
+        };
+        self.remaining = remaining as u64;
+        self.time = rough_time(remaining);
+        self.hint = kind.render_hint(self);
+    }
+
+    /// Ports the browser `ProgressBar.increment`.
+    pub fn increment(&mut self, kind: ProgressBarKind, delta: f64) {
+        self.reposition(kind, self.position + delta);
+    }
+
+    /// Ports the browser `ProgressBar.done`.
+    pub fn done(&self) -> bool {
+        self.position >= self.max as f64
+    }
+}
+
+impl ProgressBarKind {
+    fn render_hint(self, bar: &ProgressBar) -> String {
+        match self {
+            ProgressBarKind::Experience => format!("{} XP needed for next level", bar.remaining),
+            ProgressBarKind::Encumbrance => format!("{}/{} cubits", bar.position, bar.max),
+            ProgressBarKind::Plot => format!("{} remaining", bar.time),
+            ProgressBarKind::Quest => format!("{}% complete", bar.percent),
+            ProgressBarKind::Task => format!("{}%", bar.percent),
+        }
+    }
+}
+
+/// Ports the browser `RoughTime`, which buckets a duration (in seconds) into a
+/// human-readable unit using floor division per bucket.
+fn rough_time(seconds: f64) -> String {
+    let seconds = seconds.max(0.0);
+    if seconds < 120.0 {
+        format!("{} seconds", seconds.floor())
+    } else if seconds < 60.0 * 120.0 {
+        format!("{} minutes", (seconds / 60.0).floor())
+    } else if seconds < 60.0 * 60.0 * 48.0 {
+        format!("{} hours", (seconds / 3600.0).floor())
+    } else if seconds < 60.0 * 60.0 * 24.0 * 60.0 {
+        format!("{} days", (seconds / (3600.0 * 24.0)).floor())
+    } else if seconds < 60.0 * 60.0 * 24.0 * 30.0 * 24.0 {
+        format!("{} months", (seconds / (3600.0 * 24.0 * 30.0)).floor())
+    } else {
+        format!(
+            "{} years",
+            (seconds / (3600.0 * 24.0 * 30.0 * 12.0)).floor()
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
