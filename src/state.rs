@@ -170,6 +170,14 @@ pub enum ProgressBarKind {
 }
 
 impl ProgressBar {
+    /// Ports the browser `ProgressBar.reset`: assigns a new `max` and
+    /// repositions (defaulting the position to `0`, matching `newposition ||
+    /// 0` in the browser client).
+    pub fn reset(&mut self, kind: ProgressBarKind, new_max: u64, new_position: f64) {
+        self.max = new_max;
+        self.reposition(kind, new_position);
+    }
+
     /// Ports the browser `ProgressBar.reposition`: clamps to `[0, max]` and
     /// recomputes the derived percent/remaining/time/hint fields.
     pub fn reposition(&mut self, kind: ProgressBarKind, new_position: f64) {

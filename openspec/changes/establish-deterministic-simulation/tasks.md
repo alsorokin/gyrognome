@@ -12,8 +12,8 @@
 
 ## 3. Browser task-completion behavior
 
-- [ ] 3.1 Port browser task queue selection and completion dispatch in browser order; verify a completed-task checkpoint updates task count, elapsed time, activity, and random state exactly. (Also add the deferred exact-replay assertion for tests/fixtures/checkpoint-completed-task.json from task 2.3.)
-- [ ] 3.2 Port combat resolution and its experience, quest, and plot progress effects; verify combat checkpoints cover non-leveling and progress-bar-boundary outcomes.
+- [x] 3.1 Port browser task queue selection and completion dispatch in browser order; verify a completed-task checkpoint updates task count, elapsed time, activity, and random state exactly. (Ports `Timer1Timer`'s completion bookkeeping — task count, elapsed time, the "gain"-gated experience/quest/plot advancement — and `Dequeue`'s plain task/plot queue-selection path, exactly reproducing the deferred checkpoint-completed-task.json fixture from 2.3 including its plot-bar advancement. Branches that require combat resolution or reward mechanics not yet ported — kill-task loot, monster-task selection, buying/market/selling, level-up, quest completion, interplot cinematics, and act completion — report `SimulationError::Unsupported` rather than fabricating results; each is covered by tasks 3.2/3.3.)
+- [ ] 3.2 Port combat resolution and its experience, quest, and plot progress effects; verify combat checkpoints cover non-leveling and progress-bar-boundary outcomes. (Also covers monster-task selection, which `Dequeue` needs to pick the next "kill" task.)
 - [ ] 3.3 Port level-up, attribute, spell, equipment, inventory, quest, and plot/act reward paths using the selected ruleset; verify each behavior family has a browser-derived checkpoint with an exact state/RNG match.
 
 ## 4. Integration and documentation

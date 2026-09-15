@@ -30,21 +30,28 @@ fn replays_the_incomplete_advancement_checkpoint_exactly() {
 }
 
 #[test]
-fn loads_the_completed_task_checkpoint_committed_for_task_3_1() {
-    // Task-completion dispatch (queue advancement, XP/quest/plot gating) is
-    // ported in task 3.1; until then this checkpoint is only schema-checked
-    // here. Its exact-match replay assertion is added alongside that task, as
-    // described in tasks.md 3.1: "verify a completed-task checkpoint updates
-    // task count, elapsed time, activity, and random state exactly."
+fn replays_the_completed_task_checkpoint_exactly() {
+    // This checkpoint's completed task was a plain narrative task (not a
+    // "kill" task), so it only exercises task-count/elapsed bookkeeping, the
+    // plot-bar "gain || !act" advancement, and plain task-queue dequeuing —
+    // all ported in task 3.1. It does not exercise kill-task loot, monster
+    // task selection, or reward paths (tasks 3.2/3.3); those get their own
+    // checkpoints when ported.
     let checkpoint =
         checkpoint::load(Path::new("tests/fixtures/checkpoint-completed-task.json")).unwrap();
-    assert_eq!(checkpoint.advancement_ms, vec![9451]);
-    assert_eq!(checkpoint.initial.activity.tasks, 1);
-    assert_eq!(checkpoint.expected.activity.tasks, 2);
-    assert_eq!(checkpoint.expected.activity.elapsed, 12);
-    // The completed task was not a "kill" task and the next queued item does
-    // not require a random draw either, so this transition happens to leave
-    // the Alea continuation untouched; it still exercises queue/task-count/
-    // elapsed/plot bookkeeping once 3.1 lands.
-    assert_eq!(checkpoint.expected.seed.0, checkpoint.initial.seed.0);
+    assert_eq!(checkpoint.ruleset_revision, ruleset::SOURCE_REVISION);
+    assert_eq!(
+        checkpoint.ruleset_content_sha256,
+        ruleset::SOURCE_CONTENT_SHA256
+    );
+
+    let mut state = checkpoint.initial;
+    for elapsed_ms in checkpoint.advancement_ms {
+        state = simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms).unwrap();
+    }
+
+    assert_eq!(
+        to_value(&state).unwrap(),
+        to_value(&checkpoint.expected).unwrap()
+    );
 }
