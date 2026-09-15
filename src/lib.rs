@@ -1,9 +1,11 @@
 pub mod checkpoint;
 pub mod cli;
 pub mod fixtures;
+pub mod lifecycle;
 pub mod protocol;
 pub mod rng;
 pub mod ruleset;
+pub mod runtime;
 pub mod save;
 pub mod simulation;
 pub mod state;

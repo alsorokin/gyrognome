@@ -1,12 +1,12 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::rng::AleaState;
 use crate::save::SaveError;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Character {
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub document: Value,
     #[serde(rename = "Traits")]
     pub traits: Traits,
@@ -44,7 +44,7 @@ fn number(object: &Map<String, Value>, key: &str, field: &str) -> Result<f64, Sa
         .ok_or_else(|| SaveError::invalid(field))
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Traits {
     #[serde(rename = "Name")]
     pub name: String,
@@ -56,7 +56,7 @@ pub struct Traits {
     pub level: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attributes {
     pub seed: AleaState,
     #[serde(rename = "STR")]
@@ -78,7 +78,7 @@ pub struct Attributes {
     pub best: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Activity {
     pub task: String,
     pub tasks: u64,
@@ -88,7 +88,7 @@ pub struct Activity {
     pub questmonsterindex: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Equipment {
     #[serde(rename = "Weapon")]
     pub weapon: String,
@@ -114,25 +114,25 @@ pub struct Equipment {
     pub sollerets: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InventoryEntry {
     pub name: String,
     pub quantity: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Spell {
     pub name: String,
     pub rank: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Plot {
     pub act: u64,
     pub bestplot: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Progress {
     #[serde(rename = "ExpBar")]
     pub experience: ProgressBar,
@@ -146,7 +146,7 @@ pub struct Progress {
     pub task: ProgressBar,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressBar {
     pub position: f64,
     pub max: u64,
@@ -239,7 +239,7 @@ fn rough_time(seconds: f64) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnlineMetadata {
     pub realm: String,
     pub host: String,

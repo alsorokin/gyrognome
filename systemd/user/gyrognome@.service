@@ -1,0 +1,10 @@
+[Unit]
+Description=Gyrognome local runtime for character %i
+
+[Service]
+Type=exec
+ExecStart=gyrognome worker %i
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target
