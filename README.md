@@ -18,8 +18,18 @@ its offline-only Rust compatibility core.
 cargo run -- inspect /path/to/character.pqw
 ```
 
-Online character passkeys are redacted in output. `.pqw` files are bearer
-credentials for leaderboard reporting and must not be committed.
+The default output is a read-only character sheet containing traits, attributes,
+activity, progress, equipment, inventory, spells, plots, quests, and online realm
+metadata. For deterministic comparisons, request the same credential-free
+canonical state as JSON:
+
+```sh
+cargo run -- inspect /path/to/character.pqw --json
+```
+
+Online character passkeys and unrecognized raw save fields are never included in
+either inspection format. `.pqw` files are bearer credentials for leaderboard
+reporting and must not be committed.
 
 ## Reference fixtures
 

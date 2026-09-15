@@ -1,11 +1,4 @@
-# pq-compatibility-core Specification
-
-## Purpose
-
-Provide a safe, deterministic compatibility boundary between browser Progress Quest
-character data and a future Linux-native client without reporting game progress.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Browser save interchange
 
@@ -32,40 +25,6 @@ been changed.
 
 - **WHEN** the system exports a successfully imported save without modifying canonical state
 - **THEN** re-importing the export retains the imported canonical state and unrecognized JSON data
-
-### Requirement: Deterministic browser-compatible primitives
-
-The system SHALL reproduce the browser client’s Alea random-number generator state
-transitions and the integer primitives used to construct leaderboard validators.
-Given a reference initial state and sequence of operations, it SHALL produce the
-same reference random values and restored-state continuation.
-
-#### Scenario: Reproducing a reference random sequence
-
-- **WHEN** the system is initialized with a sanitized browser Alea state fixture
-- **THEN** it produces the fixture’s expected sequence of bounded random values
-
-#### Scenario: Restoring random state
-
-- **WHEN** the system saves Alea state after a reference sequence and restores it in a new instance
-- **THEN** subsequent generated values match the uninterrupted reference sequence
-
-### Requirement: Offline construction of leaderboard requests
-
-The system SHALL construct the creation, progress-report, guild, and motto request
-data used by the browser client, including browser-compatible parameter encoding,
-protocol revision, URL normalization, and LFSR validation. This compatibility core
-SHALL NOT transmit those requests or create characters on a leaderboard.
-
-#### Scenario: Constructing a sanitized progress report
-
-- **WHEN** a caller provides a canonical online character state and a synthetic passkey
-- **THEN** the system produces the expected sanitized report URL and validator from the reference fixture
-
-#### Scenario: Preventing network activity
-
-- **WHEN** a caller invokes save inspection or any request-construction operation
-- **THEN** the system performs no network request
 
 ### Requirement: Safe character inspection and reference data
 

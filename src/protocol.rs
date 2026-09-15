@@ -82,13 +82,17 @@ pub fn progress_report(
     fields: ReportFields<'_>,
     passkey: i32,
 ) -> Result<String, ProtocolError> {
-    let realm = character.online_realm.as_deref().unwrap_or_default();
+    let realm = character
+        .online
+        .as_ref()
+        .map(|online| online.realm.as_str())
+        .unwrap_or_default();
     let query = format!(
         "cmd=b&t={trigger}&n={}&r={}&c={}&l={}&x={}&i={}&z={}&k={}&a={}&h={}&rev={REVISION}",
-        url_encode(&character.name),
-        url_encode(&character.race),
-        url_encode(&character.class),
-        character.level,
+        url_encode(&character.traits.name),
+        url_encode(&character.traits.race),
+        url_encode(&character.traits.class),
+        character.traits.level,
         fields.xp_position,
         url_encode(fields.best_equipment),
         url_encode(fields.best_spell),
@@ -110,13 +114,17 @@ pub fn guild_request(
     guild: &str,
     passkey: i32,
 ) -> Result<String, ProtocolError> {
-    let realm = character.online_realm.as_deref().unwrap_or_default();
+    let realm = character
+        .online
+        .as_ref()
+        .map(|online| online.realm.as_str())
+        .unwrap_or_default();
     let query = format!(
         "cmd=guild&n={}&r={}&c={}&l={}&h={}&rev={REVISION}&guild={}",
-        url_encode(&character.name),
-        url_encode(&character.race),
-        url_encode(&character.class),
-        character.level,
+        url_encode(&character.traits.name),
+        url_encode(&character.traits.race),
+        url_encode(&character.traits.class),
+        character.traits.level,
         url_encode(realm),
         url_encode(guild)
     );
@@ -129,9 +137,15 @@ pub fn guild_request(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    fn character() -> Character {
+        crate::save::import_text(
+            &STANDARD.encode(include_str!("../tests/fixtures/reference-save.json")),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn encodes_like_browser_form_values() {
@@ -145,14 +159,7 @@ mod tests {
 
     #[test]
     fn report_has_expected_order_and_signature() {
-        let character = Character {
-            document: json!({}),
-            name: "Test Hero".into(),
-            race: "Gyrognome".into(),
-            class: "Robot Monk".into(),
-            level: 2,
-            online_realm: Some("Alpaquil".into()),
-        };
+        let character = character();
         let report = progress_report(
             "https://example.invalid/?",
             &character,
@@ -169,28 +176,21 @@ mod tests {
         )
         .unwrap();
         assert!(report.starts_with(
-            "https://example.invalid/?cmd=b&t=l&n=Test+Hero&r=Gyrognome&c=Robot+Monk&l=2&x=1&"
+            "https://example.invalid/?cmd=b&t=l&n=Reference+Hero&r=Gyrognome&c=Robot+Monk&l=2&x=1&"
         ));
         assert!(report.contains("&rev=6&p="));
     }
 
     #[test]
     fn constructs_creation_and_guild_requests() {
-        let character = Character {
-            document: json!({}),
-            name: "Test Hero".into(),
-            race: "Gyrognome".into(),
-            class: "Robot Monk".into(),
-            level: 2,
-            online_realm: Some("Alpaquil".into()),
-        };
+        let character = character();
         assert_eq!(
             create_request("https://example.invalid/?", "Test Hero", "Alpaquil"),
             "https://example.invalid/?cmd=create&name=Test+Hero&realm=Alpaquil&rev=6"
         );
         assert_eq!(
             guild_request("https://example.invalid/?", &character, "The Guild", 4242).unwrap(),
-            "https://example.invalid/?cmd=guild&n=Test+Hero&r=Gyrognome&c=Robot+Monk&l=2&h=Alpaquil&rev=6&guild=The+Guild&p=-1638501661"
+            "https://example.invalid/?cmd=guild&n=Reference+Hero&r=Gyrognome&c=Robot+Monk&l=2&h=Alpaquil&rev=6&guild=The+Guild&p=-1681777756"
         );
     }
 
