@@ -55,3 +55,28 @@ fn replays_the_completed_task_checkpoint_exactly() {
         to_value(&checkpoint.expected).unwrap()
     );
 }
+
+#[test]
+fn replays_each_browser_derived_reward_checkpoint_exactly() {
+    for fixture in [
+        "checkpoint-level-up.json",
+        "checkpoint-equipment.json",
+        "checkpoint-inventory.json",
+        "checkpoint-quest.json",
+        "checkpoint-plot.json",
+        "checkpoint-act.json",
+    ] {
+        let checkpoint = checkpoint::load(Path::new("tests/fixtures").join(fixture).as_path())
+            .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+        let mut state = checkpoint.initial;
+        for elapsed_ms in checkpoint.advancement_ms {
+            state = simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms)
+                .unwrap_or_else(|error| panic!("{fixture}: {error}"));
+        }
+        assert_eq!(
+            to_value(&state).unwrap(),
+            to_value(&checkpoint.expected).unwrap(),
+            "{fixture}"
+        );
+    }
+}

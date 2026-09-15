@@ -1,5 +1,9 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
-use gyrognome::save::{export, import_text};
+use gyrognome::{
+    ruleset,
+    save::{export, import_text},
+    simulation,
+};
 use serde_json::{Value, json};
 
 fn import_fixture() -> gyrognome::state::Character {
@@ -10,7 +14,7 @@ fn import_fixture() -> gyrognome::state::Character {
 fn imports_complete_ordered_canonical_state() {
     let character = import_fixture();
     assert_eq!(character.traits.name, "Reference Hero");
-    assert_eq!(character.stats.intelligence, 13);
+    assert_eq!(character.stats.intelligence, 13.0);
     assert_eq!(character.activity.elapsed, 42);
     assert_eq!(character.progress.task.position, 5.0);
     assert_eq!(character.inventory[1].name, "goblin ear");
@@ -90,4 +94,16 @@ fn export_round_trip_preserves_unknown_document_data() {
         reimported.document["unrecognized-future-field"]["retained"],
         true
     );
+}
+
+#[test]
+fn simulation_leaves_imported_document_and_inspection_output_unchanged() {
+    let character = import_fixture();
+    let document = character.document.clone();
+    let inspection = character.summary();
+
+    let _simulated = simulation::advance(&character, &ruleset::BUNDLED, 40).unwrap();
+
+    assert_eq!(character.document, document);
+    assert_eq!(character.summary(), inspection);
 }

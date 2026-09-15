@@ -60,21 +60,21 @@ pub struct Traits {
 pub struct Attributes {
     pub seed: AleaState,
     #[serde(rename = "STR")]
-    pub strength: u64,
+    pub strength: f64,
     #[serde(rename = "CON")]
-    pub constitution: u64,
+    pub constitution: f64,
     #[serde(rename = "DEX")]
-    pub dexterity: u64,
+    pub dexterity: f64,
     #[serde(rename = "INT")]
-    pub intelligence: u64,
+    pub intelligence: f64,
     #[serde(rename = "WIS")]
-    pub wisdom: u64,
+    pub wisdom: f64,
     #[serde(rename = "CHA")]
-    pub charisma: u64,
+    pub charisma: f64,
     #[serde(rename = "HP Max")]
-    pub hit_points_max: u64,
+    pub hit_points_max: f64,
     #[serde(rename = "MP Max")]
-    pub mana_points_max: u64,
+    pub mana_points_max: f64,
     pub best: String,
 }
 
@@ -265,14 +265,14 @@ impl Character {
             birthstamp: integer(root, "birthstamp", "birthstamp")?,
             stats: Attributes {
                 seed: alea(array_field(stats, "seed", "Stats.seed")?, "Stats.seed")?,
-                strength: integer(stats, "STR", "Stats.STR")?,
-                constitution: integer(stats, "CON", "Stats.CON")?,
-                dexterity: integer(stats, "DEX", "Stats.DEX")?,
-                intelligence: integer(stats, "INT", "Stats.INT")?,
-                wisdom: integer(stats, "WIS", "Stats.WIS")?,
-                charisma: integer(stats, "CHA", "Stats.CHA")?,
-                hit_points_max: integer(stats, "HP Max", "Stats.HP Max")?,
-                mana_points_max: integer(stats, "MP Max", "Stats.MP Max")?,
+                strength: number(stats, "STR", "Stats.STR")?,
+                constitution: number(stats, "CON", "Stats.CON")?,
+                dexterity: number(stats, "DEX", "Stats.DEX")?,
+                intelligence: number(stats, "INT", "Stats.INT")?,
+                wisdom: number(stats, "WIS", "Stats.WIS")?,
+                charisma: number(stats, "CHA", "Stats.CHA")?,
+                hit_points_max: number(stats, "HP Max", "Stats.HP Max")?,
+                mana_points_max: number(stats, "MP Max", "Stats.MP Max")?,
                 best: string(stats, "best", "Stats.best")?,
             },
             beststat: string(root, "beststat", "beststat")?,

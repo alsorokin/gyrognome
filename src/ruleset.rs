@@ -24,7 +24,23 @@ pub const SOURCE_CONTENT_SHA256: &str =
 /// The UTC date this snapshot was captured.
 pub const CAPTURED_ON: &str = "2026-09-15";
 
+/// `LevelUpTime`'s constants from the captured browser `config.js`.
+pub const LEVEL_UP_BASE_MINUTES: u64 = 20;
+pub const LEVEL_UP_GROWTH_NUMERATOR: u64 = 115;
+pub const LEVEL_UP_GROWTH_DENOMINATOR: u64 = 100;
+
 pub const TRAITS: &[&str] = &["Name", "Race", "Class", "Level"];
+
+pub const NAME_PARTS: &[&[&str]] = &[
+    &[
+        "br", "cr", "dr", "fr", "gr", "j", "kr", "l", "m", "n", "pr", "", "", "", "r", "sh", "tr",
+        "v", "wh", "x", "y", "z",
+    ],
+    &[
+        "a", "a", "e", "e", "i", "i", "o", "o", "u", "u", "ae", "ie", "oo", "ou",
+    ],
+    &["b", "ck", "d", "g", "k", "m", "n", "p", "t", "v", "x", "z"],
+];
 
 pub const PRIME_STATS: &[&str] = &["STR", "CON", "DEX", "INT", "WIS", "CHA"];
 
@@ -740,7 +756,11 @@ pub struct Ruleset {
     pub source: &'static str,
     pub revision: &'static str,
     pub content_sha256: &'static str,
+    pub level_up_base_minutes: u64,
+    pub level_up_growth_numerator: u64,
+    pub level_up_growth_denominator: u64,
     pub traits: &'static [&'static str],
+    pub name_parts: &'static [&'static [&'static str]],
     pub prime_stats: &'static [&'static str],
     pub stats: &'static [&'static str],
     pub equips: &'static [&'static str],
@@ -771,7 +791,11 @@ pub const BUNDLED: Ruleset = Ruleset {
     source: SOURCE_URL,
     revision: SOURCE_REVISION,
     content_sha256: SOURCE_CONTENT_SHA256,
+    level_up_base_minutes: LEVEL_UP_BASE_MINUTES,
+    level_up_growth_numerator: LEVEL_UP_GROWTH_NUMERATOR,
+    level_up_growth_denominator: LEVEL_UP_GROWTH_DENOMINATOR,
     traits: TRAITS,
+    name_parts: NAME_PARTS,
     prime_stats: PRIME_STATS,
     stats: STATS,
     equips: EQUIPS,
@@ -809,6 +833,7 @@ mod tests {
     #[test]
     fn table_lengths_match_the_captured_browser_source() {
         assert_eq!(TRAITS.len(), 4);
+        assert_eq!(NAME_PARTS.len(), 3);
         assert_eq!(PRIME_STATS.len(), 6);
         assert_eq!(STATS.len(), 8);
         assert_eq!(EQUIPS.len(), 11);

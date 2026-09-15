@@ -81,4 +81,21 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn matches_browser_reference_continuation_state() {
+        let mut rng = Alea::from_state(AleaState([0.1, 0.2, 0.3, 1.0]));
+        for _ in 0..8 {
+            rng.uint32();
+        }
+        assert_eq!(
+            rng.state(),
+            AleaState([
+                0.024560103891417384,
+                0.9723589066416025,
+                0.9477700409479439,
+                130_572.0
+            ])
+        );
+    }
 }

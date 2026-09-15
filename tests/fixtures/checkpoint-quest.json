@@ -1,0 +1,253 @@
+{
+  "_comment": "Disposable browser-derived synthetic quest-completion and reward checkpoint.",
+  "ruleset": {
+    "revision": "6",
+    "content_sha256": "cc76f256057d6ddbf7010f1b94e59913b935b9980138ed5e800bdd1e5ff5ec4e"
+  },
+  "advancement_ms": [
+    1000
+  ],
+  "initial": {
+    "Traits": {
+      "Name": "Synthetic Reward Subject",
+      "Race": "Gyrognome",
+      "Class": "Robot Monk",
+      "Level": 2
+    },
+    "dna": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "seed": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "birthday": "Tue Sep 15 2026 13:00:00 GMT+0400 (Armenia Standard Time)",
+    "birthstamp": 1789462800000,
+    "Stats": {
+      "seed": [
+        0.8798975336831063,
+        0.6199691942892969,
+        0.5015389770269394,
+        1
+      ],
+      "STR": 10,
+      "CON": 11,
+      "DEX": 12,
+      "INT": 13,
+      "WIS": 14,
+      "CHA": 15,
+      "HP Max": 16,
+      "MP Max": 17,
+      "best": "CHA"
+    },
+    "beststat": "CHA 15",
+    "task": "kill|Goblin|1|ear",
+    "tasks": 7,
+    "elapsed": 42,
+    "kill": "Executing a Goblin...",
+    "questmonster": "",
+    "questmonsterindex": 0,
+    "bestequip": "Stick",
+    "Equips": {
+      "Weapon": "Stick",
+      "Shield": "",
+      "Helm": "",
+      "Hauberk": "",
+      "Brassairts": "",
+      "Vambraces": "",
+      "Gauntlets": "",
+      "Gambeson": "",
+      "Cuisses": "",
+      "Greaves": "",
+      "Sollerets": ""
+    },
+    "Inventory": [
+      [
+        "Gold",
+        0
+      ]
+    ],
+    "Spells": [],
+    "act": 1,
+    "bestplot": "Act I",
+    "Quests": [
+      "Deliver this cookie"
+    ],
+    "ExpBar": {
+      "position": 0,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 1000,
+      "time": "16 minutes",
+      "hint": "1000 XP needed for next level"
+    },
+    "EncumBar": {
+      "position": 0,
+      "max": 20,
+      "percent": 0,
+      "remaining": 20,
+      "time": "20 seconds",
+      "hint": "0/20 cubits"
+    },
+    "PlotBar": {
+      "position": 0,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 1000,
+      "time": "16 minutes",
+      "hint": "16 minutes remaining"
+    },
+    "QuestBar": {
+      "position": 100,
+      "max": 100,
+      "percent": 100,
+      "remaining": 0,
+      "time": "0 seconds",
+      "hint": "100% complete"
+    },
+    "TaskBar": {
+      "position": 0,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 1000,
+      "time": "16 minutes",
+      "hint": "0%"
+    },
+    "queue": [
+      "task|1|Synthetic next task"
+    ],
+    "date": "Tue Sep 15 2026 13:00:01 GMT+0400 (Armenia Standard Time)",
+    "stamp": 1789462801000,
+    "saveName": "Synthetic Reward Subject",
+    "bestspell": "",
+    "bestquest": ""
+  },
+  "expected": {
+    "Traits": {
+      "Name": "Synthetic Reward Subject",
+      "Race": "Gyrognome",
+      "Class": "Robot Monk",
+      "Level": 2
+    },
+    "dna": [
+      0.8798975336831063,
+      0.6199691942892969,
+      0.5015389770269394,
+      1
+    ],
+    "seed": [
+      0.6210689442232251,
+      0.13847802276723087,
+      0.5211017369292676,
+      942457
+    ],
+    "birthday": "Tue Sep 15 2026 13:00:00 GMT+0400 (Armenia Standard Time)",
+    "birthstamp": 1789462800000,
+    "Stats": {
+      "seed": [
+        0.8798975336831063,
+        0.6199691942892969,
+        0.5015389770269394,
+        1
+      ],
+      "STR": 10,
+      "CON": 11,
+      "DEX": 12,
+      "INT": 13,
+      "WIS": 14,
+      "CHA": 15,
+      "HP Max": 16,
+      "MP Max": 17,
+      "best": "CHA"
+    },
+    "beststat": "CHA 15",
+    "task": "",
+    "tasks": 8,
+    "elapsed": 43,
+    "kill": "Synthetic next task...",
+    "questmonster": "",
+    "questmonsterindex": 0,
+    "bestequip": "+1 Studded Parasol",
+    "Equips": {
+      "Weapon": "Stick",
+      "Shield": "+1 Studded Parasol",
+      "Helm": "",
+      "Hauberk": "",
+      "Brassairts": "",
+      "Vambraces": "",
+      "Gauntlets": "",
+      "Gambeson": "",
+      "Cuisses": "",
+      "Greaves": "",
+      "Sollerets": ""
+    },
+    "Inventory": [
+      [
+        "Gold",
+        0
+      ],
+      [
+        "goblin ear",
+        1
+      ]
+    ],
+    "Spells": [],
+    "act": 1,
+    "bestplot": "Act I",
+    "Quests": [
+      "Deliver this cookie",
+      "Placate the Camels"
+    ],
+    "ExpBar": {
+      "position": 1,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 999,
+      "time": "16 minutes",
+      "hint": "999 XP needed for next level"
+    },
+    "EncumBar": {
+      "position": 1,
+      "max": 20,
+      "percent": 5,
+      "remaining": 19,
+      "time": "19 seconds",
+      "hint": "1/20 cubits"
+    },
+    "PlotBar": {
+      "position": 1,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 999,
+      "time": "16 minutes",
+      "hint": "16 minutes remaining"
+    },
+    "QuestBar": {
+      "position": 0,
+      "max": 68,
+      "percent": 0,
+      "remaining": 68,
+      "time": "68 seconds",
+      "hint": "0% complete"
+    },
+    "TaskBar": {
+      "position": 0,
+      "max": 1000,
+      "percent": 0,
+      "remaining": 1000,
+      "time": "16 minutes",
+      "hint": "0%"
+    },
+    "queue": [],
+    "date": "Tue Sep 15 2026 13:00:01 GMT+0400 (Armenia Standard Time)",
+    "stamp": 1789462801000,
+    "saveName": "Synthetic Reward Subject",
+    "bestspell": "",
+    "bestquest": "Placate the Camels"
+  }
+}
