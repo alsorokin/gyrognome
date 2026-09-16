@@ -68,13 +68,11 @@ conformance guarantees:
 - Sanitized paired browser-derived checkpoints cover partitioning and task
   completion behavior.
 
-## In Progress: Leaderboard Conformance and Anti-Cheat Safety
+## Completed: Leaderboard Conformance and Anti-Cheat Safety
 
-Local state advancement matching the browser is necessary but not sufficient:
-the official leaderboard classifies nonconforming characters into a separate
-cheater population. Before any general leaderboard reporting is added,
-Gyrognome must prove its reported history is browser-equivalent and that
-controlled characters are not classified as cheaters:
+The `leaderboard-conformance` capability proves that local state advancement
+is browser-equivalent and that controlled characters are not classified as
+cheaters:
 
 - Credential-free, ordered report-transition traces (`s`/`l`/`a`/`b`/`m`) from
   deterministic simulation, matching the browser's exact report call sites.
@@ -82,15 +80,15 @@ controlled characters are not classified as cheaters:
   conformance fixtures, with no signed request or passkey ever committed.
 - A disposable-character, explicitly confirmed Playwright harness that lets
   the official browser create and hold the online credential, so Gyrognome's
-  reported traces can be compared against it without touching a real save.
-- Required evidence, gated behind explicit operator confirmation: paired
+  reported traces are compared against it without touching a real save.
+- Recorded evidence, gated behind explicit operator confirmation: paired
   browser/Gyrognome scenario traces match, and the disposable character
   remains in the normal leaderboard population rather than the cheater one.
 
 General leaderboard reporting for managed characters remains unsupported
-until this evidence gate passes.
+until a dedicated change adds it.
 
 ## Planned Sequence
 
-1. Complete leaderboard conformance and anti-cheat safety evidence.
-2. Only when that evidence passes, add general leaderboard reporting.
+1. Add general leaderboard reporting for managed characters, building on the
+   passing leaderboard conformance and anti-cheat safety evidence.
