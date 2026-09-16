@@ -13,14 +13,15 @@ behavioral requirements.
 
 - Produce internally valid, level-one, offline-only canonical characters.
 - Make the default terminal flow recognizable as Progress Quest's New Guy:
-  trait selection, Random, stat-only Reroll, Sold!, and cancellation.
+  trait selection, Random Name, desktop-compatible stat roll quality, Roll,
+  Unroll, Sold!, and cancellation.
 - Support deterministic automation inputs without making flags the primary UX.
 - Preserve existing credential redaction and no-network runtime guarantees.
 
 **Non-Goals:**
 
-- Browser-exact new-character RNG, random-call order, stat ranges, or initial
-  state conformance fixtures.
+- Browser-exact new-character random-call order or initial-state conformance
+  fixtures beyond the desktop `3 + 3d6` stat roll and total indicator.
 - Online character creation, passkeys, reports, or leaderboard transport.
 - Changing imported-save handling, simulation behavior, or database schema.
 
@@ -49,16 +50,50 @@ automation contract. A line-prompt interaction was considered but rejected
 because the existing terminal dashboard establishes terminal UI support and
 the New Guy flow needs in-place randomization, rerolls, and preview.
 
-### Preserve Random and Reroll as distinct operations
+### Use focused controls with reversible, desktop-compatible stat rolls
 
-The wizard tracks selected name, race, class, and a current stats roll.
-Random replaces all four; Reroll replaces only the stats roll. Selection
-changes retain the displayed stats until the user explicitly rerolls or
-randomizes.
+The wizard tracks selected name, race, class, a current stats roll, and focus
+on the Name, Race, Class, or Stats row. Navigation changes focus without
+altering the provisional character. Name receives literal printable-key and
+backspace edits only while focused, so letters used as actions elsewhere
+(including `r` and `e`) remain typeable. Name exposes Random Name, Race and
+Class expose manual cycling, and Stats exposes Roll and Unroll. Race and Class
+start randomly selected but cannot be changed by an action other than their
+focused manual controls. The footer displays the focused row's bindings plus
+global Sold! and cancel controls.
 
-This directly reflects the agreed browser-like user experience and makes the
-visible state predictable. Treating either action as a complete replacement
-would blur their user-visible distinction.
+Each stat roll stores six unmodified values, each calculated as `3 +` three
+independent integers in `0..5`. The UI derives a pre-bonus sum from those
+values and assigns its quality color using the desktop bands: dark gray
+`<46`, gray `46..=54`, white `55..=72`, yellow `73..=80`, and red `>80`.
+Race/class bonuses are applied only when producing the displayed canonical
+character, not when calculating that indicator. A Roll pushes the current
+base-stat values and the deterministic local PRNG state that preceded the
+displayed roll onto an unbounded in-memory history before replacing them.
+Unroll restores that state, regenerates the prior roll, and thereby positions
+the PRNG so a subsequent Roll reproduces the result that was unrolled. Fresh
+OS randomness seeds the deterministic PRNG once when the wizard opens. This
+history is provisional and discarded on cancellation or registration.
+
+This preserves a predictable stat preview, makes name entry unambiguous, and
+allows every roll to be undone without persistence or network effects.
+
+### Validate names at the generation boundary
+
+The desktop form's `MaxLength = 30` establishes the compatibility length
+limit, but its source contains no whitelist or confirmation validation. The
+offline flow therefore accepts every Unicode scalar except control characters,
+counts characters rather than bytes for the 30-character limit, and requires
+at least one non-whitespace character. Internal Unicode whitespace remains
+valid.
+
+`generate` and every public generation entry point validate the selection name
+before allocating a canonical character, giving scripts the same behavior as
+the terminal UI. Sold! validates the provisional selection and retains the
+wizard with a visible error on failure; it does not return a character to the
+registration path. Name editing rejects additional characters once the limit
+is reached and ignores control input, so an invalid draft can arise only from
+an invalid externally supplied selection.
 
 ### Create a minimal valid offline initial state
 
@@ -86,6 +121,14 @@ identity data.
   characters by advancing representative initial intervals in tests.
 - [Terminal errors leave the user's screen unusable] → Use the dashboard's
   terminal setup/restoration pattern for normal exit, errors, and interrupts.
+- [A context-specific key is interpreted globally] → Route events through the
+  focused row and test focus changes, text entry, and each row's controls.
+- [Bonus-modified stats obscure roll quality] → Preserve base dice values and
+  calculate the indicator before applying selected trait bonuses.
+- [An invalid name reaches persistence] → Validate at every generator entry
+  point and block Sold! while retaining the interactive draft.
+- [Unroll restores values but not the subsequent random sequence] → Store and
+  replay the pre-roll deterministic PRNG state, with a Roll/Unroll/Roll test.
 - [OS randomness fails or cannot be read] → Return a clear creation failure
   before registration, leaving no persisted character.
 - [A future online feature assumes a browser-created character] → Keep

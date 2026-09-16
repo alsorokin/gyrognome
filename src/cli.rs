@@ -14,6 +14,8 @@ use crate::conformance_bridge;
 use crate::{
     dashboard::{self, DashboardProvider, LocalProvider},
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
+    newguy::{self, NewGuyError, Selection},
+    newguy_wizard::{self, WizardError},
     runtime::{CharacterId, CharacterIdentity, StorageError, Store, Worker, WorkerError},
     save::{self, SaveError},
 };
@@ -84,6 +86,21 @@ enum Command {
         #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(100..=60_000))]
         refresh_ms: u64,
     },
+    /// Create and register an offline-only character.
+    NewGuy {
+        /// Character name. Supplying all three creation traits bypasses the wizard.
+        #[arg(long)]
+        name: Option<String>,
+        /// Race from the bundled ruleset.
+        #[arg(long)]
+        race: Option<String>,
+        /// Class from the bundled ruleset.
+        #[arg(long = "class")]
+        class: Option<String>,
+        /// Print credential-safe registration details as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     #[cfg(feature = "conformance-bridge")]
     /// Test-only stdin/stdout adapter for the disposable browser harness.
     #[command(hide = true)]
@@ -106,6 +123,12 @@ pub enum CliError {
     Signal(#[from] std::io::Error),
     #[error(transparent)]
     Dashboard(#[from] dashboard::DashboardError),
+    #[error(transparent)]
+    NewGuy(#[from] NewGuyError),
+    #[error(transparent)]
+    Wizard(#[from] WizardError),
+    #[error("new-guy requires --name, --race, and --class together")]
+    PartialCreationInputs,
     #[cfg(feature = "conformance-bridge")]
     #[error(transparent)]
     ConformanceBridge(#[from] conformance_bridge::BridgeError),
@@ -210,8 +233,50 @@ pub fn run() -> Result<(), CliError> {
             let stop = shutdown_flag()?;
             dashboard::run(&provider, id, Duration::from_millis(refresh_ms), &stop)?;
         }
+        Command::NewGuy {
+            name,
+            race,
+            class,
+            json,
+        } => {
+            let character = match (name, race, class) {
+                (None, None, None) => {
+                    let stop = shutdown_flag()?;
+                    match newguy_wizard::run(&stop)? {
+                        Some(character) => character,
+                        None => return Ok(()),
+                    }
+                }
+                (Some(name), Some(race), Some(class)) => newguy::generate_local(
+                    &Selection { name, race, class },
+                    &crate::ruleset::BUNDLED,
+                )?,
+                _ => return Err(CliError::PartialCreationInputs),
+            };
+            let registered = Store::open_default()?.register(&character)?;
+            print_registration(registered, json)?;
+        }
         #[cfg(feature = "conformance-bridge")]
         Command::ConformanceBridge => conformance_bridge::run_stdio()?,
+    }
+
+    fn print_registration(
+        registered: crate::runtime::ManagedCharacter,
+        json: bool,
+    ) -> Result<(), CliError> {
+        if json {
+            println!("{}", to_string_pretty(&registered)?);
+        } else {
+            println!(
+                "Registered managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}",
+                registered.id,
+                registered.identity.name,
+                registered.identity.race,
+                registered.identity.class,
+                registered.identity.level
+            );
+        }
+        Ok(())
     }
     Ok(())
 }

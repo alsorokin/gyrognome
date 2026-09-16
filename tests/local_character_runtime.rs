@@ -102,6 +102,74 @@ fn cli_reports_missing_managed_identifiers_without_sensitive_data() {
 }
 
 #[test]
+fn cli_creates_and_registers_an_offline_character_from_complete_traits() {
+    let directory = TestDirectory::new("new-guy");
+    let output = directory.command(&[
+        "new-guy",
+        "--name",
+        "Offline Hero",
+        "--race",
+        "Gyrognome",
+        "--class",
+        "Robot Monk",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let registration: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let id = registration["id"].as_str().unwrap();
+    assert_eq!(registration["identity"]["name"], "Offline Hero");
+    assert_eq!(registration["identity"]["race"], "Gyrognome");
+    assert_eq!(registration["identity"]["class"], "Robot Monk");
+    assert!(registration["state"]["online"].is_null());
+    assert!(!stdout(&output).contains("passkey"));
+
+    let persisted = directory.command(&["managed-inspect", id, "--json"]);
+    assert!(persisted.status.success(), "{}", stderr(&persisted));
+    assert!(stdout(&persisted).contains("Offline Hero"));
+    assert!(stdout(&persisted).contains("\"online\": null"));
+}
+
+#[test]
+fn cli_rejects_partial_or_invalid_offline_creation_without_registration() {
+    let directory = TestDirectory::new("new-guy-invalid");
+    let partial = directory.command(&["new-guy", "--name", "Offline Hero"]);
+    assert!(!partial.status.success());
+    assert!(stderr(&partial).contains("requires --name, --race, and --class together"));
+
+    let invalid = directory.command(&[
+        "new-guy",
+        "--name",
+        "Offline Hero",
+        "--race",
+        "Invalid Race",
+        "--class",
+        "Robot Monk",
+    ]);
+    assert!(!invalid.status.success());
+    assert!(stderr(&invalid).contains("race is not present"));
+
+    for name in ["", "   ", "x\u{7f}", "x".repeat(31).as_str()] {
+        let invalid_name = directory.command(&[
+            "new-guy",
+            "--name",
+            name,
+            "--race",
+            "Gyrognome",
+            "--class",
+            "Robot Monk",
+        ]);
+        assert!(
+            !invalid_name.status.success(),
+            "{name:?} should be rejected"
+        );
+    }
+
+    let listed = directory.command(&["list", "--json"]);
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    assert_eq!(stdout(&listed).trim(), "[]");
+}
+
+#[test]
 fn dashboard_rejects_missing_identifiers_before_entering_terminal_mode() {
     let directory = TestDirectory::new("dashboard-missing");
     let missing = directory.command(&["dashboard", "00000000-0000-4000-8000-000000000000"]);

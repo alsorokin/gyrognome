@@ -274,12 +274,12 @@ impl DashboardState {
     }
 }
 
-struct TerminalSession {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
+pub(crate) struct TerminalSession {
+    pub(crate) terminal: Terminal<CrosstermBackend<Stdout>>,
 }
 
 impl TerminalSession {
-    fn enter() -> Result<Self, DashboardError> {
+    pub(crate) fn enter() -> Result<Self, DashboardError> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         if let Err(error) = execute!(stdout, EnterAlternateScreen) {

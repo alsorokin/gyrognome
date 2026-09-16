@@ -17,6 +17,8 @@ fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
         "src/simulation.rs",
         "src/protocol.rs",
         "src/conformance_bridge.rs",
+        "src/newguy.rs",
+        "src/newguy_wizard.rs",
     ] {
         let content = fs::read_to_string(source).unwrap();
         for forbidden in ["std::net", "reqwest", "ureq", "hyper::", "TcpStream"] {
@@ -39,6 +41,20 @@ fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
         !cli.contains("std::net"),
         "normal CLI commands must not initiate HTTP"
     );
+    for source in ["src/newguy.rs", "src/newguy_wizard.rs"] {
+        let content = fs::read_to_string(source).unwrap();
+        for forbidden in [
+            "ReportEvent",
+            "ReportTrigger",
+            "explicit_report_events",
+            "passkey",
+        ] {
+            assert!(
+                !content.contains(forbidden),
+                "{source} must not construct leaderboard requests or credentials"
+            );
+        }
+    }
 
     let help = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
         .arg("--help")

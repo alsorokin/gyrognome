@@ -5,6 +5,8 @@ pub mod conformance_bridge;
 pub mod dashboard;
 pub mod fixtures;
 pub mod lifecycle;
+pub mod newguy;
+pub mod newguy_wizard;
 pub mod protocol;
 pub mod rng;
 pub mod ruleset;
