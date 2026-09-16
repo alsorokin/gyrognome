@@ -16,7 +16,9 @@ save document, or making a network request. It SHALL apply browser-compatible
 task-bar advancement in bounded ticks and process task-completion effects in the
 same order as the browser client. Equivalent nonzero partitions of a supplied
 total duration SHALL produce the same canonical state and Alea continuation as
-advancing by that total duration in one call.
+advancing by that total duration in one call. It SHALL expose ordered,
+credential-free snapshots for browser leaderboard report transitions without
+changing the resulting canonical state or compromising simulation purity.
 
 #### Scenario: Advancing less than a task duration
 
@@ -37,6 +39,13 @@ advancing by that total duration in one call.
 
 - **WHEN** a caller advances the same canonical state once by a total duration and separately by nonzero durations summing to that total
 - **THEN** both advancement sequences produce the same canonical state and Alea continuation
+
+#### Scenario: Capturing report-producing transitions
+
+- **WHEN** a simulated advancement crosses a browser level-up or act-completion report point
+- **THEN** the system exposes an ordered snapshot representing state at that
+  exact browser transition while producing the same final canonical state as
+  advancement without trace capture
 
 ### Requirement: Browser ruleset fidelity
 
