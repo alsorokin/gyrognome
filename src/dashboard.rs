@@ -165,7 +165,70 @@ enum Command {
     Confirm(LifecycleAction),
     ConfirmAction,
     Cancel,
+    TogglePane(Pane),
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Activity,
+    Progress,
+    Equipment,
+    Details,
+    Status,
+    Adventure,
+    Journal,
+}
+
+impl Pane {
+    const ALL: [Self; 7] = [
+        Self::Activity,
+        Self::Progress,
+        Self::Equipment,
+        Self::Details,
+        Self::Status,
+        Self::Adventure,
+        Self::Journal,
+    ];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Activity => 0,
+            Self::Progress => 1,
+            Self::Equipment => 2,
+            Self::Details => 3,
+            Self::Status => 4,
+            Self::Adventure => 5,
+            Self::Journal => 6,
+        }
+    }
+
+    const fn hotkey(self) -> &'static str {
+        match self {
+            Self::Activity => "F1",
+            Self::Progress => "F2",
+            Self::Equipment => "F3",
+            Self::Details => "F4",
+            Self::Status => "F5",
+            Self::Adventure => "F6",
+            Self::Journal => "F7",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct PaneVisibility {
+    collapsed: [bool; Pane::ALL.len()],
+}
+
+impl PaneVisibility {
+    fn is_collapsed(&self, pane: Pane) -> bool {
+        self.collapsed[pane.index()]
+    }
+
+    fn toggle(&mut self, pane: Pane) {
+        self.collapsed[pane.index()] = !self.collapsed[pane.index()];
+    }
 }
 
 fn command(event: Event) -> Command {
@@ -186,6 +249,13 @@ fn command(event: Event) -> Command {
         KeyCode::Char('c') => Command::Confirm(LifecycleAction::Recover),
         KeyCode::Enter => Command::ConfirmAction,
         KeyCode::Esc => Command::Cancel,
+        KeyCode::F(1) => Command::TogglePane(Pane::Activity),
+        KeyCode::F(2) => Command::TogglePane(Pane::Progress),
+        KeyCode::F(3) => Command::TogglePane(Pane::Equipment),
+        KeyCode::F(4) => Command::TogglePane(Pane::Details),
+        KeyCode::F(5) => Command::TogglePane(Pane::Status),
+        KeyCode::F(6) => Command::TogglePane(Pane::Adventure),
+        KeyCode::F(7) => Command::TogglePane(Pane::Journal),
         _ => Command::None,
     }
 }
@@ -200,11 +270,12 @@ pub fn run<P: DashboardProvider>(
     let mut state = DashboardState {
         current: provider.refresh(&id)?,
         confirmation: None,
+        panes: PaneVisibility::default(),
     };
     loop {
         session
             .terminal
-            .draw(|frame| render(frame, &state.current, state.confirmation))?;
+            .draw(|frame| render(frame, &state.current, state.confirmation, &state.panes))?;
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
@@ -221,6 +292,7 @@ pub fn run<P: DashboardProvider>(
 struct DashboardState {
     current: DashboardSnapshot,
     confirmation: Option<LifecycleAction>,
+    panes: PaneVisibility,
 }
 
 impl DashboardState {
@@ -251,6 +323,10 @@ impl DashboardState {
             }
             Command::Cancel => {
                 self.confirmation = None;
+                false
+            }
+            Command::TogglePane(pane) => {
+                self.panes.toggle(pane);
                 false
             }
             Command::ConfirmAction => {
@@ -310,6 +386,7 @@ fn render(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
     confirmation: Option<LifecycleAction>,
+    panes: &PaneVisibility,
 ) {
     let area = frame.area();
     if area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT {
@@ -321,20 +398,26 @@ fn render(
         return;
     }
 
+    let full_layout = area.width >= 90;
+    let status_height = if full_layout && panes.is_collapsed(Pane::Status) {
+        2
+    } else {
+        3
+    };
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
             Constraint::Min(6),
-            Constraint::Length(3),
+            Constraint::Length(status_height),
             Constraint::Length(3),
         ])
         .split(area);
     render_header(frame, snapshot, rows[0]);
-    if area.width < 90 {
+    if !full_layout {
         render_compact(frame, snapshot, rows[1]);
     } else {
-        render_full(frame, snapshot, rows[1]);
+        render_full(frame, snapshot, rows[1], panes);
     }
     let status = match (&snapshot.service, snapshot.runtime_owned) {
         (Some(state), Some(owned)) => format!(
@@ -343,12 +426,21 @@ fn render(
         ),
         _ => "Service status unavailable".to_owned(),
     };
-    frame.render_widget(
-        Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
-            .block(Block::default().borders(Borders::ALL).title("Status"))
-            .wrap(Wrap { trim: true }),
-        rows[2],
-    );
+    if full_layout && panes.is_collapsed(Pane::Status) {
+        frame.render_widget(pane_block("Status", Pane::Status), rows[2]);
+    } else {
+        let status_block = if full_layout {
+            pane_block("Status", Pane::Status)
+        } else {
+            Block::default().borders(Borders::ALL).title("Status")
+        };
+        frame.render_widget(
+            Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
+                .block(status_block)
+                .wrap(Wrap { trim: true }),
+            rows[2],
+        );
+    }
     let footer = match confirmation {
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
         None => "q quit | r refresh | s start | x stop | c recover".to_owned(),
@@ -406,58 +498,93 @@ fn render_compact(frame: &mut ratatui::Frame<'_>, snapshot: &DashboardSnapshot, 
     );
 }
 
-fn render_full(frame: &mut ratatui::Frame<'_>, snapshot: &DashboardSnapshot, area: Rect) {
+fn render_full(
+    frame: &mut ratatui::Frame<'_>,
+    snapshot: &DashboardSnapshot,
+    area: Rect,
+    panes: &PaneVisibility,
+) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
         .split(area);
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(5),
-            Constraint::Length(8),
-            Constraint::Min(5),
-            Constraint::Length(5),
-        ])
+        .constraints(pane_constraints(
+            &[
+                (Pane::Activity, 5),
+                (Pane::Progress, 7),
+                (Pane::Equipment, 5),
+                (Pane::Details, 5),
+            ],
+            panes,
+            &[Pane::Activity, Pane::Progress, Pane::Equipment],
+        ))
         .split(columns[0]);
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(right_pane_constraints(panes))
+        .split(columns[1]);
     let state = &snapshot.character;
-    frame.render_widget(
+    render_pane(
+        frame,
+        left[0],
+        "Activity",
+        Pane::Activity,
+        panes,
         Paragraph::new(format!(
             "{}\nTasks completed: {}",
             activity_text(&state.activity),
             state.activity.tasks,
-        ))
-        .block(Block::default().borders(Borders::ALL).title("Activity")),
-        left[0],
+        )),
     );
-    render_progress(frame, &state.progress, left[1]);
-    frame.render_widget(
-        Paragraph::new(equipment_text(&state.equipment))
-            .block(Block::default().borders(Borders::ALL).title("Equipment"))
-            .wrap(Wrap { trim: true }),
+    if panes.is_collapsed(Pane::Progress) {
+        frame.render_widget(pane_block("Progress", Pane::Progress), left[1]);
+    } else {
+        render_progress(frame, &state.progress, left[1], Pane::Progress);
+    }
+    render_pane(
+        frame,
         left[2],
+        "Equipment",
+        Pane::Equipment,
+        panes,
+        Paragraph::new(equipment_text(&state.equipment)).wrap(Wrap { trim: true }),
     );
-    frame.render_widget(
+    render_pane(
+        frame,
+        left[3],
+        "Details",
+        Pane::Details,
+        panes,
         Paragraph::new(format!(
             "Character ID: {}\nLast task elapsed: {} seconds\nQuest target: {}",
             state.id,
             state.activity.elapsed,
             quest_target_text(&state.activity.questmonster)
         ))
-        .block(Block::default().borders(Borders::ALL).title("Details"))
         .wrap(Wrap { trim: true }),
-        left[3],
     );
-    frame.render_widget(
-        Paragraph::new(adventure_lines(state))
-            .block(Block::default().borders(Borders::ALL).title("Adventure"))
-            .wrap(Wrap { trim: true }),
-        columns[1],
+    render_pane(
+        frame,
+        right[0],
+        "Adventure",
+        Pane::Adventure,
+        panes,
+        Paragraph::new(adventure_lines(state)).wrap(Wrap { trim: true }),
+    );
+    render_pane(
+        frame,
+        right[1],
+        "Journal",
+        Pane::Journal,
+        panes,
+        Paragraph::new(journal_lines(state)).wrap(Wrap { trim: true }),
     );
 }
 
 fn adventure_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
-    let mut lines = vec![
+    let lines = vec![
         Line::from(format!(
             "Inventory: {}",
             list_text(&character.inventory, |item| format!(
@@ -477,28 +604,91 @@ fn adventure_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
             "Plot: Act {} — {}",
             character.plot.act, character.plot.bestplot
         )),
-        Line::from("Quests:"),
+        Line::from(format!("Current quest: {}", character.current_quest)),
     ];
-    if character.quests.is_empty() {
-        lines.push(Line::from("none"));
-    } else {
-        let current_quest_index = character
-            .quests
-            .iter()
-            .rposition(|quest| quest == &character.current_quest);
-        lines.extend(character.quests.iter().enumerate().map(|(index, quest)| {
-            let style = if current_quest_index == Some(index) {
-                Style::default().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-            Line::from(Span::styled(quest.clone(), style))
-        }));
-    }
     lines
 }
 
-fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Rect) {
+fn journal_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
+    let current_quest_index = character
+        .quests
+        .iter()
+        .rposition(|quest| quest == &character.current_quest);
+    let mut lines = vec![Line::from(Span::styled(
+        character.current_quest.clone(),
+        Style::default().add_modifier(Modifier::BOLD),
+    ))];
+    lines.extend(
+        character
+            .quests
+            .iter()
+            .cloned()
+            .enumerate()
+            .filter(|(index, _)| current_quest_index != Some(*index))
+            .rev()
+            .map(|(_, quest)| Line::from(quest)),
+    );
+    lines
+}
+
+fn pane_constraints(
+    panes: &[(Pane, u16)],
+    visibility: &PaneVisibility,
+    flexible_panes: &[Pane],
+) -> Vec<Constraint> {
+    let expanded = panes
+        .iter()
+        .rposition(|(pane, _)| !visibility.is_collapsed(*pane) && flexible_panes.contains(pane));
+    panes
+        .iter()
+        .enumerate()
+        .map(|(index, (pane, height))| {
+            if visibility.is_collapsed(*pane) {
+                Constraint::Length(2)
+            } else if Some(index) == expanded {
+                Constraint::Min(*height)
+            } else {
+                Constraint::Length(*height)
+            }
+        })
+        .collect()
+}
+
+fn right_pane_constraints(visibility: &PaneVisibility) -> [Constraint; 2] {
+    match (
+        visibility.is_collapsed(Pane::Adventure),
+        visibility.is_collapsed(Pane::Journal),
+    ) {
+        (false, false) => [Constraint::Percentage(75), Constraint::Percentage(25)],
+        (false, true) => [Constraint::Min(5), Constraint::Length(2)],
+        (true, false) => [Constraint::Length(2), Constraint::Min(5)],
+        (true, true) => [Constraint::Length(2), Constraint::Length(2)],
+    }
+}
+
+fn pane_block(title: &str, pane: Pane) -> Block<'_> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title(Line::from(pane.hotkey()).right_aligned())
+}
+
+fn render_pane(
+    frame: &mut ratatui::Frame<'_>,
+    area: Rect,
+    title: &str,
+    pane: Pane,
+    visibility: &PaneVisibility,
+    content: Paragraph<'_>,
+) {
+    if visibility.is_collapsed(pane) {
+        frame.render_widget(pane_block(title, pane), area);
+    } else {
+        frame.render_widget(content.block(pane_block(title, pane)), area);
+    }
+}
+
+fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Rect, pane: Pane) {
     let bars = [
         ("Experience", &progress.experience),
         ("Encumbrance", &progress.encumbrance),
@@ -513,10 +703,7 @@ fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Re
             horizontal: 1,
             vertical: 1,
         }));
-    frame.render_widget(
-        Block::default().borders(Borders::ALL).title("Progress"),
-        area,
-    );
+    frame.render_widget(pane_block("Progress", pane), area);
     for ((label, bar), row) in bars.into_iter().zip(rows.iter().copied()) {
         let label = format!("{label} {}%", bar.percent);
         let filled_end = row.left()
@@ -712,11 +899,11 @@ mod tests {
         }
     }
 
-    fn rendered(width: u16, height: u16) -> String {
+    fn rendered_with_panes(width: u16, height: u16, panes: &PaneVisibility) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render(frame, &sample(), None))
+            .draw(|frame| render(frame, &sample(), None, panes))
             .unwrap();
         terminal
             .backend()
@@ -727,11 +914,19 @@ mod tests {
             .collect()
     }
 
+    fn rendered(width: u16, height: u16) -> String {
+        rendered_with_panes(width, height, &PaneVisibility::default())
+    }
+
     #[test]
     fn renders_complete_compact_and_too_small_layouts() {
         let complete = rendered(120, 40);
         assert!(complete.contains("Equipment"));
         assert!(complete.contains("Adventure"));
+        assert!(complete.contains("Journal"));
+        for pane in Pane::ALL {
+            assert!(complete.contains(pane.hotkey()));
+        }
         assert!(complete.contains("Experience 0%"));
         let compact = rendered(70, 30);
         assert!(compact.contains("Character"));
@@ -761,45 +956,47 @@ mod tests {
     }
 
     #[test]
-    fn adventure_highlights_the_current_quest() {
-        let lines = adventure_lines(&sample().character);
+    fn adventure_shows_only_a_plain_current_quest() {
+        let character = sample().character;
+        let lines = adventure_lines(&character);
         let current = lines
             .iter()
             .flat_map(|line| line.spans.iter())
-            .find(|span| span.content == "Fetch me an anvil")
+            .find(|span| span.content == "Current quest: Fetch me an anvil")
             .unwrap();
-        assert!(current.style.add_modifier.contains(Modifier::BOLD));
+        assert!(!current.style.add_modifier.contains(Modifier::BOLD));
+        assert!(
+            !lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content == "Quests:")
+        );
     }
 
     #[test]
-    fn adventure_highlights_only_the_latest_matching_quest() {
+    fn journal_leads_with_current_quest_and_reverses_long_completed_history() {
         let mut character = sample().character;
         character.quests = vec![
-            "Fetch me an anvil".to_owned(),
-            "Deliver this cookie".to_owned(),
-            "Fetch me an anvil".to_owned(),
+            "First completed quest".to_owned(),
+            "Second completed quest".to_owned(),
+            "Third completed quest".to_owned(),
+            "Fourth completed quest".to_owned(),
         ];
-        character.current_quest = "Fetch me an anvil".to_owned();
+        character.current_quest = "Current quest".to_owned();
 
-        let matching_quests = adventure_lines(&character)
+        let quests = journal_lines(&character)
             .into_iter()
             .flat_map(|line| line.spans)
-            .filter(|span| span.content == "Fetch me an anvil")
             .collect::<Vec<_>>();
 
-        assert_eq!(matching_quests.len(), 2);
-        assert!(
-            !matching_quests[0]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
-        assert!(
-            matching_quests[1]
-                .style
-                .add_modifier
-                .contains(Modifier::BOLD)
-        );
+        assert_eq!(quests.len(), 5);
+        assert_eq!(quests[0].content, "Current quest");
+        assert_eq!(quests[1].content, "Fourth completed quest");
+        assert_eq!(quests[2].content, "Third completed quest");
+        assert_eq!(quests[3].content, "Second completed quest");
+        assert_eq!(quests[4].content, "First completed quest");
+        assert!(quests[0].style.add_modifier.contains(Modifier::BOLD));
+        assert!(!quests[1].style.add_modifier.contains(Modifier::BOLD));
     }
 
     #[test]
@@ -809,7 +1006,7 @@ mod tests {
         let mut snapshot = sample();
         snapshot.character.progress.experience.percent = 100;
         terminal
-            .draw(|frame| render(frame, &snapshot, None))
+            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
             .unwrap();
 
         let label = "Experience 100%";
@@ -826,7 +1023,7 @@ mod tests {
 
         snapshot.character.progress.experience.percent = 0;
         terminal
-            .draw(|frame| render(frame, &snapshot, None))
+            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
             .unwrap();
         let label = "Experience 0%";
         let label_cells = terminal
@@ -841,7 +1038,7 @@ mod tests {
 
         snapshot.character.progress.experience.percent = 50;
         terminal
-            .draw(|frame| render(frame, &snapshot, None))
+            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
             .unwrap();
         let label = "Experience 50%";
         let label_cells = terminal
@@ -896,6 +1093,13 @@ mod tests {
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))),
             Command::Cancel
         );
+        for pane in Pane::ALL {
+            let key = KeyCode::F((pane.index() + 1) as u8);
+            assert_eq!(
+                command(Event::Key(crossterm::event::KeyEvent::from(key))),
+                Command::TogglePane(pane)
+            );
+        }
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::new(
                 KeyCode::Char('c'),
@@ -941,6 +1145,7 @@ mod tests {
         let mut state = DashboardState {
             current: first,
             confirmation: None,
+            panes: PaneVisibility::default(),
         };
         assert!(!state.apply(&provider, &id, Command::Refresh));
         assert_eq!(state.current.character.activity.task, "new persisted task");
@@ -949,6 +1154,9 @@ mod tests {
         assert!(!state.apply(&provider, &id, Command::Confirm(LifecycleAction::Stop)));
         assert!(!state.apply(&provider, &id, Command::Cancel));
         assert!(provider.actions.borrow().is_empty());
+
+        assert!(!state.apply(&provider, &id, Command::TogglePane(Pane::Journal)));
+        assert!(state.panes.is_collapsed(Pane::Journal));
 
         state.confirmation = Some(LifecycleAction::Start);
         assert!(!state.apply(&provider, &id, Command::ConfirmAction));
@@ -973,6 +1181,7 @@ mod tests {
         let mut state = DashboardState {
             current: snapshot.clone(),
             confirmation: Some(LifecycleAction::Start),
+            panes: PaneVisibility::default(),
         };
         state.apply(&provider, &id, Command::ConfirmAction);
         assert_eq!(
@@ -980,6 +1189,72 @@ mod tests {
             snapshot.character.identity.name
         );
         assert!(state.current.message.unwrap().contains("no user manager"));
+    }
+
+    #[test]
+    fn collapsed_panes_hide_content_without_affecting_other_panes() {
+        let mut panes = PaneVisibility::default();
+        panes.toggle(Pane::Activity);
+        panes.toggle(Pane::Status);
+
+        let output = rendered_with_panes(120, 40, &panes);
+
+        assert!(output.contains("Activity"));
+        assert!(output.contains("F1"));
+        assert!(!output.contains("Tasks completed:"));
+        assert!(output.contains("Equipment"));
+        assert!(output.contains("Journal"));
+        assert!(output.contains("F7"));
+        assert!(!output.contains("Runtime ownership:"));
+    }
+
+    #[test]
+    fn expanded_journal_is_limited_to_one_quarter_of_the_right_column() {
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(right_pane_constraints(&PaneVisibility::default()))
+            .split(Rect::new(0, 0, 60, 40));
+
+        assert_eq!(areas[0].height, 30);
+        assert_eq!(areas[1].height, 10);
+    }
+
+    #[test]
+    fn expanded_details_has_exactly_five_rows() {
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(pane_constraints(
+                &[
+                    (Pane::Activity, 5),
+                    (Pane::Progress, 7),
+                    (Pane::Equipment, 5),
+                    (Pane::Details, 5),
+                ],
+                &PaneVisibility::default(),
+                &[Pane::Activity, Pane::Progress, Pane::Equipment],
+            ))
+            .split(Rect::new(0, 0, 50, 40));
+
+        assert_eq!(areas[3].height, 5);
+    }
+
+    #[test]
+    fn expanded_progress_has_exactly_seven_rows() {
+        let areas = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(pane_constraints(
+                &[
+                    (Pane::Activity, 5),
+                    (Pane::Progress, 7),
+                    (Pane::Equipment, 5),
+                    (Pane::Details, 5),
+                ],
+                &PaneVisibility::default(),
+                &[Pane::Activity, Pane::Progress, Pane::Equipment],
+            ))
+            .split(Rect::new(0, 0, 50, 40));
+
+        assert_eq!(areas[1].height, 7);
     }
 
     #[test]
