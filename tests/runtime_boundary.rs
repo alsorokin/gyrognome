@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, process::Command};
 
 #[test]
 fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
@@ -10,7 +10,14 @@ fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
         );
     }
 
-    for source in ["src/runtime.rs", "src/lifecycle.rs", "src/cli.rs"] {
+    for source in [
+        "src/runtime.rs",
+        "src/lifecycle.rs",
+        "src/cli.rs",
+        "src/simulation.rs",
+        "src/protocol.rs",
+        "src/conformance_bridge.rs",
+    ] {
         let content = fs::read_to_string(source).unwrap();
         for forbidden in ["std::net", "reqwest", "ureq", "hyper::", "TcpStream"] {
             assert!(
@@ -19,6 +26,30 @@ fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
             );
         }
     }
+}
+
+#[test]
+fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
+    let manifest = fs::read_to_string("Cargo.toml").unwrap();
+    let cli = fs::read_to_string("src/cli.rs").unwrap();
+
+    assert!(manifest.contains("conformance-bridge = []"));
+    assert!(cli.contains("#[cfg(feature = \"conformance-bridge\")]"));
+    assert!(
+        !cli.contains("std::net"),
+        "normal CLI commands must not initiate HTTP"
+    );
+
+    let help = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(
+        !String::from_utf8(help.stdout)
+            .unwrap()
+            .contains("conformance-bridge")
+    );
 }
 
 #[test]

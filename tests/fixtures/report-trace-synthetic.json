@@ -1,0 +1,1044 @@
+{
+  "_comment": "Synthetic trace generated only from committed synthetic reference states; it is not browser-observed data.",
+  "events": [
+    {
+      "motto": "Synthetic motto",
+      "snapshot": {
+        "character": {
+          "Equips": {
+            "Brassairts": "",
+            "Cuisses": "",
+            "Gambeson": "",
+            "Gauntlets": "",
+            "Greaves": "",
+            "Hauberk": "Leather",
+            "Helm": "",
+            "Shield": "Wooden Shield",
+            "Sollerets": "",
+            "Vambraces": "",
+            "Weapon": "Bronze Sword"
+          },
+          "Inventory": [
+            {
+              "name": "Gold",
+              "quantity": 7
+            },
+            {
+              "name": "goblin ear",
+              "quantity": 2
+            }
+          ],
+          "Quests": [
+            "Deliver this cookie",
+            "Fetch me an anvil"
+          ],
+          "Spells": [
+            {
+              "name": "Sadness",
+              "rank": "I"
+            },
+            {
+              "name": "Hastiness",
+              "rank": "II"
+            }
+          ],
+          "Stats": {
+            "CHA": 15.0,
+            "CON": 11.0,
+            "DEX": 12.0,
+            "HP Max": 16.0,
+            "INT": 13.0,
+            "MP Max": 17.0,
+            "STR": 10.0,
+            "WIS": 14.0,
+            "best": "CHA",
+            "seed": [
+              0.1,
+              0.2,
+              0.3,
+              1.0
+            ]
+          },
+          "Traits": {
+            "Class": "Robot Monk",
+            "Level": 2,
+            "Name": "Reference Hero",
+            "Race": "Gyrognome"
+          },
+          "activity": {
+            "elapsed": 0,
+            "kill": "Selling a widget...",
+            "questmonster": "Goblin|1|ear",
+            "questmonsterindex": 7,
+            "task": "sell",
+            "tasks": 3
+          },
+          "bestequip": "Bronze Sword",
+          "bestquest": "Fetch me an anvil",
+          "bestspell": "Hastiness II",
+          "beststat": "CHA 15",
+          "birthday": "Mon Jan 01 2024 00:00:00 GMT+0000 (UTC)",
+          "birthstamp": 1704067200000,
+          "date": "Mon Jan 01 2024 00:01:00 GMT+0000 (UTC)",
+          "dna": [
+            0.1,
+            0.2,
+            0.3,
+            1.0
+          ],
+          "online": {
+            "host": "https://example.invalid/?",
+            "realm": "Alpaquil"
+          },
+          "plot": {
+            "act": 1,
+            "bestplot": "Act I"
+          },
+          "progress": {
+            "EncumBar": {
+              "hint": "2/24 cubits",
+              "max": 24,
+              "percent": 8,
+              "position": 2.0,
+              "remaining": 22,
+              "time": "22 seconds"
+            },
+            "ExpBar": {
+              "hint": "1268 XP needed for next level",
+              "max": 1269,
+              "percent": 0,
+              "position": 1.0,
+              "remaining": 1268,
+              "time": "21 minutes"
+            },
+            "PlotBar": {
+              "hint": "5 hours remaining",
+              "max": 21600,
+              "percent": 0,
+              "position": 3.0,
+              "remaining": 21597,
+              "time": "5 hours"
+            },
+            "QuestBar": {
+              "hint": "4% complete",
+              "max": 100,
+              "percent": 4,
+              "position": 4.0,
+              "remaining": 96,
+              "time": "96 seconds"
+            },
+            "TaskBar": {
+              "hint": "0%",
+              "max": 1000,
+              "percent": 0,
+              "position": 5.0,
+              "remaining": 995,
+              "time": "995 seconds"
+            }
+          },
+          "queue": [],
+          "save_name": "Reference Hero [Alpaquil]",
+          "seed": [
+            0.4,
+            0.5,
+            0.6,
+            2.0
+          ],
+          "stamp": 1704067260000
+        }
+      },
+      "trigger": "s"
+    },
+    {
+      "motto": "Synthetic motto",
+      "snapshot": {
+        "character": {
+          "Equips": {
+            "Brassairts": "",
+            "Cuisses": "",
+            "Gambeson": "",
+            "Gauntlets": "",
+            "Greaves": "",
+            "Hauberk": "",
+            "Helm": "",
+            "Shield": "",
+            "Sollerets": "",
+            "Vambraces": "",
+            "Weapon": "Stick"
+          },
+          "Inventory": [
+            {
+              "name": "Gold",
+              "quantity": 0
+            }
+          ],
+          "Quests": [],
+          "Spells": [
+            {
+              "name": "Invisible Hands",
+              "rank": "I"
+            }
+          ],
+          "Stats": {
+            "CHA": 16.0,
+            "CON": 11.0,
+            "DEX": 12.0,
+            "HP Max": 22.0,
+            "INT": 14.0,
+            "MP Max": 23.0,
+            "STR": 10.0,
+            "WIS": 14.0,
+            "best": "CHA",
+            "seed": [
+              0.8798975336831063,
+              0.6199691942892969,
+              0.5015389770269394,
+              1.0
+            ]
+          },
+          "Traits": {
+            "Class": "Robot Monk",
+            "Level": 2,
+            "Name": "Synthetic Level Subject",
+            "Race": "Gyrognome"
+          },
+          "activity": {
+            "elapsed": 43,
+            "kill": "Executing a Goblin...",
+            "questmonster": "",
+            "questmonsterindex": 0,
+            "task": "kill|Goblin|1|ear",
+            "tasks": 8
+          },
+          "bestequip": "Stick",
+          "bestquest": "",
+          "bestspell": "",
+          "beststat": "CHA 15",
+          "birthday": "Tue Sep 15 2026 13:00:00 GMT+0400 (Armenia Standard Time)",
+          "birthstamp": 1789462800000,
+          "date": "Tue Sep 15 2026 13:00:01 GMT+0400 (Armenia Standard Time)",
+          "dna": [
+            0.8798975336831063,
+            0.6199691942892969,
+            0.5015389770269394,
+            1.0
+          ],
+          "online": {
+            "host": "https://example.invalid/?",
+            "realm": "Alpaquil"
+          },
+          "plot": {
+            "act": 0,
+            "bestplot": "Act I"
+          },
+          "progress": {
+            "EncumBar": {
+              "hint": "0/20 cubits",
+              "max": 20,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 20,
+              "time": "20 seconds"
+            },
+            "ExpBar": {
+              "hint": "1279 XP needed for next level",
+              "max": 1279,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 1279,
+              "time": "21 minutes"
+            },
+            "PlotBar": {
+              "hint": "16 minutes remaining",
+              "max": 1000,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 1000,
+              "time": "16 minutes"
+            },
+            "QuestBar": {
+              "hint": "0% complete",
+              "max": 100,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 100,
+              "time": "100 seconds"
+            },
+            "TaskBar": {
+              "hint": "100%",
+              "max": 1000,
+              "percent": 100,
+              "position": 1000.0,
+              "remaining": 0,
+              "time": "0 seconds"
+            }
+          },
+          "queue": [
+            "task|1|Synthetic next task"
+          ],
+          "save_name": "Synthetic Level Subject",
+          "seed": [
+            0.9664258679840714,
+            0.6122946620453149,
+            0.20863468805328012,
+            183201.0
+          ],
+          "stamp": 1789462801000
+        }
+      },
+      "trigger": "l"
+    },
+    {
+      "motto": "Synthetic motto",
+      "snapshot": {
+        "character": {
+          "Equips": {
+            "Brassairts": "",
+            "Cuisses": "",
+            "Gambeson": "",
+            "Gauntlets": "Macrame",
+            "Greaves": "",
+            "Hauberk": "",
+            "Helm": "",
+            "Shield": "",
+            "Sollerets": "",
+            "Vambraces": "",
+            "Weapon": "Stick"
+          },
+          "Inventory": [
+            {
+              "name": "Gold",
+              "quantity": 0
+            },
+            {
+              "name": "Mythic Bijou of Hurting",
+              "quantity": 1
+            }
+          ],
+          "Quests": [
+            "Deliver this cookie"
+          ],
+          "Spells": [],
+          "Stats": {
+            "CHA": 15.0,
+            "CON": 11.0,
+            "DEX": 12.0,
+            "HP Max": 16.0,
+            "INT": 13.0,
+            "MP Max": 17.0,
+            "STR": 10.0,
+            "WIS": 14.0,
+            "best": "CHA",
+            "seed": [
+              0.8798975336831063,
+              0.6199691942892969,
+              0.5015389770269394,
+              1.0
+            ]
+          },
+          "Traits": {
+            "Class": "Robot Monk",
+            "Level": 2,
+            "Name": "Synthetic Reward Subject",
+            "Race": "Gyrognome"
+          },
+          "activity": {
+            "elapsed": 43,
+            "kill": "Loading Act I...",
+            "questmonster": "",
+            "questmonsterindex": 0,
+            "task": "",
+            "tasks": 8
+          },
+          "bestequip": "Macrame Gauntlets",
+          "bestquest": "",
+          "bestspell": "",
+          "beststat": "CHA 15",
+          "birthday": "Tue Sep 15 2026 13:00:00 GMT+0400 (Armenia Standard Time)",
+          "birthstamp": 1789462800000,
+          "date": "Tue Sep 15 2026 13:00:01 GMT+0400 (Armenia Standard Time)",
+          "dna": [
+            0.8798975336831063,
+            0.6199691942892969,
+            0.5015389770269394,
+            1.0
+          ],
+          "online": {
+            "host": "https://example.invalid/?",
+            "realm": "Alpaquil"
+          },
+          "plot": {
+            "act": 2,
+            "bestplot": "Act II"
+          },
+          "progress": {
+            "EncumBar": {
+              "hint": "1/20 cubits",
+              "max": 20,
+              "percent": 5,
+              "position": 1.0,
+              "remaining": 19,
+              "time": "19 seconds"
+            },
+            "ExpBar": {
+              "hint": "1000 XP needed for next level",
+              "max": 1000,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 1000,
+              "time": "16 minutes"
+            },
+            "PlotBar": {
+              "hint": "11 hours remaining",
+              "max": 39600,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 39600,
+              "time": "11 hours"
+            },
+            "QuestBar": {
+              "hint": "0% complete",
+              "max": 1,
+              "percent": 0,
+              "position": 0.0,
+              "remaining": 1,
+              "time": "1 seconds"
+            },
+            "TaskBar": {
+              "hint": "100%",
+              "max": 1000,
+              "percent": 100,
+              "position": 1000.0,
+              "remaining": 0,
+              "time": "0 seconds"
+            }
+          },
+          "queue": [],
+          "save_name": "Synthetic Reward Subject",
+          "seed": [
+            0.036126989871263504,
+            0.395096447551623,
+            0.45058326073922217,
+            436388.0
+          ],
+          "stamp": 1789462801000
+        }
+      },
+      "trigger": "a"
+    },
+    {
+      "motto": "Synthetic motto",
+      "snapshot": {
+        "character": {
+          "Equips": {
+            "Brassairts": "",
+            "Cuisses": "",
+            "Gambeson": "",
+            "Gauntlets": "",
+            "Greaves": "",
+            "Hauberk": "Leather",
+            "Helm": "",
+            "Shield": "Wooden Shield",
+            "Sollerets": "",
+            "Vambraces": "",
+            "Weapon": "Bronze Sword"
+          },
+          "Inventory": [
+            {
+              "name": "Gold",
+              "quantity": 7
+            },
+            {
+              "name": "goblin ear",
+              "quantity": 2
+            }
+          ],
+          "Quests": [
+            "Deliver this cookie",
+            "Fetch me an anvil"
+          ],
+          "Spells": [
+            {
+              "name": "Sadness",
+              "rank": "I"
+            },
+            {
+              "name": "Hastiness",
+              "rank": "II"
+            }
+          ],
+          "Stats": {
+            "CHA": 15.0,
+            "CON": 11.0,
+            "DEX": 12.0,
+            "HP Max": 16.0,
+            "INT": 13.0,
+            "MP Max": 17.0,
+            "STR": 10.0,
+            "WIS": 14.0,
+            "best": "CHA",
+            "seed": [
+              0.1,
+              0.2,
+              0.3,
+              1.0
+            ]
+          },
+          "Traits": {
+            "Class": "Robot Monk",
+            "Level": 2,
+            "Name": "Reference Hero",
+            "Race": "Gyrognome"
+          },
+          "activity": {
+            "elapsed": 42,
+            "kill": "Selling a widget...",
+            "questmonster": "Goblin|1|ear",
+            "questmonsterindex": 7,
+            "task": "sell",
+            "tasks": 3
+          },
+          "bestequip": "Bronze Sword",
+          "bestquest": "Fetch me an anvil",
+          "bestspell": "Hastiness II",
+          "beststat": "CHA 15",
+          "birthday": "Mon Jan 01 2024 00:00:00 GMT+0000 (UTC)",
+          "birthstamp": 1704067200000,
+          "date": "Mon Jan 01 2024 00:01:00 GMT+0000 (UTC)",
+          "dna": [
+            0.1,
+            0.2,
+            0.3,
+            1.0
+          ],
+          "online": {
+            "host": "https://example.invalid/?",
+            "realm": "Alpaquil"
+          },
+          "plot": {
+            "act": 1,
+            "bestplot": "Act I"
+          },
+          "progress": {
+            "EncumBar": {
+              "hint": "2/24 cubits",
+              "max": 24,
+              "percent": 8,
+              "position": 2.0,
+              "remaining": 22,
+              "time": "22 seconds"
+            },
+            "ExpBar": {
+              "hint": "1268 XP needed for next level",
+              "max": 1269,
+              "percent": 0,
+              "position": 1.0,
+              "remaining": 1268,
+              "time": "21 minutes"
+            },
+            "PlotBar": {
+              "hint": "5 hours remaining",
+              "max": 21600,
+              "percent": 0,
+              "position": 3.0,
+              "remaining": 21597,
+              "time": "5 hours"
+            },
+            "QuestBar": {
+              "hint": "4% complete",
+              "max": 100,
+              "percent": 4,
+              "position": 4.0,
+              "remaining": 96,
+              "time": "96 seconds"
+            },
+            "TaskBar": {
+              "hint": "0%",
+              "max": 1000,
+              "percent": 0,
+              "position": 5.0,
+              "remaining": 995,
+              "time": "995 seconds"
+            }
+          },
+          "queue": [],
+          "save_name": "Reference Hero [Alpaquil]",
+          "seed": [
+            0.4,
+            0.5,
+            0.6,
+            2.0
+          ],
+          "stamp": 1704067260000
+        }
+      },
+      "trigger": "b"
+    },
+    {
+      "motto": "Changed synthetic motto",
+      "snapshot": {
+        "character": {
+          "Equips": {
+            "Brassairts": "",
+            "Cuisses": "",
+            "Gambeson": "",
+            "Gauntlets": "",
+            "Greaves": "",
+            "Hauberk": "Leather",
+            "Helm": "",
+            "Shield": "Wooden Shield",
+            "Sollerets": "",
+            "Vambraces": "",
+            "Weapon": "Bronze Sword"
+          },
+          "Inventory": [
+            {
+              "name": "Gold",
+              "quantity": 7
+            },
+            {
+              "name": "goblin ear",
+              "quantity": 2
+            }
+          ],
+          "Quests": [
+            "Deliver this cookie",
+            "Fetch me an anvil"
+          ],
+          "Spells": [
+            {
+              "name": "Sadness",
+              "rank": "I"
+            },
+            {
+              "name": "Hastiness",
+              "rank": "II"
+            }
+          ],
+          "Stats": {
+            "CHA": 15.0,
+            "CON": 11.0,
+            "DEX": 12.0,
+            "HP Max": 16.0,
+            "INT": 13.0,
+            "MP Max": 17.0,
+            "STR": 10.0,
+            "WIS": 14.0,
+            "best": "CHA",
+            "seed": [
+              0.1,
+              0.2,
+              0.3,
+              1.0
+            ]
+          },
+          "Traits": {
+            "Class": "Robot Monk",
+            "Level": 2,
+            "Name": "Reference Hero",
+            "Race": "Gyrognome"
+          },
+          "activity": {
+            "elapsed": 42,
+            "kill": "Selling a widget...",
+            "questmonster": "Goblin|1|ear",
+            "questmonsterindex": 7,
+            "task": "sell",
+            "tasks": 3
+          },
+          "bestequip": "Bronze Sword",
+          "bestquest": "Fetch me an anvil",
+          "bestspell": "Hastiness II",
+          "beststat": "CHA 15",
+          "birthday": "Mon Jan 01 2024 00:00:00 GMT+0000 (UTC)",
+          "birthstamp": 1704067200000,
+          "date": "Mon Jan 01 2024 00:01:00 GMT+0000 (UTC)",
+          "dna": [
+            0.1,
+            0.2,
+            0.3,
+            1.0
+          ],
+          "online": {
+            "host": "https://example.invalid/?",
+            "realm": "Alpaquil"
+          },
+          "plot": {
+            "act": 1,
+            "bestplot": "Act I"
+          },
+          "progress": {
+            "EncumBar": {
+              "hint": "2/24 cubits",
+              "max": 24,
+              "percent": 8,
+              "position": 2.0,
+              "remaining": 22,
+              "time": "22 seconds"
+            },
+            "ExpBar": {
+              "hint": "1268 XP needed for next level",
+              "max": 1269,
+              "percent": 0,
+              "position": 1.0,
+              "remaining": 1268,
+              "time": "21 minutes"
+            },
+            "PlotBar": {
+              "hint": "5 hours remaining",
+              "max": 21600,
+              "percent": 0,
+              "position": 3.0,
+              "remaining": 21597,
+              "time": "5 hours"
+            },
+            "QuestBar": {
+              "hint": "4% complete",
+              "max": 100,
+              "percent": 4,
+              "position": 4.0,
+              "remaining": 96,
+              "time": "96 seconds"
+            },
+            "TaskBar": {
+              "hint": "0%",
+              "max": 1000,
+              "percent": 0,
+              "position": 5.0,
+              "remaining": 995,
+              "time": "995 seconds"
+            }
+          },
+          "queue": [],
+          "save_name": "Reference Hero [Alpaquil]",
+          "seed": [
+            0.4,
+            0.5,
+            0.6,
+            2.0
+          ],
+          "stamp": 1704067260000
+        }
+      },
+      "trigger": "m"
+    }
+  ],
+  "reports": [
+    {
+      "normalized": "https://example.invalid/?cmd=b&t=s&n=Reference+Hero&r=Gyrognome&c=Robot+Monk&l=2&x=1&i=Bronze+Sword&z=Hastiness+II&k=CHA+15&a=Act+I&h=Alpaquil&rev=6",
+      "unsigned_fields": [
+        {
+          "name": "cmd",
+          "value": "b"
+        },
+        {
+          "name": "t",
+          "value": "s"
+        },
+        {
+          "name": "n",
+          "value": "Reference Hero"
+        },
+        {
+          "name": "r",
+          "value": "Gyrognome"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk"
+        },
+        {
+          "name": "l",
+          "value": "2"
+        },
+        {
+          "name": "x",
+          "value": "1"
+        },
+        {
+          "name": "i",
+          "value": "Bronze Sword"
+        },
+        {
+          "name": "z",
+          "value": "Hastiness II"
+        },
+        {
+          "name": "k",
+          "value": "CHA 15"
+        },
+        {
+          "name": "a",
+          "value": "Act I"
+        },
+        {
+          "name": "h",
+          "value": "Alpaquil"
+        },
+        {
+          "name": "rev",
+          "value": "6"
+        },
+        {
+          "name": "m",
+          "value": "Synthetic motto"
+        }
+      ],
+      "validator": -1136545038
+    },
+    {
+      "normalized": "https://example.invalid/?cmd=b&t=l&n=Synthetic+Level+Subject&r=Gyrognome&c=Robot+Monk&l=2&x=0&i=Stick&z=&k=CHA+15&a=Act+I&h=Alpaquil&rev=6",
+      "unsigned_fields": [
+        {
+          "name": "cmd",
+          "value": "b"
+        },
+        {
+          "name": "t",
+          "value": "l"
+        },
+        {
+          "name": "n",
+          "value": "Synthetic Level Subject"
+        },
+        {
+          "name": "r",
+          "value": "Gyrognome"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk"
+        },
+        {
+          "name": "l",
+          "value": "2"
+        },
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "i",
+          "value": "Stick"
+        },
+        {
+          "name": "z",
+          "value": ""
+        },
+        {
+          "name": "k",
+          "value": "CHA 15"
+        },
+        {
+          "name": "a",
+          "value": "Act I"
+        },
+        {
+          "name": "h",
+          "value": "Alpaquil"
+        },
+        {
+          "name": "rev",
+          "value": "6"
+        },
+        {
+          "name": "m",
+          "value": "Synthetic motto"
+        }
+      ],
+      "validator": 1395334045
+    },
+    {
+      "normalized": "https://example.invalid/?cmd=b&t=a&n=Synthetic+Reward+Subject&r=Gyrognome&c=Robot+Monk&l=2&x=0&i=Macrame+Gauntlets&z=&k=CHA+15&a=Act+II&h=Alpaquil&rev=6",
+      "unsigned_fields": [
+        {
+          "name": "cmd",
+          "value": "b"
+        },
+        {
+          "name": "t",
+          "value": "a"
+        },
+        {
+          "name": "n",
+          "value": "Synthetic Reward Subject"
+        },
+        {
+          "name": "r",
+          "value": "Gyrognome"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk"
+        },
+        {
+          "name": "l",
+          "value": "2"
+        },
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "i",
+          "value": "Macrame Gauntlets"
+        },
+        {
+          "name": "z",
+          "value": ""
+        },
+        {
+          "name": "k",
+          "value": "CHA 15"
+        },
+        {
+          "name": "a",
+          "value": "Act II"
+        },
+        {
+          "name": "h",
+          "value": "Alpaquil"
+        },
+        {
+          "name": "rev",
+          "value": "6"
+        },
+        {
+          "name": "m",
+          "value": "Synthetic motto"
+        }
+      ],
+      "validator": -2074890748
+    },
+    {
+      "normalized": "https://example.invalid/?cmd=b&t=b&n=Reference+Hero&r=Gyrognome&c=Robot+Monk&l=2&x=1&i=Bronze+Sword&z=Hastiness+II&k=CHA+15&a=Act+I&h=Alpaquil&rev=6",
+      "unsigned_fields": [
+        {
+          "name": "cmd",
+          "value": "b"
+        },
+        {
+          "name": "t",
+          "value": "b"
+        },
+        {
+          "name": "n",
+          "value": "Reference Hero"
+        },
+        {
+          "name": "r",
+          "value": "Gyrognome"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk"
+        },
+        {
+          "name": "l",
+          "value": "2"
+        },
+        {
+          "name": "x",
+          "value": "1"
+        },
+        {
+          "name": "i",
+          "value": "Bronze Sword"
+        },
+        {
+          "name": "z",
+          "value": "Hastiness II"
+        },
+        {
+          "name": "k",
+          "value": "CHA 15"
+        },
+        {
+          "name": "a",
+          "value": "Act I"
+        },
+        {
+          "name": "h",
+          "value": "Alpaquil"
+        },
+        {
+          "name": "rev",
+          "value": "6"
+        },
+        {
+          "name": "m",
+          "value": "Synthetic motto"
+        }
+      ],
+      "validator": -117312586
+    },
+    {
+      "normalized": "https://example.invalid/?cmd=b&t=m&n=Reference+Hero&r=Gyrognome&c=Robot+Monk&l=2&x=1&i=Bronze+Sword&z=Hastiness+II&k=CHA+15&a=Act+I&h=Alpaquil&rev=6",
+      "unsigned_fields": [
+        {
+          "name": "cmd",
+          "value": "b"
+        },
+        {
+          "name": "t",
+          "value": "m"
+        },
+        {
+          "name": "n",
+          "value": "Reference Hero"
+        },
+        {
+          "name": "r",
+          "value": "Gyrognome"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk"
+        },
+        {
+          "name": "l",
+          "value": "2"
+        },
+        {
+          "name": "x",
+          "value": "1"
+        },
+        {
+          "name": "i",
+          "value": "Bronze Sword"
+        },
+        {
+          "name": "z",
+          "value": "Hastiness II"
+        },
+        {
+          "name": "k",
+          "value": "CHA 15"
+        },
+        {
+          "name": "a",
+          "value": "Act I"
+        },
+        {
+          "name": "h",
+          "value": "Alpaquil"
+        },
+        {
+          "name": "rev",
+          "value": "6"
+        },
+        {
+          "name": "m",
+          "value": "Changed synthetic motto"
+        }
+      ],
+      "validator": 977154933
+    }
+  ],
+  "source": {
+    "content_sha256": "cc76f256057d6ddbf7010f1b94e59913b935b9980138ed5e800bdd1e5ff5ec4e",
+    "derivation": "committed synthetic reference state and bundled static ruleset",
+    "revision": "6",
+    "validator_salt": 4242
+  }
+}

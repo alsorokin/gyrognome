@@ -1,5 +1,7 @@
 pub mod checkpoint;
 pub mod cli;
+#[cfg(feature = "conformance-bridge")]
+pub mod conformance_bridge;
 pub mod dashboard;
 pub mod fixtures;
 pub mod lifecycle;

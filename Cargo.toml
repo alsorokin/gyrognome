@@ -3,6 +3,11 @@ name = "gyrognome"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Exposes a stdin/stdout-only adapter used exclusively by the Playwright
+# conformance harness. It is intentionally absent from normal CLI builds.
+conformance-bridge = []
+
 [dependencies]
 base64 = "0.22"
 clap = { version = "4.5", features = ["derive"] }

@@ -6,3 +6,8 @@
 
 # Rust build output.
 /target/
+
+# Browser dependencies and ephemeral profiles used by the disposable
+# conformance harness must never be committed.
+/node_modules/
+/.playwright-mcp/

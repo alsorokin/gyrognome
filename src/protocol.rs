@@ -1,3 +1,6 @@
+use serde::{Deserialize, Serialize};
+
+use crate::simulation::ReportEvent;
 use crate::state::Character;
 use thiserror::Error;
 use url::Url;
@@ -75,6 +78,99 @@ pub struct ReportFields<'a> {
     pub motto: &'a str,
 }
 
+/// An unsigned progress-report parameter in browser field order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsignedReportField {
+    pub name: String,
+    pub value: String,
+}
+
+/// Inspectable, transport-free progress-report construction output.
+///
+/// `normalized` is the standardized request prefix before its validator and
+/// motto are appended. It is intentionally not a complete signed request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstructedReport {
+    pub unsigned_fields: Vec<UnsignedReportField>,
+    pub normalized: String,
+    pub validator: i32,
+}
+
+/// Constructs browser-ordered report data from a credential-free transition
+/// event and a caller-supplied synthetic passkey.
+pub fn progress_report_for_event(
+    event: &ReportEvent,
+    synthetic_passkey: i32,
+) -> Result<ConstructedReport, ProtocolError> {
+    let character = &event.snapshot.character;
+    let host = character
+        .online
+        .as_ref()
+        .map(|online| online.host.as_str())
+        .unwrap_or_default();
+    report_construction(
+        host,
+        event.trigger.code(),
+        character,
+        ReportFields {
+            xp_position: character.progress.experience.position as u64,
+            best_equipment: &character.bestequip,
+            best_spell: &character.bestspell,
+            best_stat: &character.beststat,
+            best_plot: &character.plot.bestplot,
+            motto: &event.motto,
+        },
+        synthetic_passkey,
+    )
+}
+
+fn report_construction(
+    host: &str,
+    trigger: char,
+    character: &Character,
+    fields: ReportFields<'_>,
+    passkey: i32,
+) -> Result<ConstructedReport, ProtocolError> {
+    let realm = character
+        .online
+        .as_ref()
+        .map(|online| online.realm.as_str())
+        .unwrap_or_default();
+    let unsigned_fields = vec![
+        ("cmd", "b".to_owned()),
+        ("t", trigger.to_string()),
+        ("n", character.traits.name.clone()),
+        ("r", character.traits.race.clone()),
+        ("c", character.traits.class.clone()),
+        ("l", character.traits.level.to_string()),
+        ("x", fields.xp_position.to_string()),
+        ("i", fields.best_equipment.to_owned()),
+        ("z", fields.best_spell.to_owned()),
+        ("k", fields.best_stat.to_owned()),
+        ("a", fields.best_plot.to_owned()),
+        ("h", realm.to_owned()),
+        ("rev", REVISION.to_owned()),
+        ("m", fields.motto.to_owned()),
+    ]
+    .into_iter()
+    .map(|(name, value)| UnsignedReportField {
+        name: name.to_owned(),
+        value,
+    })
+    .collect::<Vec<_>>();
+    let query = unsigned_fields[..unsigned_fields.len() - 1]
+        .iter()
+        .map(|field| format!("{}={}", field.name, url_encode(&field.value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let normalized = standardize_url(&format!("{host}{query}"))?;
+    Ok(ConstructedReport {
+        unsigned_fields,
+        validator: validator(&normalized, passkey),
+        normalized,
+    })
+}
+
 pub fn progress_report(
     host: &str,
     character: &Character,
@@ -82,29 +178,13 @@ pub fn progress_report(
     fields: ReportFields<'_>,
     passkey: i32,
 ) -> Result<String, ProtocolError> {
-    let realm = character
-        .online
-        .as_ref()
-        .map(|online| online.realm.as_str())
-        .unwrap_or_default();
-    let query = format!(
-        "cmd=b&t={trigger}&n={}&r={}&c={}&l={}&x={}&i={}&z={}&k={}&a={}&h={}&rev={REVISION}",
-        url_encode(&character.traits.name),
-        url_encode(&character.traits.race),
-        url_encode(&character.traits.class),
-        character.traits.level,
-        fields.xp_position,
-        url_encode(fields.best_equipment),
-        url_encode(fields.best_spell),
-        url_encode(fields.best_stat),
-        url_encode(fields.best_plot),
-        url_encode(realm)
-    );
-    let standardized = standardize_url(&format!("{host}{query}"))?;
+    let motto = fields.motto.to_owned();
+    let report = report_construction(host, trigger, character, fields, passkey)?;
     Ok(format!(
-        "{standardized}&p={}&m={}",
-        validator(&standardized, passkey),
-        url_encode(fields.motto)
+        "{}&p={}&m={}",
+        report.normalized,
+        report.validator,
+        url_encode(&motto)
     ))
 }
 

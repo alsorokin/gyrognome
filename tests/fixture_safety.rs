@@ -22,3 +22,12 @@ fn paired_timing_checkpoints_are_credential_free() {
         assert!(!content.to_ascii_lowercase().contains("passkey"));
     }
 }
+
+#[test]
+fn synthetic_report_trace_is_credential_free_and_unsigned() {
+    let path = Path::new("tests/fixtures/report-trace-synthetic.json");
+    let content = fs::read_to_string(path).unwrap();
+    validate_fixture(path, &content).unwrap();
+    assert!(!content.to_ascii_lowercase().contains("passkey"));
+    assert!(!(content.contains("cmd=") && content.contains("&p=")));
+}

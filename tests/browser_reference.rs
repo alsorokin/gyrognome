@@ -43,3 +43,33 @@ fn matches_sanitized_browser_reference_fixture() {
         fixture["validator"]["result"].as_i64().unwrap() as i32
     );
 }
+
+#[test]
+fn records_all_browser_report_triggers_in_browser_field_order() {
+    let fixture: Value = serde_json::from_str(
+        &fs::read_to_string("tests/fixtures/browser-report-trace.json").unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fixture["source"]["revision"], REVISION);
+    assert_eq!(
+        fixture["source"]["content_sha256"],
+        "63926cda54b232c5e5be4e97123710ee4ab2dbd1faa213b21ddc01dab54a1ce0"
+    );
+    assert_eq!(
+        fixture["field_order"],
+        serde_json::json!([
+            "cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "m"
+        ])
+    );
+    assert_eq!(
+        fixture["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|event| event["trigger"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["s", "b", "m", "l", "a"]
+    );
+    assert_eq!(fixture["events"][3]["level"], "2");
+    assert_eq!(fixture["events"][4]["best_plot"], "Act I");
+}

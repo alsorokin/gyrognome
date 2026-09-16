@@ -9,6 +9,8 @@ use serde::Serialize;
 use serde_json::to_string_pretty;
 use thiserror::Error;
 
+#[cfg(feature = "conformance-bridge")]
+use crate::conformance_bridge;
 use crate::{
     dashboard::{self, DashboardProvider, LocalProvider},
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
@@ -82,6 +84,10 @@ enum Command {
         #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(100..=60_000))]
         refresh_ms: u64,
     },
+    #[cfg(feature = "conformance-bridge")]
+    /// Test-only stdin/stdout adapter for the disposable browser harness.
+    #[command(hide = true)]
+    ConformanceBridge,
 }
 
 #[derive(Debug, Error)]
@@ -100,6 +106,9 @@ pub enum CliError {
     Signal(#[from] std::io::Error),
     #[error(transparent)]
     Dashboard(#[from] dashboard::DashboardError),
+    #[cfg(feature = "conformance-bridge")]
+    #[error(transparent)]
+    ConformanceBridge(#[from] conformance_bridge::BridgeError),
 }
 
 pub fn run() -> Result<(), CliError> {
@@ -201,6 +210,8 @@ pub fn run() -> Result<(), CliError> {
             let stop = shutdown_flag()?;
             dashboard::run(&provider, id, Duration::from_millis(refresh_ms), &stop)?;
         }
+        #[cfg(feature = "conformance-bridge")]
+        Command::ConformanceBridge => conformance_bridge::run_stdio()?,
     }
     Ok(())
 }

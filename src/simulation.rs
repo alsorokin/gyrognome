@@ -7,6 +7,8 @@
 //! mutates the source save document (see `openspec/changes/
 //! establish-deterministic-simulation/design.md`).
 
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::rng::Alea;
@@ -27,6 +29,118 @@ pub enum SimulationError {
 /// before applying it to the active task's progress bar.
 const MAX_TICK_MS: u64 = 100;
 
+/// The browser call site that emits a leaderboard progress report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReportTrigger {
+    #[serde(rename = "s")]
+    InitialLoad,
+    #[serde(rename = "l")]
+    LevelUp,
+    #[serde(rename = "a")]
+    ActCompletion,
+    #[serde(rename = "b")]
+    ManualBrag,
+    #[serde(rename = "m")]
+    MottoChange,
+}
+
+impl ReportTrigger {
+    pub const fn code(self) -> char {
+        match self {
+            Self::InitialLoad => 's',
+            Self::LevelUp => 'l',
+            Self::ActCompletion => 'a',
+            Self::ManualBrag => 'b',
+            Self::MottoChange => 'm',
+        }
+    }
+}
+
+/// A complete canonical state at a browser report call site.
+///
+/// The source document is explicitly removed before it is exposed or
+/// serialized. `Character`'s serializer also skips that field, providing a
+/// second guard against a save-derived passkey entering a trace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransitionSnapshot {
+    pub character: Character,
+}
+
+impl TransitionSnapshot {
+    fn capture(state: &Character, seed: crate::rng::AleaState) -> Self {
+        let mut character = state.clone();
+        character.document = Value::Null;
+        character.seed = seed;
+        Self { character }
+    }
+}
+
+/// A credential-free browser leaderboard report event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportEvent {
+    pub trigger: ReportTrigger,
+    pub snapshot: TransitionSnapshot,
+    /// Motto is transient browser UI data, rather than a field in a save.
+    pub motto: String,
+}
+
+impl ReportEvent {
+    fn capture(
+        trigger: ReportTrigger,
+        state: &Character,
+        seed: crate::rng::AleaState,
+        motto: &str,
+    ) -> Option<Self> {
+        state.online.as_ref()?;
+        Self {
+            trigger,
+            snapshot: TransitionSnapshot::capture(state, seed),
+            motto: motto.to_owned(),
+        }
+        .into()
+    }
+}
+
+/// Result of a deterministic advancement with its browser report trace.
+#[derive(Debug, Clone)]
+pub struct AdvancementTrace {
+    pub state: Character,
+    pub events: Vec<ReportEvent>,
+}
+
+/// An explicit browser action that produces a report without advancing time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ExplicitReportAction {
+    InitialLoad { motto: String },
+    ManualBrag { motto: String },
+    MottoChange { motto: String },
+}
+
+/// Captures reports from explicit browser UI actions at the supplied state.
+///
+/// This does not persist a motto or mutate a character: browser motto data is
+/// report-only input and is intentionally kept outside save-document access.
+pub fn explicit_report_events(
+    state: &Character,
+    actions: impl IntoIterator<Item = ExplicitReportAction>,
+) -> Vec<ReportEvent> {
+    actions
+        .into_iter()
+        .filter_map(|action| match action {
+            ExplicitReportAction::InitialLoad { motto } if state.activity.elapsed == 0 => {
+                ReportEvent::capture(ReportTrigger::InitialLoad, state, state.seed, &motto)
+            }
+            ExplicitReportAction::InitialLoad { .. } => None,
+            ExplicitReportAction::ManualBrag { motto } => {
+                ReportEvent::capture(ReportTrigger::ManualBrag, state, state.seed, &motto)
+            }
+            ExplicitReportAction::MottoChange { motto } => {
+                ReportEvent::capture(ReportTrigger::MottoChange, state, state.seed, &motto)
+            }
+        })
+        .collect()
+}
+
 /// Advances `state` by `elapsed_ms` of caller-supplied (never wall-clock) time
 /// and returns the resulting state.
 ///
@@ -41,11 +155,25 @@ pub fn advance(
     ruleset: &Ruleset,
     elapsed_ms: u64,
 ) -> Result<Character, SimulationError> {
+    Ok(advance_with_trace(state, ruleset, elapsed_ms, "")?.state)
+}
+
+/// Advances state and captures level-up and act-completion report events.
+///
+/// `motto` is supplied explicitly because it is browser UI state, not a
+/// canonical save field. The returned state is identical to [`advance`].
+pub fn advance_with_trace(
+    state: &Character,
+    ruleset: &Ruleset,
+    elapsed_ms: u64,
+    motto: &str,
+) -> Result<AdvancementTrace, SimulationError> {
     let mut next = state.clone();
+    let mut events = Vec::new();
     let mut remaining = elapsed_ms;
     loop {
         if next.progress.task.done() {
-            dispatch_completion(&mut next, ruleset)?;
+            dispatch_completion(&mut next, ruleset, motto, &mut events)?;
             continue;
         }
         if remaining == 0 {
@@ -57,7 +185,10 @@ pub fn advance(
             .increment(ProgressBarKind::Task, tick as f64);
         remaining -= tick;
     }
-    Ok(next)
+    Ok(AdvancementTrace {
+        state: next,
+        events,
+    })
 }
 
 /// Ports the browser `Timer1Timer`'s `TaskBar.done()` branch: task-count and
@@ -65,7 +196,12 @@ pub fn advance(
 /// and `Dequeue()`'s task-queue selection. `ClearAllSelections()` only
 /// touches transient UI selection state with no canonical representation, so
 /// it has nothing to port.
-fn dispatch_completion(state: &mut Character, ruleset: &Ruleset) -> Result<(), SimulationError> {
+fn dispatch_completion(
+    state: &mut Character,
+    ruleset: &Ruleset,
+    motto: &str,
+    events: &mut Vec<ReportEvent>,
+) -> Result<(), SimulationError> {
     let mut rng = Alea::from_state(state.seed);
     let task_max = state.progress.task.max;
     state.activity.tasks += 1;
@@ -83,6 +219,11 @@ fn dispatch_completion(state: &mut Character, ruleset: &Ruleset) -> Result<(), S
     if gain {
         if state.progress.experience.done() {
             level_up(state, ruleset, &mut rng);
+            if let Some(event) =
+                ReportEvent::capture(ReportTrigger::LevelUp, state, rng.state(), motto)
+            {
+                events.push(event);
+            }
         } else {
             state
                 .progress
@@ -104,13 +245,13 @@ fn dispatch_completion(state: &mut Character, ruleset: &Ruleset) -> Result<(), S
 
     if gain || state.plot.act == 0 {
         if state.progress.plot.done() {
-            interplot_cinematic(state, ruleset, &mut rng)?;
+            interplot_cinematic(state, ruleset, &mut rng, motto, events)?;
         } else {
             state.progress.plot.increment(ProgressBarKind::Plot, delta);
         }
     }
 
-    dequeue(state, ruleset, &mut rng)?;
+    dequeue(state, ruleset, &mut rng, motto, events)?;
     state.seed = rng.state();
     Ok(())
 }
@@ -121,6 +262,8 @@ fn dequeue(
     state: &mut Character,
     ruleset: &Ruleset,
     rng: &mut Alea,
+    motto: &str,
+    events: &mut Vec<ReportEvent>,
 ) -> Result<(), SimulationError> {
     while state.progress.task.done() {
         if split(&state.activity.task, 0) == "kill" {
@@ -155,6 +298,14 @@ fn dequeue(
                 "plot" => {
                     state.queue.remove(0);
                     complete_act(state, ruleset, rng);
+                    if let Some(event) = ReportEvent::capture(
+                        ReportTrigger::ActCompletion,
+                        state,
+                        rng.state(),
+                        motto,
+                    ) {
+                        events.push(event);
+                    }
                     set_task(
                         state,
                         &format!("Loading {}", state.plot.bestplot),
@@ -520,6 +671,8 @@ fn interplot_cinematic(
     state: &mut Character,
     ruleset: &Ruleset,
     rng: &mut Alea,
+    motto: &str,
+    events: &mut Vec<ReportEvent>,
 ) -> Result<(), SimulationError> {
     match random_index(rng, 3) {
         0 => {
@@ -528,24 +681,32 @@ fn interplot_cinematic(
                 "task|1|Exhausted, you arrive at a friendly oasis in a hostile land",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|2|You greet old friends and meet new allies",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|2|You are privy to a council of powerful do-gooders",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|1|There is much to be done. You are chosen!",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
         }
         1 => {
@@ -554,6 +715,8 @@ fn interplot_cinematic(
                 "task|1|Your quarry is in sight, but a mighty enemy bars your path!",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             let nemesis = named_monster(ruleset, state.traits.level + 3, rng);
             enqueue(
@@ -561,6 +724,8 @@ fn interplot_cinematic(
                 &format!("task|4|A desperate struggle commences with {nemesis}"),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             let mut sequence = random_index(rng, 3);
             for _ in 1..=random_index(rng, (state.plot.act + 2) as usize) {
@@ -571,19 +736,30 @@ fn interplot_cinematic(
                     2 => format!("You seem to gain the advantage over {nemesis}"),
                     _ => unreachable!(),
                 };
-                enqueue(state, &format!("task|2|{caption}"), ruleset, rng)?;
+                enqueue(
+                    state,
+                    &format!("task|2|{caption}"),
+                    ruleset,
+                    rng,
+                    motto,
+                    events,
+                )?;
             }
             enqueue(
                 state,
                 &format!("task|3|Victory! {nemesis} is slain! Exhausted, you lose consciousness"),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|2|You awake in a friendly place, but the road awaits",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
         }
         2 => {
@@ -593,6 +769,8 @@ fn interplot_cinematic(
                 &format!("task|2|Oh sweet relief! You've reached the kind protection of {nemesis}"),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
@@ -601,6 +779,8 @@ fn interplot_cinematic(
                 ),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
@@ -610,29 +790,37 @@ fn interplot_cinematic(
                 ),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|2|What's this!? You overhear something shocking!",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 &format!("task|2|Could {nemesis} be a dirty double-dealer?"),
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
             enqueue(
                 state,
                 "task|3|Who can possibly be trusted with this news!? -- Oh yes, of course",
                 ruleset,
                 rng,
+                motto,
+                events,
             )?;
         }
         _ => unreachable!(),
     }
-    enqueue(state, "plot|1|Loading", ruleset, rng)
+    enqueue(state, "plot|1|Loading", ruleset, rng, motto, events)
 }
 
 fn enqueue(
@@ -640,9 +828,11 @@ fn enqueue(
     entry: &str,
     ruleset: &Ruleset,
     rng: &mut Alea,
+    motto: &str,
+    events: &mut Vec<ReportEvent>,
 ) -> Result<(), SimulationError> {
     state.queue.push(entry.to_owned());
-    dequeue(state, ruleset, rng)
+    dequeue(state, ruleset, rng, motto, events)
 }
 
 fn named_monster(ruleset: &Ruleset, level: u64, rng: &mut Alea) -> String {

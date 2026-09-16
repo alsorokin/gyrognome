@@ -1,0 +1,18 @@
+{
+  "_comment": "Credential-free browser observation from a disposable offline character with intercepted Ajax; no leaderboard request was sent.",
+  "source": {
+    "client": "https://progressquest.com/play/main.js",
+    "revision": "6",
+    "content_sha256": "63926cda54b232c5e5be4e97123710ee4ab2dbd1faa213b21ddc01dab54a1ce0",
+    "observed_with": "Playwright MCP",
+    "recorded_on": "2026-09-16"
+  },
+  "field_order": ["cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "m"],
+  "events": [
+    {"trigger": "s", "motto": "Synthetic motto", "level": "1", "best_plot": "Prologue"},
+    {"trigger": "b", "motto": "Synthetic motto", "level": "1", "best_plot": "Prologue"},
+    {"trigger": "m", "motto": "Changed synthetic motto", "level": "1", "best_plot": "Prologue"},
+    {"trigger": "l", "motto": "Changed synthetic motto", "level": "2", "best_plot": "Prologue"},
+    {"trigger": "a", "motto": "Changed synthetic motto", "level": "2", "best_plot": "Act I"}
+  ]
+}

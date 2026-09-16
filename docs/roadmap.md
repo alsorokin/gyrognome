@@ -54,7 +54,43 @@ of one managed character:
 - Keeps browser passkeys, raw save documents, HTTP transport, and leaderboard
   reporting out of scope.
 
+## Completed: Simulation Timing Conformance
+
+The deterministic simulation and local runtime now have stronger timing
+conformance guarantees:
+
+- Worker elapsed time is monotonic and capped at one configured interval, so
+  scheduler delays and process suspension do not grant catch-up progression.
+- Equivalent nonzero elapsed-duration partitions preserve canonical state and
+  Alea continuation, including across task-completion boundaries.
+- Simulation and elapsed-duration failures preserve the last persisted
+  canonical state without partial writes.
+- Sanitized paired browser-derived checkpoints cover partitioning and task
+  completion behavior.
+
+## In Progress: Leaderboard Conformance and Anti-Cheat Safety
+
+Local state advancement matching the browser is necessary but not sufficient:
+the official leaderboard classifies nonconforming characters into a separate
+cheater population. Before any general leaderboard reporting is added,
+Gyrognome must prove its reported history is browser-equivalent and that
+controlled characters are not classified as cheaters:
+
+- Credential-free, ordered report-transition traces (`s`/`l`/`a`/`b`/`m`) from
+  deterministic simulation, matching the browser's exact report call sites.
+- Trigger-specific report construction and synthetic/browser-derived trace
+  conformance fixtures, with no signed request or passkey ever committed.
+- A disposable-character, explicitly confirmed Playwright harness that lets
+  the official browser create and hold the online credential, so Gyrognome's
+  reported traces can be compared against it without touching a real save.
+- Required evidence, gated behind explicit operator confirmation: paired
+  browser/Gyrognome scenario traces match, and the disposable character
+  remains in the normal leaderboard population rather than the cheater one.
+
+General leaderboard reporting for managed characters remains unsupported
+until this evidence gate passes.
+
 ## Planned Sequence
 
-1. Reassess timing and simulation conformance.
-2. Only when that reassessment is proven, add leaderboard reporting.
+1. Complete leaderboard conformance and anti-cheat safety evidence.
+2. Only when that evidence passes, add general leaderboard reporting.

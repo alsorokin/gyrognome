@@ -24,13 +24,28 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
     if content.contains("cmd=") && content.contains("&p=") {
         return Err(FixtureSafetyError::SignedRequest);
     }
-    if content.contains(".playwright-mcp") || content.contains("Default/") {
+    if content.contains(".playwright-mcp")
+        || content.contains("Default/")
+        || content.contains("Chrome/User Data")
+        || content.contains("user-data-dir")
+    {
         return Err(FixtureSafetyError::BrowserProfile);
     }
-    if path
+    let is_trace_or_experiment =
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.contains("trace")
+                    || name.contains("experiment")
+                    || name.contains("evidence")
+                    || name.contains("diagnostic")
+            });
+    if (path
         .file_name()
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with("checkpoint-"))
+        || is_trace_or_experiment)
         && content.to_ascii_lowercase().contains("passkey")
     {
         return Err(FixtureSafetyError::Passkey);
@@ -61,6 +76,17 @@ mod tests {
         assert_eq!(
             validate_fixture(Path::new("checkpoint-timing.json"), r#"{"passkey": 1}"#),
             Err(FixtureSafetyError::Passkey)
+        );
+        assert_eq!(
+            validate_fixture(Path::new("report-trace.json"), r#"{"passkey": 1}"#),
+            Err(FixtureSafetyError::Passkey)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("experiment-evidence.json"),
+                r#"{"profile": "Chrome/User Data"}"#
+            ),
+            Err(FixtureSafetyError::BrowserProfile)
         );
     }
 }
