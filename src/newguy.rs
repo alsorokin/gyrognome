@@ -165,10 +165,10 @@ pub fn generate_from_roll(
         },
         beststat: String::new(),
         activity: Activity {
-            task: "heading".to_owned(),
+            task: String::new(),
             tasks: 0,
             elapsed: 0,
-            kill: "Heading to the killing fields...".to_owned(),
+            kill: "Experiencing an enigmatic and foreboding night vision...".to_owned(),
             questmonster: String::new(),
             questmonsterindex: 0,
         },
@@ -201,9 +201,16 @@ pub fn generate_from_roll(
             encumbrance: bar(ProgressBarKind::Encumbrance, 10),
             plot: bar(ProgressBarKind::Plot, 26),
             quest: bar(ProgressBarKind::Quest, 1),
-            task: bar(ProgressBarKind::Task, 4_000),
+            task: bar(ProgressBarKind::Task, 10_000),
         },
-        queue: Vec::new(),
+        queue: vec![
+            "task|6|Much is revealed about that wise old bastard you'd underestimated".to_owned(),
+            "task|6|A shocking series of events leaves you alone and bewildered, but resolute"
+                .to_owned(),
+            "task|4|Drawing upon an unrealized reserve of determination, you set out on a long and dangerous journey"
+                .to_owned(),
+            "plot|2|Loading".to_owned(),
+        ],
         date: "Offline character".to_owned(),
         stamp: unix_millis(),
         online: None,
@@ -212,6 +219,11 @@ pub fn generate_from_roll(
         bestquest: String::new(),
     };
     apply_stats(&mut character, selection, ruleset, base_stats)?;
+    character.progress.encumbrance.reset(
+        ProgressBarKind::Encumbrance,
+        10 + character.stats.strength as u64,
+        0.0,
+    );
     Ok(character)
 }
 
@@ -374,9 +386,45 @@ mod tests {
         assert!(character.online.is_none());
         assert!(character.document.is_null());
         assert_eq!(character.inventory[0].name, "Gold");
+        assert_eq!(character.activity.task, "");
+        assert_eq!(
+            character.activity.kill,
+            "Experiencing an enigmatic and foreboding night vision..."
+        );
+        assert_eq!(character.progress.task.max, 10_000);
+        assert_eq!(
+            character.queue,
+            [
+                "task|6|Much is revealed about that wise old bastard you'd underestimated",
+                "task|6|A shocking series of events leaves you alone and bewildered, but resolute",
+                "task|4|Drawing upon an unrealized reserve of determination, you set out on a long and dangerous journey",
+                "plot|2|Loading",
+            ]
+        );
+        assert_eq!(
+            character.progress.encumbrance.max,
+            10 + character.stats.strength as u64
+        );
         let original = serde_json::to_string(&character).unwrap();
         assert!(crate::simulation::advance(&character, &crate::ruleset::BUNDLED, 4_000).is_ok());
         assert_eq!(serde_json::to_string(&character).unwrap(), original);
+    }
+
+    #[test]
+    fn keeps_new_characters_in_the_first_act_after_several_minutes() {
+        let selection = Selection {
+            name: "Offline Hero".to_owned(),
+            race: "Gyrognome".to_owned(),
+            class: "Robot Monk".to_owned(),
+        };
+        let character = generate(&selection, &crate::ruleset::BUNDLED, &mut Numbers(1)).unwrap();
+
+        let advanced =
+            crate::simulation::advance(&character, &crate::ruleset::BUNDLED, 5 * 60 * 1_000)
+                .unwrap();
+
+        assert_eq!(advanced.plot.act, 1);
+        assert_eq!(advanced.plot.bestplot, "Act I");
     }
 
     #[test]
