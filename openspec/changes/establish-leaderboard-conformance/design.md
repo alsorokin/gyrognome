@@ -74,6 +74,30 @@ the native `newguy` port is planned separately and is not prerequisite to this
 gate. Pure local fixtures alone were rejected because they cannot reveal
 undisclosed server-side classification rules.
 
+### Drive scenario timing with an injected, deterministic browser clock
+
+Real task, level, and act durations run to real hours in the browser, and
+`setTimeout`/`setInterval` delay is not directly controllable from outside the
+page. The harness will inject a replaceable clock (`Date.now` and the
+timer-scheduling functions the client calls through) into the disposable
+browser page before navigation, so it can advance the browser's own elapsed
+time deterministically and invoke its real callback (`Timer1Timer`) and report
+call sites (`LevelUp`, `CompleteAct`, `Brag`) directly, the same way the
+existing disposable-trigger capture already does for a single report. Pause is
+an elapsed-time gap with no callback invoked in between; restart is the same
+gap followed by a fresh page load of the same disposable character; a delayed
+callback is a callback invoked after a larger-than-interval synthetic gap.
+Before each scenario the harness will snapshot the browser's canonical state,
+feed that same snapshot and elapsed duration to the credential-free bridge,
+and diff the resulting Gyrognome event trace against the browser's actually
+observed report for that scenario.
+
+Waiting out real in-browser time was rejected as impractical for automated,
+repeatable experiments. Reimplementing the browser's timer/report logic
+independently in the harness (rather than invoking the real client functions)
+was rejected because it would test the harness's model of the browser instead
+of the browser itself.
+
 ## Risks / Trade-offs
 
 - [The server classification is delayed, unavailable, or undocumented] →

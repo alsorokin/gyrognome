@@ -3,8 +3,17 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
+  CLOCK_CONTROL,
+  DEFAULT_CLOCK_START_MS,
+  MOTTO_CHANGE_TEXT,
   OFFICIAL_ENDPOINTS,
+  REPORT_FIELDS,
+  SCENARIOS,
   assertCredentialFree,
+  bridgeActionsForScenario,
+  buildClockInitScript,
+  compareTraceObservations,
+  expectedObservationsFromBridgeEvents,
   isAllowedOfficialRequest,
   parseOptions,
   safeRequestObservation,
@@ -46,6 +55,7 @@ test('allows only the observed official pages and leaderboard endpoint', () => {
   assert.ok(isAllowedOfficialRequest(OFFICIAL_ENDPOINTS.play));
   assert.ok(isAllowedOfficialRequest(OFFICIAL_ENDPOINTS.config));
   assert.ok(isAllowedOfficialRequest(OFFICIAL_ENDPOINTS.client));
+  assert.ok(isAllowedOfficialRequest(`${OFFICIAL_ENDPOINTS.leaderboard}?cmd=create`));
   assert.ok(isAllowedOfficialRequest(`${OFFICIAL_ENDPOINTS.leaderboard}?cmd=b&t=s`));
   assert.equal(isAllowedOfficialRequest('https://example.invalid/play/'), false);
   assert.equal(isAllowedOfficialRequest('https://progressquest.com/unrelated.js'), false);
@@ -59,9 +69,6 @@ test('summarizes intercepted reports without a signed URL or validator', () => {
     method: () => 'GET',
   });
 
-  test('treats creation as an allowed disposable-browser operation', () => {
-    assert.ok(isAllowedOfficialRequest(`${OFFICIAL_ENDPOINTS.leaderboard}?cmd=create`));
-  });
   assert.deepEqual(observation, {
     endpoint: OFFICIAL_ENDPOINTS.leaderboard,
     method: 'GET',
@@ -74,4 +81,91 @@ test('summarizes intercepted reports without a signed URL or validator', () => {
     () => assertCredentialFree('https://example.invalid/?cmd=b&t=l&p=12345'),
     /signed leaderboard URL/,
   );
+});
+
+test('builds a deterministic clock injection script with Date and Worker overrides', () => {
+  const script = buildClockInitScript();
+  assert.match(script, new RegExp(CLOCK_CONTROL));
+  assert.match(script, /globalThis\.Date = FakeDate/);
+  assert.match(script, /globalThis\.Worker = function Worker/);
+  assert.match(script, /runFor: \(totalMs, options = \{\}\)/);
+  assert.match(script, new RegExp(String(DEFAULT_CLOCK_START_MS)));
+});
+
+test('declares all nine conformance scenarios in the required order', () => {
+  assert.deepEqual(
+    SCENARIOS.map((scenario) => scenario.id),
+    [
+      'initial-load',
+      'pause',
+      'restart',
+      'delayed-callback',
+      'task-completion',
+      'level-up',
+      'act-completion',
+      'manual-brag',
+      'motto-change',
+    ],
+  );
+  assert.deepEqual(
+    SCENARIOS.filter((scenario) => scenario.expectedTriggers.length > 0).map(
+      (scenario) => scenario.expectedTriggers[0],
+    ),
+    ['s', 'l', 'a', 'b', 'm'],
+  );
+});
+
+test('maps bridge events to safe expected request observations', () => {
+  const expected = expectedObservationsFromBridgeEvents([
+    { trigger: 's' },
+    { trigger: 'm' },
+  ]);
+  assert.deepEqual(expected, [
+    {
+      endpoint: OFFICIAL_ENDPOINTS.leaderboard,
+      method: 'GET',
+      operation: 'b',
+      trigger: 's',
+      fields: [...REPORT_FIELDS],
+    },
+    {
+      endpoint: OFFICIAL_ENDPOINTS.leaderboard,
+      method: 'GET',
+      operation: 'b',
+      trigger: 'm',
+      fields: [...REPORT_FIELDS],
+    },
+  ]);
+});
+
+test('builds explicit bridge actions for initial load, bragging, and motto change', () => {
+  const byId = Object.fromEntries(SCENARIOS.map((scenario) => [scenario.id, scenario]));
+  assert.deepEqual(bridgeActionsForScenario(byId['pause'], 'unused'), []);
+  assert.deepEqual(bridgeActionsForScenario(byId['initial-load'], ''), [
+    { InitialLoad: { motto: '' } },
+  ]);
+  assert.deepEqual(bridgeActionsForScenario(byId['manual-brag'], 'Synthetic'), [
+    { ManualBrag: { motto: 'Synthetic' } },
+  ]);
+  assert.deepEqual(bridgeActionsForScenario(byId['motto-change'], MOTTO_CHANGE_TEXT), [
+    { MottoChange: { motto: MOTTO_CHANGE_TEXT } },
+  ]);
+});
+
+test('diffs observed report traces and explains mismatches', () => {
+  const expected = expectedObservationsFromBridgeEvents([{ trigger: 'l' }]);
+  const passing = compareTraceObservations(expected, expected);
+  assert.equal(passing.pass, true);
+  assert.deepEqual(passing.differences, []);
+
+  const failing = compareTraceObservations(expected, [
+    {
+      ...expected[0],
+      trigger: 'a',
+      fields: ['cmd', 't'],
+    },
+  ]);
+  assert.equal(failing.pass, false);
+  assert.match(failing.differences.join('\n'), /trigger/);
+  assert.match(failing.differences.join('\n'), /fields/);
 });
