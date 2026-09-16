@@ -1040,6 +1040,7 @@ fn split(s: &str, index: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use base64::{Engine, engine::general_purpose::STANDARD};
+    use serde_json::to_value;
 
     use super::*;
     use crate::save::import_text;
@@ -1070,6 +1071,37 @@ mod tests {
         assert_eq!(after.dna.0, before.dna.0);
         assert_eq!(after.seed.0, before.seed.0);
         assert_eq!(after.inventory.len(), before.inventory.len());
+    }
+
+    #[test]
+    fn equivalent_nonzero_partitions_preserve_state_before_completion() {
+        let before = character();
+        let ruleset = Ruleset::default();
+        let total = advance(&before, &ruleset, 250).unwrap();
+        let partitioned = [100, 150]
+            .into_iter()
+            .try_fold(before, |state, elapsed| advance(&state, &ruleset, elapsed))
+            .unwrap();
+
+        assert_eq!(to_value(total).unwrap(), to_value(partitioned).unwrap());
+    }
+
+    #[test]
+    fn equivalent_nonzero_partitions_preserve_state_across_completion() {
+        let mut before = character();
+        before.progress.task.position = before.progress.task.max as f64 - 250.0;
+        before.queue = vec![
+            "task|6|The next task".to_owned(),
+            "task|6|Another task".to_owned(),
+        ];
+        let ruleset = Ruleset::default();
+        let total = advance(&before, &ruleset, 500).unwrap();
+        let partitioned = [100, 400]
+            .into_iter()
+            .try_fold(before, |state, elapsed| advance(&state, &ruleset, elapsed))
+            .unwrap();
+
+        assert_eq!(to_value(total).unwrap(), to_value(partitioned).unwrap());
     }
 
     #[test]

@@ -1,7 +1,17 @@
 use std::path::Path;
 
 use gyrognome::{checkpoint, ruleset, simulation};
-use serde_json::to_value;
+use serde_json::{Value, to_value};
+
+fn replay(checkpoint: &checkpoint::Checkpoint, advancement_ms: &[u64]) -> Value {
+    advancement_ms
+        .iter()
+        .try_fold(checkpoint.initial.clone(), |state, &elapsed_ms| {
+            simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms)
+        })
+        .map(|state| to_value(&state).unwrap())
+        .unwrap()
+}
 
 #[test]
 fn replays_the_incomplete_advancement_checkpoint_exactly() {
@@ -15,16 +25,11 @@ fn replays_the_incomplete_advancement_checkpoint_exactly() {
         ruleset::SOURCE_CONTENT_SHA256
     );
 
-    let mut state = checkpoint.initial;
-    for elapsed_ms in checkpoint.advancement_ms {
-        state = simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms).unwrap();
-    }
-
     // Compare full serializable canonical state (not just a summary), per the
     // "Replaying a checkpoint" scenario: the resulting canonical state must
     // match exactly, including the Alea continuation carried in `seed`.
     assert_eq!(
-        to_value(&state).unwrap(),
+        replay(&checkpoint, &checkpoint.advancement_ms),
         to_value(&checkpoint.expected).unwrap()
     );
 }
@@ -45,20 +50,17 @@ fn replays_the_completed_task_checkpoint_exactly() {
         ruleset::SOURCE_CONTENT_SHA256
     );
 
-    let mut state = checkpoint.initial;
-    for elapsed_ms in checkpoint.advancement_ms {
-        state = simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms).unwrap();
-    }
-
     assert_eq!(
-        to_value(&state).unwrap(),
+        replay(&checkpoint, &checkpoint.advancement_ms),
         to_value(&checkpoint.expected).unwrap()
     );
 }
 
 #[test]
-fn replays_each_browser_derived_reward_checkpoint_exactly() {
+fn replays_each_browser_derived_checkpoint_exactly() {
     for fixture in [
+        "checkpoint-incomplete-advancement.json",
+        "checkpoint-completed-task.json",
         "checkpoint-level-up.json",
         "checkpoint-equipment.json",
         "checkpoint-inventory.json",
@@ -68,15 +70,30 @@ fn replays_each_browser_derived_reward_checkpoint_exactly() {
     ] {
         let checkpoint = checkpoint::load(Path::new("tests/fixtures").join(fixture).as_path())
             .unwrap_or_else(|error| panic!("{fixture}: {error}"));
-        let mut state = checkpoint.initial;
-        for elapsed_ms in checkpoint.advancement_ms {
-            state = simulation::advance(&state, &ruleset::BUNDLED, elapsed_ms)
-                .unwrap_or_else(|error| panic!("{fixture}: {error}"));
-        }
+        let expected = to_value(&checkpoint.expected).unwrap();
         assert_eq!(
-            to_value(&state).unwrap(),
-            to_value(&checkpoint.expected).unwrap(),
+            replay(&checkpoint, &checkpoint.advancement_ms),
+            expected,
             "{fixture}"
         );
+        if !checkpoint.equivalent_advancement_ms.is_empty() {
+            assert!(
+                checkpoint
+                    .equivalent_advancement_ms
+                    .iter()
+                    .all(|&elapsed_ms| elapsed_ms > 0),
+                "{fixture} must use only nonzero partition durations"
+            );
+            assert_eq!(
+                checkpoint.equivalent_advancement_ms.iter().sum::<u64>(),
+                checkpoint.advancement_ms.iter().sum::<u64>(),
+                "{fixture} must preserve total elapsed duration"
+            );
+            assert_eq!(
+                replay(&checkpoint, &checkpoint.equivalent_advancement_ms),
+                expected,
+                "{fixture}"
+            );
+        }
     }
 }

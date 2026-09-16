@@ -455,6 +455,17 @@ pub enum WorkerError {
     ElapsedOverflow,
 }
 
+/// Selects the elapsed time contributed by one active worker callback.
+///
+/// Scheduler delay beyond `interval` is intentionally discarded.  The caller
+/// owns resetting its timing baseline after every callback attempt.
+pub fn select_worker_elapsed(previous: Instant, current: Instant, interval: Duration) -> Duration {
+    current
+        .checked_duration_since(previous)
+        .unwrap_or(Duration::ZERO)
+        .min(interval)
+}
+
 /// Owns one managed character and advances it only while this process is active.
 pub struct Worker {
     store: Store,
@@ -506,8 +517,9 @@ impl Worker {
                 break;
             }
             let now = Instant::now();
-            self.advance_elapsed(now.duration_since(self.last_tick))?;
+            let elapsed = select_worker_elapsed(self.last_tick, now, interval);
             self.last_tick = now;
+            self.advance_elapsed(elapsed)?;
         }
         Ok(())
     }
@@ -736,6 +748,54 @@ mod tests {
     }
 
     #[test]
+    fn selected_worker_elapsed_is_bounded_and_clock_independent() {
+        let previous = Instant::now();
+        let interval = Duration::from_millis(100);
+
+        assert_eq!(
+            select_worker_elapsed(previous, previous.checked_add(interval).unwrap(), interval),
+            interval
+        );
+        assert_eq!(
+            select_worker_elapsed(
+                previous,
+                previous.checked_add(Duration::from_millis(25)).unwrap(),
+                interval
+            ),
+            Duration::from_millis(25)
+        );
+        assert_eq!(
+            select_worker_elapsed(
+                previous,
+                previous.checked_add(Duration::from_millis(250)).unwrap(),
+                interval
+            ),
+            interval
+        );
+        assert_eq!(
+            select_worker_elapsed(previous, previous, interval),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn delayed_callback_does_not_accumulate_discarded_time() {
+        let previous = Instant::now();
+        let interval = Duration::from_millis(100);
+        let delayed = previous.checked_add(Duration::from_millis(250)).unwrap();
+        let next = delayed.checked_add(interval).unwrap();
+
+        assert_eq!(
+            select_worker_elapsed(previous, delayed, interval),
+            Duration::from_millis(100)
+        );
+        assert_eq!(
+            select_worker_elapsed(delayed, next, interval),
+            Duration::from_millis(100)
+        );
+    }
+
+    #[test]
     fn worker_leaves_last_good_state_on_simulation_or_storage_failure() {
         let directory = TestDirectory::new("worker-failures");
         let mut unsupported = fixture_character();
@@ -783,6 +843,34 @@ mod tests {
                 .activity
                 .tasks,
             storage_original.activity.tasks
+        );
+    }
+
+    #[test]
+    fn worker_leaves_persisted_state_unchanged_when_duration_overflows() {
+        let directory = TestDirectory::new("elapsed-overflow");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let original = registered.state.clone();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+
+        assert!(matches!(
+            worker.advance_elapsed(Duration::new(u64::MAX, 0)),
+            Err(WorkerError::ElapsedOverflow)
+        ));
+        drop(worker);
+
+        assert_eq!(
+            Store::open_at(&directory.0)
+                .unwrap()
+                .get(&registered.id)
+                .unwrap()
+                .state
+                .progress
+                .task
+                .position,
+            original.progress.task.position
         );
     }
 }

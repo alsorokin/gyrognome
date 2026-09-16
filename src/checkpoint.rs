@@ -29,6 +29,8 @@ use crate::{
 struct RawCheckpoint {
     ruleset: RawRulesetReference,
     advancement_ms: Vec<u64>,
+    #[serde(default)]
+    equivalent_advancement_ms: Vec<u64>,
     initial: Value,
     expected: Value,
 }
@@ -51,6 +53,9 @@ pub struct Checkpoint {
     /// The sequence of caller-supplied elapsed-millisecond advancement steps
     /// to apply, in order, to `initial`.
     pub advancement_ms: Vec<u64>,
+    /// A nonzero partition of [`Self::advancement_ms`] with the same total
+    /// duration and expected resulting canonical state.
+    pub equivalent_advancement_ms: Vec<u64>,
     /// The canonical state to begin replay from.
     pub initial: Character,
     /// The canonical state (including Alea continuation) the browser client
@@ -83,6 +88,7 @@ pub fn load(path: &Path) -> Result<Checkpoint, CheckpointError> {
         ruleset_revision: raw.ruleset.revision,
         ruleset_content_sha256: raw.ruleset.content_sha256,
         advancement_ms: raw.advancement_ms,
+        equivalent_advancement_ms: raw.equivalent_advancement_ms,
         initial: Character::from_document(raw.initial)?,
         expected: Character::from_document(raw.expected)?,
     })
@@ -132,6 +138,7 @@ mod tests {
 
         assert_eq!(loaded.ruleset_revision, "6");
         assert_eq!(loaded.advancement_ms, vec![0]);
+        assert!(loaded.equivalent_advancement_ms.is_empty());
         assert_eq!(loaded.initial.traits.name, loaded.expected.traits.name);
     }
 

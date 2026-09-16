@@ -28,8 +28,10 @@ the ruleset explicitly; `ruleset::BUNDLED` is the Progress Quest browser
 The simulation fixtures in `tests/fixtures/checkpoint-*.json` contain only
 synthetic disposable-browser observations. Each records its selected ruleset,
 initial canonical state, advancement sequence, and expected canonical state
-including Alea continuation. They must not contain player saves, passkeys,
-browser profiles, or signed leaderboard requests.
+including Alea continuation. Timing checkpoints also record a nonzero,
+equal-total partition, which must replay to that same expected state. They must
+not contain player saves, passkeys, browser profiles, or signed leaderboard
+requests.
 
 Run conformance and fixture-safety checks with:
 
@@ -101,9 +103,11 @@ gyrognome worker <character-id> --interval-ms 1000
 ```
 
 Only intervals spent in an active worker are advanced. Starting a worker later
-does **not** apply downtime as catch-up progression. A second worker for the
-same character exits with an "already running" error; the advisory lock is
-released automatically when its owner exits or crashes.
+does **not** apply downtime as catch-up progression. Each callback contributes
+at most one configured interval; scheduler delay and suspension time beyond
+that interval are discarded, not carried into a later callback. A second worker
+for the same character exits with an "already running" error; the advisory lock
+is released automatically when its owner exits or crashes.
 
 ### systemd user-service lifecycle
 

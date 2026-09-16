@@ -10,6 +10,8 @@ pub enum FixtureSafetyError {
     SignedRequest,
     #[error("fixture must not contain a browser profile path")]
     BrowserProfile,
+    #[error("checkpoint fixture must not contain an online passkey")]
+    Passkey,
 }
 
 pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyError> {
@@ -24,6 +26,14 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
     }
     if content.contains(".playwright-mcp") || content.contains("Default/") {
         return Err(FixtureSafetyError::BrowserProfile);
+    }
+    if path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("checkpoint-"))
+        && content.to_ascii_lowercase().contains("passkey")
+    {
+        return Err(FixtureSafetyError::Passkey);
     }
     Ok(())
 }
@@ -47,6 +57,10 @@ mod tests {
         assert_eq!(
             validate_fixture(Path::new("profile.txt"), ".playwright-mcp/Default"),
             Err(FixtureSafetyError::BrowserProfile)
+        );
+        assert_eq!(
+            validate_fixture(Path::new("checkpoint-timing.json"), r#"{"passkey": 1}"#),
+            Err(FixtureSafetyError::Passkey)
         );
     }
 }
