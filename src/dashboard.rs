@@ -13,7 +13,7 @@ use crossterm::{
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph, Wrap},
@@ -482,9 +482,12 @@ fn adventure_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     if character.quests.is_empty() {
         lines.push(Line::from("none"));
     } else {
-        lines.extend(character.quests.iter().map(|quest| {
-            let style = if !character.current_quest.is_empty() && quest == &character.current_quest
-            {
+        let current_quest_index = character
+            .quests
+            .iter()
+            .rposition(|quest| quest == &character.current_quest);
+        lines.extend(character.quests.iter().enumerate().map(|(index, quest)| {
+            let style = if current_quest_index == Some(index) {
                 Style::default().add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
@@ -515,10 +518,33 @@ fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Re
         area,
     );
     for ((label, bar), row) in bars.into_iter().zip(rows.iter().copied()) {
+        let label = format!("{label} {}%", bar.percent);
+        let filled_end = row.left()
+            + (f64::from(row.width) * (bar.percent.min(100) as f64 / 100.0)).round() as u16;
+        let label_start = row.left() + (row.width - label.len() as u16) / 2;
         frame.render_widget(
             Gauge::default()
+                .gauge_style(Style::default().fg(Color::Cyan))
                 .ratio((bar.percent.min(100) as f64) / 100.0)
-                .label(format!("{label} {}%", bar.percent)),
+                .label(label.clone()),
+            row,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(
+                label
+                    .chars()
+                    .enumerate()
+                    .map(|(index, character)| {
+                        let color = if label_start + (index as u16) < filled_end {
+                            Color::Black
+                        } else {
+                            Color::Cyan
+                        };
+                        Span::styled(character.to_string(), Style::default().fg(color))
+                    })
+                    .collect::<Vec<_>>(),
+            ))
+            .alignment(Alignment::Center),
             row,
         );
     }
@@ -743,6 +769,91 @@ mod tests {
             .find(|span| span.content == "Fetch me an anvil")
             .unwrap();
         assert!(current.style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn adventure_highlights_only_the_latest_matching_quest() {
+        let mut character = sample().character;
+        character.quests = vec![
+            "Fetch me an anvil".to_owned(),
+            "Deliver this cookie".to_owned(),
+            "Fetch me an anvil".to_owned(),
+        ];
+        character.current_quest = "Fetch me an anvil".to_owned();
+
+        let matching_quests = adventure_lines(&character)
+            .into_iter()
+            .flat_map(|line| line.spans)
+            .filter(|span| span.content == "Fetch me an anvil")
+            .collect::<Vec<_>>();
+
+        assert_eq!(matching_quests.len(), 2);
+        assert!(
+            !matching_quests[0]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            matching_quests[1]
+                .style
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn progress_labels_contrast_with_the_bar_background() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut snapshot = sample();
+        snapshot.character.progress.experience.percent = 100;
+        terminal
+            .draw(|frame| render(frame, &snapshot, None))
+            .unwrap();
+
+        let label = "Experience 100%";
+        let label_cells = terminal
+            .backend()
+            .buffer()
+            .content()
+            .windows(label.len())
+            .find(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == label)
+            .unwrap();
+
+        assert!(label_cells.iter().all(|cell| cell.bg == Color::Cyan));
+        assert!(label_cells.iter().all(|cell| cell.fg == Color::Black));
+
+        snapshot.character.progress.experience.percent = 0;
+        terminal
+            .draw(|frame| render(frame, &snapshot, None))
+            .unwrap();
+        let label = "Experience 0%";
+        let label_cells = terminal
+            .backend()
+            .buffer()
+            .content()
+            .windows(label.len())
+            .find(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == label)
+            .unwrap();
+
+        assert!(label_cells.iter().all(|cell| cell.fg == Color::Cyan));
+
+        snapshot.character.progress.experience.percent = 50;
+        terminal
+            .draw(|frame| render(frame, &snapshot, None))
+            .unwrap();
+        let label = "Experience 50%";
+        let label_cells = terminal
+            .backend()
+            .buffer()
+            .content()
+            .windows(label.len())
+            .find(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == label)
+            .unwrap();
+
+        assert!(label_cells.iter().any(|cell| cell.fg == Color::Black));
+        assert!(label_cells.iter().any(|cell| cell.fg == Color::Cyan));
     }
 
     #[test]
