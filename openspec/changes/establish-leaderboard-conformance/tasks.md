@@ -17,7 +17,7 @@
 - [x] 3.1 Design and implement a narrowly scoped, explicitly confirmed Playwright experiment harness that creates and uses only a fresh disposable online character; verify it refuses a managed-character input or any run without confirmation.
 - [x] 3.2 Limit browser-harness network access to the observed official endpoints and retain the passkey only in its ephemeral browser profile; verify errors, logs, and persisted evidence are credential-free.
 - [x] 3.3 Execute paired browser and Gyrognome scenarios for initial load, pause, restart, delayed callbacks, task completion, level-up, act completion, manual bragging, and motto change; verify their recorded report traces match before a browser-originated external submission.
-- [ ] 3.4 Poll within documented bounds for normal leaderboard placement and absence from the cheater population after each required scenario; verify an unavailable, inconclusive, or cheater-classified result fails the gate. Do not port native `newguy` character generation as part of this task.
+- [x] 3.4 Poll within documented bounds for normal leaderboard placement and absence from the cheater population after each required scenario; verify an unavailable, inconclusive, or cheater-classified result fails the gate. Do not port native `newguy` character generation as part of this task.
 
 ## 4. Evidence and delivery gate
 

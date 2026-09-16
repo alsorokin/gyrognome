@@ -11,11 +11,15 @@ import {
   SCENARIOS,
   assertCredentialFree,
   bridgeActionsForScenario,
+  buildClassificationQueryUrl,
   buildClockInitScript,
   compareTraceObservations,
   expectedObservationsFromBridgeEvents,
+  isAllowedClassificationQuery,
   isAllowedOfficialRequest,
+  parseLeaderboardClassification,
   parseOptions,
+  pollLeaderboardClassification,
   safeRequestObservation,
 } from '../scripts/leaderboard-conformance.mjs';
 
@@ -40,6 +44,20 @@ test('redacts unsafe option values from harness errors', () => {
 
 test('does not enable report submission without disposable confirmation', () => {
   assert.throws(() => parseOptions(['--submit']), /--confirm-disposable/);
+});
+
+test('requires a second explicit confirmation before submitting live reports', () => {
+  assert.throws(
+    () => parseOptions(['--confirm-disposable', '--submit']),
+    /--confirm-live-submission/,
+  );
+  const options = parseOptions([
+    '--confirm-disposable',
+    '--submit',
+    '--confirm-live-submission',
+  ]);
+  assert.equal(options.submit, true);
+  assert.equal(options.confirmLiveSubmission, true);
 });
 
 test('rejects all managed-character input forms', () => {
@@ -168,4 +186,69 @@ test('diffs observed report traces and explains mismatches', () => {
   assert.equal(failing.pass, false);
   assert.match(failing.differences.join('\n'), /trigger/);
   assert.match(failing.differences.join('\n'), /fields/);
+});
+
+test('classification query is scoped to the public realm page and only a name filter', () => {
+  const url = buildClassificationQueryUrl('Conformance-example');
+  assert.equal(url, `${OFFICIAL_ENDPOINTS.leaderboard}?name=Conformance-example`);
+  assert.ok(isAllowedClassificationQuery(url));
+  assert.equal(
+    isAllowedClassificationQuery(`${OFFICIAL_ENDPOINTS.leaderboard}?name=x&cheaters=1`),
+    false,
+  );
+  assert.equal(isAllowedClassificationQuery('https://example.invalid/?name=x'), false);
+});
+
+test('parses Hall of Fame and Hall of Infamy classification pages', () => {
+  assert.deepEqual(
+    parseLeaderboardClassification('<h1>Hall of Fame</h1><tr class=bob><td>x</table>'),
+    { classification: 'normal' },
+  );
+  assert.deepEqual(
+    parseLeaderboardClassification('<h1>Hall of Infamy</h1><tr class=bob><td>x</table>'),
+    { classification: 'cheater' },
+  );
+  assert.deepEqual(parseLeaderboardClassification('<h1>Hall of Fame</h1><table></table>'), {
+    classification: 'not-found',
+  });
+});
+
+test('polls the leaderboard on documented bounds and resolves once classified', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    const html =
+      calls < 3
+        ? '<h1>Hall of Fame</h1><table></table>'
+        : '<h1>Hall of Fame</h1><tr class=bob><td>x</table>';
+    return { ok: true, text: async () => html };
+  };
+  const sleeps = [];
+  const result = await pollLeaderboardClassification('Conformance-example', {
+    fetchImpl,
+    sleep: async (ms) => sleeps.push(ms),
+  });
+  assert.deepEqual(result, { classification: 'normal', attempts: ['not-found', 'not-found', 'normal'] });
+  assert.equal(calls, 3);
+  assert.deepEqual(sleeps, [5000, 5000]);
+});
+
+test('treats a classification that never resolves within bounds as inconclusive, not a pass', async () => {
+  const fetchImpl = async () => ({ ok: true, text: async () => '<h1>Hall of Fame</h1><table></table>' });
+  let now = 0;
+  const originalNow = Date.now;
+  Date.now = () => now;
+  try {
+    const result = await pollLeaderboardClassification('Conformance-example', {
+      fetchImpl,
+      timeoutMs: 10_000,
+      intervalMs: 5_000,
+      sleep: async () => {
+        now += 5_000;
+      },
+    });
+    assert.equal(result.classification, 'inconclusive');
+  } finally {
+    Date.now = originalNow;
+  }
 });

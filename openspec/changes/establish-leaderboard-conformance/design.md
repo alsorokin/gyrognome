@@ -98,6 +98,43 @@ independently in the harness (rather than invoking the real client functions)
 was rejected because it would test the harness's model of the browser instead
 of the browser itself.
 
+### Classify leaderboard placement via the public realm page, with bounded polling
+
+Progress Quest exposes each realm's classification as a public,
+unauthenticated, read-only page: `https://<realm>.progressquest.com/<realm>.php`
+(here, `alpaquil.php`) renders "Hall of Fame" for the normal population and
+"Hall of Infamy" for the cheater population when queried with `cheaters=1`;
+both accept a `name=<exact>` filter that jumps directly to a single matching
+row regardless of rank, and render no matching row when the name is not (yet)
+indexed. The harness queries `alpaquil.php?name=<disposable character name>`
+directly over HTTP (no browser, no credentials) after a scenario's report is
+actually submitted, and classifies the result from the page's `<h1>` and
+whether a matching row is present: a "Hall of Fame" row is `normal`, a "Hall
+of Infamy" row is `cheater`, and no row at all is `not-found`.
+
+Because classification may lag behind a just-submitted report, the harness
+polls on a documented, fixed cadence — every 5 seconds, up to a 60 second
+total bound per scenario — and stops as soon as a scenario resolves to
+`normal` or `cheater`. A scenario that is still `not-found` when the bound
+is reached is recorded as `inconclusive` and fails the gate; `inconclusive`
+and `cheater` are never treated as a pass, matching the spec's requirement
+that an unavailable, inconclusive, or cheater-classified result fails the
+gate rather than being silently accepted.
+
+Because submitting a live report and observing real classification is a
+materially higher-risk step than the credential-free, intercepted dry run,
+the harness requires a second explicit flag, `--confirm-live-submission`, in
+addition to `--confirm-disposable`, before `--submit` is honored; without it,
+`cmd=create`/`cmd=b` requests continue to be intercepted and no classification
+poll is attempted.
+
+Scraping the whole realm listing and searching client-side was rejected: the
+`name=` filter already exists on the same public page and returns a single,
+directly comparable row without paginating through the full population.
+Polling indefinitely was rejected because an experiment must terminate and
+report a definite pass/fail outcome rather than hang on an unresponsive or
+permanently absent classification.
+
 ## Risks / Trade-offs
 
 - [The server classification is delayed, unavailable, or undocumented] →

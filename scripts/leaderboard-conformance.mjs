@@ -41,6 +41,13 @@ export const DEFAULT_CLOCK_START_MS = 1_789_462_800_000;
 export const DEFAULT_PAUSE_GAP_MS = 30 * 60 * 1000;
 export const DEFAULT_DELAYED_CALLBACK_GAP_MS = 10_000;
 export const MOTTO_CHANGE_TEXT = 'Deterministic conformance motto';
+// Documented polling bounds (task 3.4): a real leaderboard classification may
+// lag behind a just-submitted report, so each scenario is re-checked on this
+// cadence until it resolves or the bound is reached. A result that never
+// resolves within these bounds is recorded as inconclusive and fails the
+// gate; it is never treated as a pass.
+export const CLASSIFICATION_POLL_INTERVAL_MS = 5_000;
+export const CLASSIFICATION_POLL_TIMEOUT_MS = 60_000;
 export const SCENARIOS = Object.freeze([
   Object.freeze({
     id: 'initial-load',
@@ -123,6 +130,7 @@ const FIXTURE_DIRECTORY = new URL('../tests/fixtures/', import.meta.url);
 export function parseOptions(argv) {
   let confirmed = false;
   let submit = false;
+  let confirmLiveSubmission = false;
   let evidence;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -134,6 +142,8 @@ export function parseOptions(argv) {
       confirmed = true;
     } else if (option === '--submit') {
       submit = true;
+    } else if (option === '--confirm-live-submission') {
+      confirmLiveSubmission = true;
     } else if (option === '--evidence') {
       evidence = argv[++index];
       if (!evidence) throw new Error('--evidence requires a path');
@@ -150,10 +160,13 @@ export function parseOptions(argv) {
   if (submit && !confirmed) {
     throw new Error('--submit requires --confirm-disposable');
   }
+  if (submit && !confirmLiveSubmission) {
+    throw new Error('--submit requires --confirm-live-submission');
+  }
   if (evidence?.toLowerCase().endsWith('.pqw')) {
     throw new Error('evidence path must not be a player save');
   }
-  return { confirmed, submit, evidence };
+  return { confirmed, submit, confirmLiveSubmission, evidence };
 }
 
 export function isAllowedOfficialRequest(rawUrl) {
@@ -200,6 +213,68 @@ export function assertCredentialFree(value) {
   }
   if (lower.includes('cmd=') && lower.includes('&p=')) {
     throw new Error('refusing a complete signed leaderboard URL');
+  }
+}
+
+export function buildClassificationQueryUrl(name) {
+  const url = new URL(OFFICIAL_ENDPOINTS.leaderboard);
+  url.searchParams.set('name', name);
+  return url.toString();
+}
+
+export function isAllowedClassificationQuery(rawUrl) {
+  const url = new URL(rawUrl);
+  if (`${url.origin}${url.pathname}` !== OFFICIAL_ENDPOINTS.leaderboard) return false;
+  return [...url.searchParams.keys()].every((key) => key === 'name');
+}
+
+// A public, unauthenticated, read-only realm page: no `name=` match means the
+// character is not (yet) indexed in either population; a match under "Hall
+// of Fame" is the normal population, and a match under "Hall of Infamy" is
+// the cheater population the harness must prove Gyrognome characters avoid.
+export function parseLeaderboardClassification(html) {
+  const titleMatch = /<h1>\s*Hall of (Fame|Infamy)\s*<\/h1>/i.exec(html);
+  const found = /<tr class=bob>/i.test(html);
+  if (!found || !titleMatch) return { classification: 'not-found' };
+  return { classification: titleMatch[1].toLowerCase() === 'fame' ? 'normal' : 'cheater' };
+}
+
+async function fetchLeaderboardClassification(name, fetchImpl = fetch) {
+  const url = buildClassificationQueryUrl(name);
+  if (!isAllowedClassificationQuery(url)) {
+    throw new Error('refusing a classification query outside the public realm page');
+  }
+  try {
+    const response = await fetchImpl(url, { method: 'GET' });
+    if (!response.ok) return { classification: 'error' };
+    const html = await response.text();
+    return parseLeaderboardClassification(html);
+  } catch {
+    return { classification: 'error' };
+  }
+}
+
+export async function pollLeaderboardClassification(
+  name,
+  {
+    intervalMs = CLASSIFICATION_POLL_INTERVAL_MS,
+    timeoutMs = CLASSIFICATION_POLL_TIMEOUT_MS,
+    fetchImpl = fetch,
+    sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  const attempts = [];
+  for (;;) {
+    const attempt = await fetchLeaderboardClassification(name, fetchImpl);
+    attempts.push(attempt.classification);
+    if (attempt.classification === 'normal' || attempt.classification === 'cheater') {
+      return { classification: attempt.classification, attempts };
+    }
+    if (Date.now() >= deadline) {
+      return { classification: 'inconclusive', attempts };
+    }
+    await sleep(intervalMs);
   }
 }
 
@@ -527,7 +602,11 @@ async function createDisposableCharacter(page) {
     stage = 'opening-character-generator';
     await page.getByRole('button', { name: 'Roll One Up' }).click();
     stage = 'selecting-multiplayer';
-    await page.getByRole('textbox', { name: 'Name' }).fill(`Conformance-${randomUUID()}`);
+    await page
+      .getByRole('textbox', { name: 'Name' })
+      // The live realm enforces a 30-character name limit; keep this well
+      // under that bound while remaining clearly disposable and unique.
+      .fill(`Conformance-${randomUUID().slice(0, 8)}`);
     await page.getByRole('radio', { name: 'Multiplayer' }).check();
     stage = 'creating-disposable-online-character';
     await page.getByRole('button', { name: 'Sold!' }).click();
@@ -587,7 +666,18 @@ async function executeScenario(page, scenario) {
   }
 }
 
-async function runInitialLoadScenario(page, observedRequests) {
+async function classifyScenarioIfSubmitted(options, name) {
+  if (!options.submit) return null;
+  return pollLeaderboardClassification(name);
+}
+
+function scenarioPasses(comparison, classification) {
+  if (!comparison.pass) return false;
+  if (!classification) return true;
+  return classification.classification === 'normal';
+}
+
+async function runInitialLoadScenario(page, observedRequests, options) {
   const requestStart = observedRequests.length;
   const character = await createDisposableCharacter(page);
   const motto = await currentMotto(page);
@@ -597,25 +687,28 @@ async function runInitialLoadScenario(page, observedRequests) {
   await waitForObservedCount(observedRequests, requestStart + expected.length);
   const observed = observedRequests.slice(requestStart);
   const comparison = compareTraceObservations(expected, observed);
+  const snapshot = summarizeCharacter(character);
+  const classification = await classifyScenarioIfSubmitted(options, snapshot.name);
   const result = {
     id: scenario.id,
     title: scenario.title,
-    pass: comparison.pass,
+    pass: scenarioPasses(comparison, classification),
     browserGapMs: 0,
     bridgeAdvancementMs: [],
-    snapshot: summarizeCharacter(character),
+    snapshot,
     expected,
     observed,
     bridge: {
       eventTriggers: bridge.events.map((event) => event.trigger),
     },
     differences: comparison.differences,
+    classification,
   };
   assertCredentialFree(result);
   return result;
 }
 
-async function runFixtureScenario(page, scenario, observedRequests) {
+async function runFixtureScenario(page, scenario, observedRequests, options) {
   const fixtureState = await loadScenarioFixture(scenario.fixture);
   await loadFixtureState(page, fixtureState);
   const snapshot = await currentCharacter(page);
@@ -631,19 +724,22 @@ async function runFixtureScenario(page, scenario, observedRequests) {
   }
   const observed = observedRequests.slice(requestStart);
   const comparison = compareTraceObservations(expected, observed);
+  const summary = summarizeCharacter(snapshot);
+  const classification = await classifyScenarioIfSubmitted(options, summary.name);
   const result = {
     id: scenario.id,
     title: scenario.title,
-    pass: comparison.pass,
+    pass: scenarioPasses(comparison, classification),
     browserGapMs: scenario.browserGapMs ?? 0,
     bridgeAdvancementMs: [...scenario.bridgeAdvancementMs],
-    snapshot: summarizeCharacter(snapshot),
+    snapshot: summary,
     expected,
     observed,
     bridge: {
       eventTriggers: bridge.events.map((event) => event.trigger),
     },
     differences: comparison.differences,
+    classification,
   };
   assertCredentialFree(result);
   return result;
@@ -687,9 +783,9 @@ async function runExperiment(options) {
 
     stage = 'running-paired-scenarios';
     const scenarios = [];
-    scenarios.push(await runInitialLoadScenario(page, observedRequests));
+    scenarios.push(await runInitialLoadScenario(page, observedRequests, options));
     for (const scenario of SCENARIOS.slice(1)) {
-      scenarios.push(await runFixtureScenario(page, scenario, observedRequests));
+      scenarios.push(await runFixtureScenario(page, scenario, observedRequests, options));
     }
 
     stage = 'writing-credential-free-evidence';
@@ -725,7 +821,7 @@ async function runExperiment(options) {
 
 function printHelp() {
   console.log(
-    'Usage: node scripts/leaderboard-conformance.mjs --confirm-disposable [--submit] [--evidence path]',
+    'Usage: node scripts/leaderboard-conformance.mjs --confirm-disposable [--submit --confirm-live-submission] [--evidence path]',
   );
 }
 
@@ -741,6 +837,7 @@ async function main() {
     const rawMessage = error instanceof Error ? error.message : '';
     const message =
       rawMessage.includes('--confirm-disposable') ||
+      rawMessage.includes('--confirm-live-submission') ||
       rawMessage.includes('managed-character') ||
       rawMessage === '--evidence requires a path' ||
       rawMessage === 'evidence path must not be a player save'
