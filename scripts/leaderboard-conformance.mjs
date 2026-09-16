@@ -8,7 +8,7 @@
  * the browser's passkey never crosses the ephemeral context boundary.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +48,10 @@ export const MOTTO_CHANGE_TEXT = 'Deterministic conformance motto';
 // gate; it is never treated as a pass.
 export const CLASSIFICATION_POLL_INTERVAL_MS = 5_000;
 export const CLASSIFICATION_POLL_TIMEOUT_MS = 60_000;
+// Matches the revision label pinned in tests/fixtures/browser-report-trace.json
+// for the same client source; kept only as a human-readable cross-reference,
+// the content hash below is the actual conformance-relevant identity.
+export const KNOWN_CLIENT_REVISION = '6';
 export const SCENARIOS = Object.freeze([
   Object.freeze({
     id: 'initial-load',
@@ -753,8 +757,18 @@ async function runExperiment(options) {
   await context.addInitScript(buildClockInitScript());
   const page = await context.newPage();
   const observedRequests = [];
+  let clientContentSha256;
 
   try {
+    page.on('response', (response) => {
+      if (response.url() !== OFFICIAL_ENDPOINTS.client || clientContentSha256) return;
+      response
+        .body()
+        .then((body) => {
+          clientContentSha256 = createHash('sha256').update(body).digest('hex');
+        })
+        .catch(() => {});
+    });
     await context.route('**/*', async (route) => {
       const request = route.request();
       if (request.method() !== 'GET' || !isAllowedOfficialRequest(request.url())) {
@@ -792,7 +806,11 @@ async function runExperiment(options) {
     const evidence = {
       format: 'gyrognome-disposable-conformance/v1',
       mode: options.submit ? 'submission-enabled' : 'intercepted',
-      source: { client: OFFICIAL_ENDPOINTS.client },
+      source: {
+        client: OFFICIAL_ENDPOINTS.client,
+        revision: KNOWN_CLIENT_REVISION,
+        content_sha256: clientContentSha256,
+      },
       scenarios,
       summary: {
         total: scenarios.length,

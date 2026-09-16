@@ -174,3 +174,68 @@ revision, public request-field ordering, and synthetic deterministic values.
 Fixtures intentionally exclude player saves, passkeys, browser profiles, and
 complete signed request URLs. Regenerate observations only with disposable
 characters through the repository's Playwright MCP configuration.
+
+## Leaderboard conformance experiment
+
+The leaderboard can classify a character as a cheater separately from state
+equivalence, so Gyrognome gates any general leaderboard-reporting feature
+behind explicit, disposable, opt-in evidence that its report traces match the
+browser's and that the browser-created disposable character is never
+classified as a cheater. This is not a product feature; a normal Gyrognome
+build never talks to the leaderboard.
+
+`scripts/leaderboard-conformance.mjs` is a Playwright harness that:
+
+- Refuses to run at all without `--confirm-disposable`, and refuses any
+  option that names an existing/managed character.
+- Creates the disposable online character through the official browser only
+  (`https://progressquest.com/play/`); the browser is the only thing that
+  ever holds its passkey, and only for the lifetime of the ephemeral browser
+  context. Gyrognome's credential-free bridge (`conformance-bridge`, a
+  hidden, feature-gated CLI subcommand) receives only canonical state.
+- Limits browser network access to the observed official pages and the
+  leaderboard endpoint (`https://progressquest.com/alpaquil.php`).
+- Drives all nine required scenarios — initial load, pause, restart, delayed
+  callback, task completion, level-up, act completion, manual bragging, and
+  motto change — by injecting a deterministic clock (`Date.now` and the
+  client's timer-scheduling path) and invoking the browser's own functions
+  directly, rather than waiting out real in-game hours or reimplementing
+  browser behavior.
+- By default (no `--submit`), intercepts every leaderboard request so no
+  network report is ever actually sent; this is enough to compare browser and
+  Gyrognome-bridge report traces for exact conformance.
+- Only submits real reports and polls the live leaderboard for
+  classification when both `--submit` and a second, distinct
+  `--confirm-live-submission` flag are given. Classification is read from
+  the public, unauthenticated realm page
+  (`https://progressquest.com/alpaquil.php?name=<character>`), whose
+  heading and matching row indicate "Hall of Fame" (normal) or "Hall of
+  Infamy" (cheater); no matching row means not-yet-indexed. Polling is
+  bounded (every 5 seconds, up to 60 seconds per scenario); a scenario that
+  is still unindexed when that bound is reached is recorded `inconclusive`
+  and fails the gate, exactly like a `cheater` result — neither is ever
+  treated as a pass.
+- Writes only credential-free evidence (`--evidence <path>`, and always to
+  stdout): per-scenario pass/fail, expected-vs-observed report traces, and
+  (when submitting) classification results. Errors, logs, and evidence are
+  scrubbed of passkeys, the retained original document, `.pqw`/Playwright
+  profile paths, and complete signed leaderboard URLs.
+
+Run the credential-free, no-network-report dry run with:
+
+```sh
+node scripts/leaderboard-conformance.mjs --confirm-disposable --evidence /path/to/evidence.json
+```
+
+Run the full, real-network experiment (creates one disposable character and
+submits its reports to the live leaderboard) with:
+
+```sh
+node scripts/leaderboard-conformance.mjs --confirm-disposable --submit --confirm-live-submission --evidence /path/to/evidence.json
+```
+
+Neither invocation accepts a real character's identity, its saved document, or
+its passkey; the procedure never asks an operator to use a managed character
+or to publish its passkey. General leaderboard reporting remains unimplemented
+and unsupported until this gate's evidence records every required scenario as
+conformant and classified normal.

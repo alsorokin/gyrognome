@@ -1,0 +1,498 @@
+{
+  "format": "gyrognome-disposable-conformance/v1",
+  "mode": "submission-enabled",
+  "source": {
+    "client": "https://progressquest.com/play/main.js",
+    "revision": "6",
+    "content_sha256": "63926cda54b232c5e5be4e97123710ee4ab2dbd1faa213b21ddc01dab54a1ce0"
+  },
+  "scenarios": [
+    {
+      "id": "initial-load",
+      "title": "initial load",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 0,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "s",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "s",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "s"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "pause",
+      "title": "pause",
+      "pass": true,
+      "browserGapMs": 1800000,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "restart",
+      "title": "restart",
+      "pass": true,
+      "browserGapMs": 1800000,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "delayed-callback",
+      "title": "delayed callback",
+      "pass": true,
+      "browserGapMs": 10000,
+      "bridgeAdvancementMs": [
+        100
+      ],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "task-completion",
+      "title": "task completion",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        9451
+      ],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "level-up",
+      "title": "level-up",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        1000
+      ],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 42,
+        "task": "kill|Goblin|1|ear",
+        "bestPlot": "Act I"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "l",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "l",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "l"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "act-completion",
+      "title": "act completion",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        1000
+      ],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 2,
+        "elapsed": 42,
+        "task": "",
+        "bestPlot": "Act I"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "a",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "a",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "a"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "manual-brag",
+      "title": "manual bragging",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "b",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "b",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "b"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "motto-change",
+      "title": "motto change",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-e5609114",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "m",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "m",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "m"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": []
+  }
+}

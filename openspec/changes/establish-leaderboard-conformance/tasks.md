@@ -21,6 +21,6 @@
 
 ## 4. Evidence and delivery gate
 
-- [ ] 4.1 Document the disposable-character procedure, confirmation requirements, evidence format, polling bounds, and failure handling; verify the instructions never ask an operator to use a real character save or publish a passkey.
-- [ ] 4.2 Record a credential-free conformance evidence summary for all required scenarios; verify it identifies the observed browser revision and reports normal-versus-cheater classification results without bearer data.
-- [ ] 4.3 Run formatting, warning-denied linting, report-trace tests, fixture-safety tests, runtime-boundary tests, and the complete test suite; verify all automated checks pass and the external evidence gate is explicitly passing before proposing general leaderboard transport.
+- [x] 4.1 Document the disposable-character procedure, confirmation requirements, evidence format, polling bounds, and failure handling; verify the instructions never ask an operator to use a real character save or publish a passkey.
+- [x] 4.2 Record a credential-free conformance evidence summary for all required scenarios; verify it identifies the observed browser revision and reports normal-versus-cheater classification results without bearer data.
+- [x] 4.3 Run formatting, warning-denied linting, report-trace tests, fixture-safety tests, runtime-boundary tests, and the complete test suite; verify all automated checks pass and the external evidence gate is explicitly passing before proposing general leaderboard transport.
