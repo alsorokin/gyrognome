@@ -104,5 +104,16 @@ until a dedicated change adds it.
 
 ## Planned Sequence
 
-1. Add general leaderboard reporting for managed characters, building on the
-   passing leaderboard conformance and anti-cheat safety evidence.
+1. Establish online-enrollment conformance using only disposable characters:
+   capture the browser's `Sold!` creation handshake, accepted and duplicate-name
+   responses, first-report ordering, and ambiguous transport failures. This is
+   evidence-only and must not enable normal-user leaderboard transport.
+2. Add explicit, opt-in leaderboard reporting for imported browser characters
+   whose names and online credentials were already established by the browser.
+   Preserve browser-equivalent report triggers and safe error/retry behavior
+   without adding native character creation.
+3. Add online New Guy enrollment. Its `Sold!` action must make the
+   server-authoritative name-creation request, retain the editable draft on a
+   rejected name, and persist an online managed character only after successful
+   creation and browser-equivalent initial reporting. Creation and initial
+   reporting remain one user-visible activation flow.
