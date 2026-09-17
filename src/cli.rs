@@ -1,4 +1,5 @@
 use std::{
+    io::{self, BufRead, Write},
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
@@ -79,9 +80,11 @@ enum Command {
     },
     /// Clear a failed user service state and start the managed character again.
     Recover { id: String },
+    /// Delete an inactive managed character after confirmation.
+    Delete { id: String },
     /// Open an interactive credential-safe dashboard for a managed character.
     Dashboard {
-        id: String,
+        id: Option<String>,
         /// Milliseconds between persisted-state refreshes.
         #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(100..=60_000))]
         refresh_ms: u64,
@@ -121,6 +124,10 @@ pub enum CliError {
     Json(#[from] serde_json::Error),
     #[error("could not install worker shutdown handler: {0}")]
     Signal(#[from] std::io::Error),
+    #[error("could not read deletion confirmation: {0}")]
+    Confirmation(#[source] std::io::Error),
+    #[error("managed character {0} is running; stop it before deleting")]
+    CharacterRunning(CharacterId),
     #[error(transparent)]
     Dashboard(#[from] dashboard::DashboardError),
     #[error(transparent)]
@@ -226,11 +233,49 @@ pub fn run() -> Result<(), CliError> {
             Lifecycle::new(&store, SystemctlRunner).recover(&id)?;
             println!("Recovered and started managed character {id}.");
         }
-        Command::Dashboard { id, refresh_ms } => {
+        Command::Delete { id } => {
             let id = parse_id(&id)?;
+            let mut store = Store::open_default()?;
+            let character = store.get(&id)?;
+            println!(
+                "Delete managed character {id}?\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\nType yes to confirm: ",
+                character.identity.name,
+                character.identity.race,
+                character.identity.class,
+                character.identity.level
+            );
+            io::stdout().flush().map_err(CliError::Confirmation)?;
+            if !delete_confirmed(&mut io::stdin().lock())? {
+                println!("Deletion cancelled.");
+                return Ok(());
+            }
+            match store.remove(&id) {
+                Ok(()) => {}
+                Err(StorageError::AlreadyOwned(_)) => {
+                    return Err(CliError::CharacterRunning(id));
+                }
+                Err(error) => return Err(error.into()),
+            }
+            println!("Deleted managed character {id}.");
+        }
+        Command::Dashboard { id, refresh_ms } => {
+            let stop = shutdown_flag()?;
+            let id = match id {
+                Some(id) => parse_id(&id)?,
+                None => {
+                    let characters = Store::open_default()?
+                        .list()?
+                        .into_iter()
+                        .map(|character| (character.id, character.identity))
+                        .collect();
+                    match dashboard::select_character(characters, &stop)? {
+                        Some(id) => id,
+                        None => return Ok(()),
+                    }
+                }
+            };
             let provider = LocalProvider::open_default()?;
             provider.refresh(&id)?;
-            let stop = shutdown_flag()?;
             dashboard::run(&provider, id, Duration::from_millis(refresh_ms), &stop)?;
         }
         Command::NewGuy {
@@ -291,6 +336,14 @@ fn parse_id(value: &str) -> Result<CharacterId, CliError> {
     Ok(CharacterId::parse(value)?)
 }
 
+fn delete_confirmed(input: &mut impl BufRead) -> Result<bool, CliError> {
+    let mut response = String::new();
+    input
+        .read_line(&mut response)
+        .map_err(CliError::Confirmation)?;
+    Ok(response.trim().eq_ignore_ascii_case("yes"))
+}
+
 fn shutdown_flag() -> Result<Arc<AtomicBool>, CliError> {
     let stop = Arc::new(AtomicBool::new(false));
     for signal in [
@@ -322,4 +375,19 @@ fn print_status(status: RuntimeStatus, json: bool) -> Result<(), CliError> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::delete_confirmed;
+
+    #[test]
+    fn deletion_requires_an_explicit_yes_confirmation() {
+        assert!(delete_confirmed(&mut Cursor::new("yes\n")).unwrap());
+        assert!(delete_confirmed(&mut Cursor::new("YES\n")).unwrap());
+        assert!(!delete_confirmed(&mut Cursor::new("y\n")).unwrap());
+        assert!(!delete_confirmed(&mut Cursor::new("no\n")).unwrap());
+    }
 }

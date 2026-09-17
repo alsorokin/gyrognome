@@ -1,7 +1,8 @@
 use std::{
     fs,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -41,6 +42,24 @@ impl TestDirectory {
             .env("XDG_DATA_HOME", &self.0)
             .output()
             .unwrap()
+    }
+
+    fn command_with_input(&self, arguments: &[&str], input: &str) -> Output {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+            .args(arguments)
+            .env("XDG_DATA_HOME", &self.0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
     }
 }
 
@@ -178,6 +197,89 @@ fn dashboard_rejects_missing_identifiers_before_entering_terminal_mode() {
     let output = [stdout(&missing), stderr(&missing)].join("");
     assert!(!output.contains("\u{1b}[?1049h"));
     assert!(!output.contains("4242"));
+}
+
+#[test]
+fn dashboard_without_registrations_reports_an_error_before_terminal_mode() {
+    let directory = TestDirectory::new("dashboard-empty");
+    let output = directory.command(&["dashboard"]);
+    assert!(!output.status.success());
+    assert!(stderr(&output).contains("no managed characters are registered"));
+    assert!(
+        ![stdout(&output), stderr(&output)]
+            .join("")
+            .contains("\u{1b}[?1049h")
+    );
+}
+
+#[test]
+fn cli_deletes_only_after_explicit_confirmation_without_sensitive_output() {
+    let directory = TestDirectory::new("delete");
+    let save = directory.save_file();
+    let registration = directory.command(&["register", save.to_str().unwrap()]);
+    let id = stdout(&registration)
+        .strip_prefix("Registered managed character: ")
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let cancelled = directory.command_with_input(&["delete", &id], "no\n");
+    assert!(cancelled.status.success(), "{}", stderr(&cancelled));
+    assert!(stdout(&cancelled).contains("Deletion cancelled."));
+    assert!(
+        directory
+            .command(&["managed-inspect", &id])
+            .status
+            .success()
+    );
+
+    let deleted = directory.command_with_input(&["delete", &id], "yes\n");
+    assert!(deleted.status.success(), "{}", stderr(&deleted));
+    let output = [stdout(&deleted), stderr(&deleted)].join("");
+    assert!(output.contains("Deleted managed character"));
+    assert!(!output.contains("4242"));
+    assert!(!output.contains("unrecognized-future-field"));
+    assert!(
+        !directory
+            .command(&["managed-inspect", &id])
+            .status
+            .success()
+    );
+}
+
+#[test]
+fn cli_delete_reports_invalid_and_unknown_identifiers() {
+    let directory = TestDirectory::new("delete-errors");
+    let invalid = directory.command_with_input(&["delete", "not-an-id"], "yes\n");
+    assert!(!invalid.status.success());
+    assert!(stderr(&invalid).contains("identifier is invalid"));
+
+    let missing =
+        directory.command_with_input(&["delete", "00000000-0000-4000-8000-000000000000"], "yes\n");
+    assert!(!missing.status.success());
+    assert!(stderr(&missing).contains("was not found"));
+}
+
+#[test]
+fn cli_refuses_to_delete_a_character_owned_by_a_worker() {
+    let directory = TestDirectory::new("delete-owned");
+    let character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let registered = store.register(&character).unwrap();
+    let worker = Worker::start(
+        Store::open_at(directory.0.join("gyrognome")).unwrap(),
+        registered.id.clone(),
+    )
+    .unwrap();
+
+    let deleted = directory.command_with_input(&["delete", &registered.id.to_string()], "yes\n");
+    assert!(!deleted.status.success());
+    assert!(stderr(&deleted).contains("is running; stop it before deleting"));
+    assert!(store.get(&registered.id).is_ok());
+    drop(worker);
 }
 
 #[test]

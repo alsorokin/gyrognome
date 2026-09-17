@@ -149,6 +149,8 @@ pub struct Store {
     connection: Connection,
     #[cfg(test)]
     fail_next_update: bool,
+    #[cfg(test)]
+    fail_next_remove: bool,
 }
 
 /// An advisory lock held for a managed character's worker lifetime.
@@ -177,6 +179,8 @@ impl Store {
             connection,
             #[cfg(test)]
             fail_next_update: false,
+            #[cfg(test)]
+            fail_next_remove: false,
         })
     }
 
@@ -301,6 +305,32 @@ impl Store {
         }
     }
 
+    /// Atomically removes every persisted record for an inactive character.
+    ///
+    /// Holding the advisory lock while the transaction runs prevents a worker
+    /// from acquiring ownership between the deletion check and mutation.
+    pub fn remove(&mut self, id: &CharacterId) -> Result<(), StorageError> {
+        let lock = self.acquire_lock(id)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_remove) {
+            transaction.execute("DELETE FROM characters WHERE id = ?1", [id.to_string()])?;
+            return Err(StorageError::InjectedFailure);
+        }
+
+        let changed =
+            transaction.execute("DELETE FROM characters WHERE id = ?1", [id.to_string()])?;
+        if changed == 0 {
+            return Err(StorageError::NotFound(id.clone()));
+        }
+        transaction.commit()?;
+        drop(lock);
+        Ok(())
+    }
+
     /// Atomically records a successful simulation result.
     pub fn replace_state(
         &mut self,
@@ -362,6 +392,11 @@ impl Store {
     #[cfg(test)]
     fn inject_next_update_failure(&mut self) {
         self.fail_next_update = true;
+    }
+
+    #[cfg(test)]
+    fn inject_next_remove_failure(&mut self) {
+        self.fail_next_remove = true;
     }
 }
 
@@ -653,6 +688,46 @@ mod tests {
     }
 
     #[test]
+    fn removes_all_persisted_character_data_atomically() {
+        let directory = TestDirectory::new("remove");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        assert!(store.original_document(&registered.id).is_ok());
+
+        store.remove(&registered.id).unwrap();
+
+        assert!(matches!(
+            store.get(&registered.id),
+            Err(StorageError::NotFound(id)) if id == registered.id
+        ));
+        assert!(matches!(
+            store.original_document(&registered.id),
+            Err(StorageError::NotFound(id)) if id == registered.id
+        ));
+    }
+
+    #[test]
+    fn failed_remove_keeps_the_complete_character_after_reopen() {
+        let directory = TestDirectory::new("remove-transaction");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        store.inject_next_remove_failure();
+
+        assert!(matches!(
+            store.remove(&registered.id),
+            Err(StorageError::InjectedFailure)
+        ));
+        drop(store);
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        assert_eq!(
+            reopened.get(&registered.id).unwrap().identity,
+            registered.identity
+        );
+        assert!(reopened.original_document(&registered.id).is_ok());
+    }
+
+    #[test]
     fn replaces_safe_identity_with_the_persisted_canonical_state() {
         let directory = TestDirectory::new("identity-update");
         let mut store = Store::open_at(&directory.0).unwrap();
@@ -707,6 +782,22 @@ mod tests {
 
         drop(first);
         Worker::start(Store::open_at(&directory.0).unwrap(), registered.id).unwrap();
+    }
+
+    #[test]
+    fn refuses_to_remove_a_character_owned_by_a_worker() {
+        let directory = TestDirectory::new("remove-owned");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+
+        assert!(matches!(
+            store.remove(&registered.id),
+            Err(StorageError::AlreadyOwned(id)) if id == registered.id
+        ));
+        assert!(store.get(&registered.id).is_ok());
+        drop(worker);
     }
 
     #[test]

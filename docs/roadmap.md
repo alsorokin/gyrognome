@@ -40,13 +40,27 @@ per-character process locking, and `systemd --user` lifecycle control. Managed
 characters progress only while their local runtime is active; stopped time does
 not catch up. The runtime remains local-only and does not report to leaderboards.
 
+## Completed: Managed Character Administration
+
+The `managed-character-administration` capability lets users remove unwanted
+local registrations without editing the database:
+
+- `gyrognome delete <character-id>` displays only the safe identity and requires
+  explicit confirmation before removal.
+- Removal is atomic and refuses a character currently owned by a local worker;
+  users must stop it before retrying.
+- Administration remains local-only and never exposes browser passkeys, raw
+  saves, or unrecognized source fields.
+
 ## Completed: Terminal Dashboard
 
 The `terminal-dashboard` capability provides a credential-safe terminal view
-of one managed character:
+of a managed character:
 
 - Displays live identity, human-readable activity, progress bars, equipped
   items, inventory, spells, plots, quests, and runtime/service status.
+- Lets users run `gyrognome dashboard` without an identifier and select a
+  registered character, while preserving direct identifier-based startup.
 - Refreshes persisted state without owning character locks or advancing
   simulation.
 - Provides confirmed lifecycle actions through the existing runtime controls.

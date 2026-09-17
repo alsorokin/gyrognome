@@ -16,7 +16,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
 };
 use thiserror::Error;
 
@@ -156,6 +156,130 @@ pub enum DashboardError {
     Lifecycle(#[from] LifecycleError),
     #[error("terminal operation failed: {0}")]
     Terminal(#[from] io::Error),
+    #[error("no managed characters are registered")]
+    NoManagedCharacters,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionCommand {
+    Previous,
+    Next,
+    Select,
+    Cancel,
+    None,
+}
+
+fn selection_command(event: Event) -> SelectionCommand {
+    let Event::Key(key) = event else {
+        return SelectionCommand::None;
+    };
+    if key.kind != KeyEventKind::Press {
+        return SelectionCommand::None;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        return SelectionCommand::Cancel;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => SelectionCommand::Previous,
+        KeyCode::Down | KeyCode::Char('j') => SelectionCommand::Next,
+        KeyCode::Enter => SelectionCommand::Select,
+        KeyCode::Char('q') | KeyCode::Esc => SelectionCommand::Cancel,
+        _ => SelectionCommand::None,
+    }
+}
+
+#[derive(Debug)]
+struct SelectorState {
+    selected: usize,
+    length: usize,
+}
+
+impl SelectorState {
+    fn new(length: usize) -> Self {
+        Self {
+            selected: 0,
+            length,
+        }
+    }
+
+    fn apply(&mut self, command: SelectionCommand) -> Option<Option<usize>> {
+        match command {
+            SelectionCommand::Previous => {
+                self.selected = self.selected.checked_sub(1).unwrap_or(self.length - 1);
+                None
+            }
+            SelectionCommand::Next => {
+                self.selected = (self.selected + 1) % self.length;
+                None
+            }
+            SelectionCommand::Select => Some(Some(self.selected)),
+            SelectionCommand::Cancel => Some(None),
+            SelectionCommand::None => None,
+        }
+    }
+}
+
+/// Lets users select a registered character before entering its dashboard.
+pub fn select_character(
+    characters: Vec<(CharacterId, CharacterIdentity)>,
+    interrupted: &std::sync::atomic::AtomicBool,
+) -> Result<Option<CharacterId>, DashboardError> {
+    if characters.is_empty() {
+        return Err(DashboardError::NoManagedCharacters);
+    }
+
+    let mut session = TerminalSession::enter()?;
+    let mut state = SelectorState::new(characters.len());
+    loop {
+        session
+            .terminal
+            .draw(|frame| render_selector(frame, &characters, state.selected))?;
+        if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(None);
+        }
+        if let Some(result) = state.apply(selection_command(event::read()?)) {
+            return Ok(result.map(|index| characters[index].0.clone()));
+        }
+    }
+}
+
+fn render_selector(
+    frame: &mut ratatui::Frame<'_>,
+    characters: &[(CharacterId, CharacterIdentity)],
+    selected: usize,
+) {
+    let areas = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
+        .split(frame.area());
+    let entries = characters
+        .iter()
+        .map(|(id, identity)| {
+            ListItem::new(format!(
+                "{} — {} {} (level {})\n{}",
+                identity.name, identity.race, identity.class, identity.level, id
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut state = ListState::default();
+    state.select(Some(selected));
+    frame.render_stateful_widget(
+        List::new(entries)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Select a managed character"),
+            )
+            .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black))
+            .highlight_symbol("> "),
+        areas[0],
+        &mut state,
+    );
+    frame.render_widget(
+        Paragraph::new("Up/Down or j/k select | Enter open | Esc/q cancel")
+            .block(Block::default().borders(Borders::ALL).title("Keys")),
+        areas[1],
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -916,6 +1040,48 @@ mod tests {
 
     fn rendered(width: u16, height: u16) -> String {
         rendered_with_panes(width, height, &PaneVisibility::default())
+    }
+
+    #[test]
+    fn selector_navigation_wraps_and_reports_selection_or_cancellation() {
+        let mut selector = SelectorState::new(2);
+        assert_eq!(selector.apply(SelectionCommand::Previous), None);
+        assert_eq!(selector.selected, 1);
+        assert_eq!(selector.apply(SelectionCommand::Next), None);
+        assert_eq!(selector.selected, 0);
+        assert_eq!(selector.apply(SelectionCommand::Select), Some(Some(0)));
+        assert_eq!(selector.apply(SelectionCommand::Cancel), Some(None));
+    }
+
+    #[test]
+    fn selector_maps_documented_keys() {
+        assert_eq!(
+            selection_command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Up))),
+            SelectionCommand::Previous
+        );
+        assert_eq!(
+            selection_command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
+                'j'
+            )))),
+            SelectionCommand::Next
+        );
+        assert_eq!(
+            selection_command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Enter))),
+            SelectionCommand::Select
+        );
+        assert_eq!(
+            selection_command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Esc))),
+            SelectionCommand::Cancel
+        );
+    }
+
+    #[test]
+    fn empty_character_selection_reports_an_actionable_error() {
+        let interrupted = AtomicBool::new(false);
+        assert!(matches!(
+            select_character(Vec::new(), &interrupted),
+            Err(DashboardError::NoManagedCharacters)
+        ));
     }
 
     #[test]

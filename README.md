@@ -86,6 +86,16 @@ gyrognome list
 gyrognome managed-inspect <character-id> --json
 ```
 
+Delete an inactive managed character with an explicit confirmation:
+
+```sh
+gyrognome delete <character-id>
+```
+
+The command prints only the target's safe identity and requires `yes` before
+removing it. Stop an active worker or user service first; deletion never stops
+it automatically.
+
 These commands can be exercised with a synthetic save and isolated data root:
 
 ```sh
@@ -146,9 +156,11 @@ fail again while preserving that state.
 
 ### Terminal dashboard
 
-Observe one registered character in a local, full-screen dashboard:
+Observe a registered character in a local, full-screen dashboard. With no
+identifier, choose one from the safe registered-character list:
 
 ```sh
+gyrognome dashboard
 gyrognome dashboard <character-id>
 ```
 
@@ -166,6 +178,9 @@ terminal-restoration path. The same logged-in-user systemd prerequisites
 described above apply to service status and lifecycle actions. If the user
 service manager is unavailable or an action fails, the dashboard preserves the
 last successfully displayed character state and shows the actionable error.
+The selection flow accepts Up/Down or `j`/`k`, `Enter` to open a character, and
+`Esc` or `q` to cancel. It reports an error without entering a dashboard when
+no characters are registered.
 
 ## Reference fixtures
 
