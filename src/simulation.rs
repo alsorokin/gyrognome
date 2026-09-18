@@ -214,7 +214,7 @@ fn dispatch_completion(
     // `gain` mirrors the browser's `Pos('kill|', game.task) == 1`: the task
     // just completed was a monster-kill task.
     let gain = state.activity.task.starts_with("kill|");
-    let delta = (task_max / 1000) as f64;
+    let delta = task_max as f64 / 1000.0;
 
     if gain {
         if state.progress.experience.done() {
@@ -1392,5 +1392,32 @@ mod tests {
                 1_822_180.0,
             ])
         );
+    }
+
+    #[test]
+    fn completing_a_kill_task_credits_fractional_seconds() {
+        let mut before = character();
+        before.activity.task = "kill|Goblin|1|ear".to_owned();
+        before.activity.elapsed = 42;
+        before
+            .progress
+            .experience
+            .reset(ProgressBarKind::Experience, 1_000, 0.0);
+        before
+            .progress
+            .quest
+            .reset(ProgressBarKind::Quest, 100, 0.0);
+        before.progress.plot.reset(ProgressBarKind::Plot, 100, 0.0);
+        before
+            .progress
+            .task
+            .reset(ProgressBarKind::Task, 1_500, 0.0);
+
+        let after = advance(&before, &Ruleset::default(), 1_500).unwrap();
+
+        assert_eq!(after.activity.elapsed, 43);
+        assert_eq!(after.progress.experience.position, 1.5);
+        assert_eq!(after.progress.quest.position, 1.5);
+        assert_eq!(after.progress.plot.position, 1.5);
     }
 }

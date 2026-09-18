@@ -24,7 +24,9 @@ wall clock or performs filesystem, database, or HTTP operations. Callers select
 the ruleset explicitly; `ruleset::BUNDLED` is the Progress Quest browser
 `config.js` snapshot from `https://progressquest.com/play/config.js`, revision
 6, captured on 2026-09-15. Its content hash is exposed as
-`ruleset::SOURCE_CONTENT_SHA256`.
+`ruleset::SOURCE_CONTENT_SHA256`. Completed task durations are credited as exact
+fractional seconds to progress bars; the browser-compatible elapsed-task counter
+floors each completed task duration to a whole second.
 
 The simulation fixtures in `tests/fixtures/checkpoint-*.json` contain only
 synthetic disposable-browser observations. Each records its selected ruleset,

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use serde_json::{Map, Value};
 
 use crate::rng::AleaState;
@@ -82,10 +82,24 @@ pub struct Attributes {
 pub struct Activity {
     pub task: String,
     pub tasks: u64,
+    #[serde(deserialize_with = "deserialize_elapsed")]
     pub elapsed: u64,
     pub kill: String,
     pub questmonster: String,
     pub questmonsterindex: u64,
+}
+
+fn deserialize_elapsed<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let elapsed = f64::deserialize(deserializer)?;
+    if !elapsed.is_finite() || elapsed < 0.0 || elapsed > u64::MAX as f64 {
+        return Err(de::Error::custom(
+            "elapsed must be a non-negative finite integer",
+        ));
+    }
+    Ok(elapsed.floor() as u64)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,4 +579,26 @@ fn bar(object: &Map<String, Value>, prefix: &str) -> Result<ProgressBar, SaveErr
         time: string(object, "time", &format!("{prefix}.time"))?,
         hint: string(object, "hint", &format!("{prefix}.hint"))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Activity;
+
+    #[test]
+    fn floors_legacy_fractional_elapsed_values_from_local_state() {
+        let activity: Activity = serde_json::from_str(
+            r#"{
+                "task": "kill|Goblin|1|ear",
+                "tasks": 7,
+                "elapsed": 7107.699999999997,
+                "kill": "Executing a Goblin...",
+                "questmonster": "",
+                "questmonsterindex": 0
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(activity.elapsed, 7_107);
+    }
 }
