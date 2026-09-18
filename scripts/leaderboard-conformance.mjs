@@ -210,7 +210,17 @@ export function safeRequestObservation(request) {
 export function assertCredentialFree(value) {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   const lower = serialized.toLowerCase();
-  for (const forbidden of ['passkey', 'original_document', '"document"', '.pqw', '.playwright-mcp']) {
+  for (const forbidden of [
+    'passkey',
+    'original_document',
+    '"document"',
+    '.pqw',
+    '.playwright-mcp',
+    '"response"',
+    '"response_body"',
+    '"profile"',
+    '"raw_save"',
+  ]) {
     if (lower.includes(forbidden)) {
       throw new Error(`refusing credential-bearing data (${forbidden})`);
     }
@@ -598,6 +608,10 @@ async function loadScenarioFixture(fixtureName) {
 }
 
 async function createDisposableCharacter(page) {
+  return createDisposableCharacterNamed(page, `Conformance-${randomUUID().slice(0, 8)}`);
+}
+
+async function createDisposableCharacterNamed(page, name) {
   let stage = 'loading-play-page';
   try {
     await page.goto(PLAY_URL, { waitUntil: 'domcontentloaded' });
@@ -610,7 +624,7 @@ async function createDisposableCharacter(page) {
       .getByRole('textbox', { name: 'Name' })
       // The live realm enforces a 30-character name limit; keep this well
       // under that bound while remaining clearly disposable and unique.
-      .fill(`Conformance-${randomUUID().slice(0, 8)}`);
+      .fill(name);
     await page.getByRole('radio', { name: 'Multiplayer' }).check();
     stage = 'creating-disposable-online-character';
     await page.getByRole('button', { name: 'Sold!' }).click();
@@ -623,6 +637,127 @@ async function createDisposableCharacter(page) {
       throw error;
     }
     throw new Error(`stage:${stage}`);
+  }
+}
+
+async function attemptEnrollment(page, name) {
+  let dialogSeen = false;
+  let failureStage;
+  page.once('dialog', async (dialog) => {
+    dialogSeen = true;
+    await dialog.dismiss();
+  });
+  try {
+    await createDisposableCharacterNamed(page, name);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (!message.startsWith('stage:')) throw error;
+    failureStage = message.slice('stage:'.length);
+  }
+  const online = await page.evaluate(() => !!globalThis.game?.online);
+  if (online) {
+    await stopTimer(page);
+    return { outcome: 'success', browserView: 'game' };
+  }
+  const generatorVisible = await page
+    .getByRole('button', { name: 'Roll One Up' })
+    .isVisible()
+    .catch(() => false);
+  return {
+    outcome: 'rejected',
+    browserView: dialogSeen ? 'dialog' : generatorVisible ? 'character-generator' : 'no-online-game',
+    failureStage,
+  };
+}
+
+function enrollmentRequestObservations(observedRequests, start) {
+  return observedRequests.slice(start).filter((request) => request.operation === 'create');
+}
+
+function initialReportObservations(observedRequests, start) {
+  return observedRequests
+    .slice(start)
+    .filter((request) => request.operation === 'b' && request.trigger === 's');
+}
+
+function successfulEnrollmentEvidence(observedRequests, start) {
+  const requests = observedRequests.slice(start);
+  const creation = requests.find((request) => request.operation === 'create');
+  const initialReport = requests.find(
+    (request) => request.operation === 'b' && request.trigger === 's',
+  );
+  const creationIndex = requests.indexOf(creation);
+  const initialReportIndex = requests.indexOf(initialReport);
+  return {
+    outcome: 'success',
+    creation,
+    initialReport,
+    order: 'create-before-initial-report',
+    pass:
+      !!creation &&
+      !!initialReport &&
+      creationIndex >= 0 &&
+      initialReportIndex > creationIndex,
+  };
+}
+
+async function runDuplicateNameScenario(browser, options, name) {
+  const context = await browser.newContext();
+  await context.addInitScript(buildClockInitScript());
+  const page = await context.newPage();
+  const observedRequests = [];
+  try {
+    await installRequestPolicy(context, options, observedRequests);
+    const attempt = await attemptEnrollment(page, name);
+    const creations = enrollmentRequestObservations(observedRequests, 0);
+    const initialReports = initialReportObservations(observedRequests, 0);
+    const result = {
+      outcome: attempt.outcome,
+      browserView: attempt.browserView,
+      creation: creations[0],
+      creationAttempts: creations.length,
+      initialReportAttempts: initialReports.length,
+      additionalOnlineIdentity: attempt.outcome === 'success',
+      pass:
+        attempt.outcome === 'rejected' &&
+        attempt.browserView !== 'unknown' &&
+        creations.length === 1 &&
+        initialReports.length === 0,
+    };
+    assertCredentialFree(result);
+    return result;
+  } finally {
+    await context.close();
+  }
+}
+
+async function runInterruptedEnrollmentScenario(browser, options) {
+  const context = await browser.newContext();
+  await context.addInitScript(buildClockInitScript());
+  const page = await context.newPage();
+  const observedRequests = [];
+  try {
+    await installRequestPolicy(context, options, observedRequests, { interruptCreation: true });
+    const attempt = await attemptEnrollment(page, `Conformance-${randomUUID().slice(0, 8)}`);
+    const creations = enrollmentRequestObservations(observedRequests, 0);
+    const initialReports = initialReportObservations(observedRequests, 0);
+    const result = {
+      outcome: 'unconfirmed',
+      browserView: attempt.browserView,
+      interception: 'aborted-before-usable-response',
+      creations,
+      creationAttempts: creations.length,
+      retried: creations.length > 1,
+      initialReportAttempts: initialReports.length,
+      pass:
+        attempt.outcome !== 'success' &&
+        creations.length >= 1 &&
+        initialReports.length === 0,
+    };
+    assertCredentialFree(result);
+    return result;
+  } finally {
+    await context.close();
   }
 }
 
@@ -689,7 +824,9 @@ async function runInitialLoadScenario(page, observedRequests, options) {
   const bridge = await callBridge(bridgeInputForScenario(character, scenario, motto));
   const expected = expectedObservationsFromBridgeEvents(bridge.events);
   await waitForObservedCount(observedRequests, requestStart + expected.length);
-  const observed = observedRequests.slice(requestStart);
+  const observed = observedRequests
+    .slice(requestStart)
+    .filter((request) => request.operation === 'b');
   const comparison = compareTraceObservations(expected, observed);
   const snapshot = summarizeCharacter(character);
   const classification = await classifyScenarioIfSubmitted(options, snapshot.name);
@@ -707,7 +844,9 @@ async function runInitialLoadScenario(page, observedRequests, options) {
     },
     differences: comparison.differences,
     classification,
+    enrollment: successfulEnrollmentEvidence(observedRequests, requestStart),
   };
+  result.pass &&= result.enrollment.pass;
   assertCredentialFree(result);
   return result;
 }
@@ -749,6 +888,79 @@ async function runFixtureScenario(page, scenario, observedRequests, options) {
   return result;
 }
 
+async function installRequestPolicy(context, options, observedRequests, { interruptCreation = false } = {}) {
+  await context.route('**/*', async (route) => {
+    const request = route.request();
+    if (request.method() !== 'GET' || !isAllowedOfficialRequest(request.url())) {
+      await route.abort('blockedbyclient');
+      return;
+    }
+    if (isLeaderboardRequest(request.url())) {
+      const observation = safeRequestObservation(request);
+      observedRequests.push(observation);
+      if (observation.operation === 'create') {
+        if (interruptCreation) {
+          await route.abort('connectionrefused');
+          return;
+        }
+        if (!options.submit) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/plain',
+            body: 'ok|4242',
+          });
+          return;
+        }
+      }
+      if (observation.operation === 'b' && !options.submit) {
+        await route.fulfill({ status: 200, contentType: 'text/plain', body: '' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+}
+
+export function validateEnrollmentEvidence(evidence) {
+  assertCredentialFree(evidence);
+  if (evidence?.format !== 'gyrognome-disposable-conformance/v2') {
+    throw new Error('unexpected enrollment evidence format');
+  }
+  if (
+    evidence.mode !== 'submission-enabled' ||
+    !evidence.source?.client ||
+    !evidence.source?.revision ||
+    !evidence.source?.content_sha256 ||
+    evidence.summary?.total !== evidence.summary?.passed ||
+    evidence.summary?.failed?.length !== 0
+  ) {
+    throw new Error('enrollment evidence must be a complete passing live result');
+  }
+  const enrollment = evidence.enrollment;
+  if (
+    !enrollment ||
+    enrollment.successfulCreation?.outcome !== 'success' ||
+    !enrollment.successfulCreation?.creation ||
+    !enrollment.successfulCreation?.initialReport ||
+    enrollment.successfulCreation?.order !== 'create-before-initial-report' ||
+    enrollment.successfulCreation?.pass !== true ||
+    enrollment.duplicateName?.outcome !== 'rejected' ||
+    !enrollment.duplicateName?.creation ||
+    enrollment.duplicateName?.creationAttempts !== 1 ||
+    enrollment.duplicateName?.initialReportAttempts !== 0 ||
+    enrollment.duplicateName?.additionalOnlineIdentity !== false ||
+    enrollment.duplicateName?.pass !== true ||
+    enrollment.interruptedEnrollment?.outcome !== 'unconfirmed' ||
+    !Array.isArray(enrollment.interruptedEnrollment?.creations) ||
+    enrollment.interruptedEnrollment?.creations.length < 1 ||
+    enrollment.interruptedEnrollment?.initialReportAttempts !== 0 ||
+    enrollment.interruptedEnrollment?.pass !== true
+  ) {
+    throw new Error('incomplete enrollment conformance evidence');
+  }
+  return true;
+}
+
 async function runExperiment(options) {
   let stage = 'launching-browser';
   const { chromium } = await import('playwright');
@@ -769,42 +981,28 @@ async function runExperiment(options) {
         })
         .catch(() => {});
     });
-    await context.route('**/*', async (route) => {
-      const request = route.request();
-      if (request.method() !== 'GET' || !isAllowedOfficialRequest(request.url())) {
-        await route.abort('blockedbyclient');
-        return;
-      }
-      if (isLeaderboardRequest(request.url())) {
-        if (request.url().includes('cmd=create') && !options.submit) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'text/plain',
-            body: 'ok|4242',
-          });
-          return;
-        }
-        if (request.url().includes('cmd=b')) {
-          observedRequests.push(safeRequestObservation(request));
-          if (!options.submit) {
-            await route.fulfill({ status: 200, contentType: 'text/plain', body: '' });
-            return;
-          }
-        }
-      }
-      await route.continue();
-    });
+    await installRequestPolicy(context, options, observedRequests);
 
     stage = 'running-paired-scenarios';
     const scenarios = [];
-    scenarios.push(await runInitialLoadScenario(page, observedRequests, options));
+    const initial = await runInitialLoadScenario(page, observedRequests, options);
+    scenarios.push(initial);
     for (const scenario of SCENARIOS.slice(1)) {
       scenarios.push(await runFixtureScenario(page, scenario, observedRequests, options));
     }
+    const enrollment = {
+      successfulCreation: initial.enrollment,
+      duplicateName: options.submit
+        ? await runDuplicateNameScenario(browser, options, initial.snapshot.name)
+        : { outcome: 'not-run', reason: 'live-submission-not-confirmed' },
+      interruptedEnrollment: options.submit
+        ? await runInterruptedEnrollmentScenario(browser, options)
+        : { outcome: 'not-run', reason: 'live-submission-not-confirmed' },
+    };
 
     stage = 'writing-credential-free-evidence';
     const evidence = {
-      format: 'gyrognome-disposable-conformance/v1',
+      format: 'gyrognome-disposable-conformance/v2',
       mode: options.submit ? 'submission-enabled' : 'intercepted',
       source: {
         client: OFFICIAL_ENDPOINTS.client,
@@ -812,13 +1010,15 @@ async function runExperiment(options) {
         content_sha256: clientContentSha256,
       },
       scenarios,
+      enrollment,
       summary: {
         total: scenarios.length,
         passed: scenarios.filter((scenario) => scenario.pass).length,
         failed: scenarios.filter((scenario) => !scenario.pass).map((scenario) => scenario.id),
       },
     };
-    assertCredentialFree(evidence);
+    if (options.submit) validateEnrollmentEvidence(evidence);
+    else assertCredentialFree(evidence);
     if (options.evidence) {
       await fs.writeFile(options.evidence, `${JSON.stringify(evidence, null, 2)}\n`, {
         encoding: 'utf8',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -21,6 +22,7 @@ import {
   parseOptions,
   pollLeaderboardClassification,
   safeRequestObservation,
+  validateEnrollmentEvidence,
 } from '../scripts/leaderboard-conformance.mjs';
 
 test('requires disposable confirmation before Playwright can start', () => {
@@ -85,6 +87,82 @@ test('summarizes intercepted reports without a signed URL or validator', () => {
   const observation = safeRequestObservation({
     url: () => `${OFFICIAL_ENDPOINTS.leaderboard}?cmd=b&t=l&n=Disposable&p=12345&m=hello`,
     method: () => 'GET',
+  });
+
+  test('summarizes creation requests without names or signed data', () => {
+    const observation = safeRequestObservation({
+      url: () =>
+        `${OFFICIAL_ENDPOINTS.leaderboard}?cmd=create&name=Disposable&realm=1&rev=6`,
+      method: () => 'GET',
+    });
+
+    assert.deepEqual(observation, {
+      endpoint: OFFICIAL_ENDPOINTS.leaderboard,
+      method: 'GET',
+      operation: 'create',
+      trigger: undefined,
+      fields: ['cmd', 'name', 'realm', 'rev'],
+    });
+    assert.doesNotThrow(() => assertCredentialFree(observation));
+  });
+
+  test('rejects enrollment evidence containing credentials or raw browser data', () => {
+    for (const unsafeEvidence of [
+      { passkey: 'unsafe' },
+      { response: 'unsafe' },
+      { response_body: 'unsafe' },
+      { profile: 'unsafe' },
+      { raw_save: 'unsafe' },
+      'https://example.invalid/?cmd=create&p=12345',
+    ]) {
+      assert.throws(() => assertCredentialFree(unsafeEvidence));
+    }
+  });
+
+  test('requires every successful, duplicate, and interrupted enrollment observation', () => {
+    const evidence = {
+      format: 'gyrognome-disposable-conformance/v2',
+      mode: 'submission-enabled',
+      source: {
+        client: OFFICIAL_ENDPOINTS.client,
+        revision: '6',
+        content_sha256: 'safe-source-hash',
+      },
+      enrollment: {
+        successfulCreation: {
+          outcome: 'success',
+          creation: { operation: 'create' },
+          initialReport: { operation: 'b', trigger: 's' },
+          order: 'create-before-initial-report',
+          pass: true,
+        },
+        duplicateName: {
+          outcome: 'rejected',
+          creation: { operation: 'create' },
+          creationAttempts: 1,
+          initialReportAttempts: 0,
+          additionalOnlineIdentity: false,
+          pass: true,
+        },
+        interruptedEnrollment: {
+          outcome: 'unconfirmed',
+          creations: [{ operation: 'create' }],
+          initialReportAttempts: 0,
+          pass: true,
+        },
+      },
+      summary: { total: 3, passed: 3, failed: [] },
+    };
+    assert.equal(validateEnrollmentEvidence(evidence), true);
+    delete evidence.enrollment.duplicateName;
+    assert.throws(() => validateEnrollmentEvidence(evidence), /incomplete enrollment/);
+  });
+
+  test('committed enrollment evidence passes the credential-free schema gate', () => {
+    const evidence = JSON.parse(
+      readFileSync('tests/fixtures/enrollment-conformance-evidence.json', 'utf8'),
+    );
+    assert.equal(validateEnrollmentEvidence(evidence), true);
   });
 
   assert.deepEqual(observation, {

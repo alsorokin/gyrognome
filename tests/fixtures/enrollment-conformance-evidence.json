@@ -1,0 +1,65 @@
+{
+  "format": "gyrognome-disposable-conformance/v2",
+  "mode": "submission-enabled",
+  "source": {
+    "client": "https://progressquest.com/play/main.js",
+    "revision": "6",
+    "content_sha256": "63926cda54b232c5e5be4e97123710ee4ab2dbd1faa213b21ddc01dab54a1ce0"
+  },
+  "enrollment": {
+    "successfulCreation": {
+      "outcome": "success",
+      "creation": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "create",
+        "fields": ["cmd", "name", "realm", "rev"]
+      },
+      "initialReport": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "b",
+        "trigger": "s",
+        "fields": ["cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "m"]
+      },
+      "order": "create-before-initial-report",
+      "pass": true
+    },
+    "duplicateName": {
+      "outcome": "rejected",
+      "browserView": "dialog",
+      "creation": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "create",
+        "fields": ["cmd", "name", "realm", "rev"]
+      },
+      "creationAttempts": 1,
+      "initialReportAttempts": 0,
+      "additionalOnlineIdentity": false,
+      "pass": true
+    },
+    "interruptedEnrollment": {
+      "outcome": "unconfirmed",
+      "browserView": "unknown",
+      "interception": "aborted-before-usable-response",
+      "creations": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "create",
+          "fields": ["cmd", "name", "realm", "rev"]
+        }
+      ],
+      "creationAttempts": 1,
+      "retried": false,
+      "initialReportAttempts": 0,
+      "pass": true
+    }
+  },
+  "summary": {
+    "total": 9,
+    "passed": 9,
+    "failed": []
+  }
+}

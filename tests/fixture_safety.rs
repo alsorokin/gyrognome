@@ -31,3 +31,15 @@ fn synthetic_report_trace_is_credential_free_and_unsigned() {
     assert!(!content.to_ascii_lowercase().contains("passkey"));
     assert!(!(content.contains("cmd=") && content.contains("&p=")));
 }
+
+#[test]
+fn enrollment_evidence_rejects_response_bodies_and_raw_browser_data() {
+    for content in [
+        r#"{"response": "unsafe"}"#,
+        r#"{"response_body": "unsafe"}"#,
+        r#"{"raw_save": "unsafe"}"#,
+        r#"{"profile": "unsafe"}"#,
+    ] {
+        assert!(validate_fixture(Path::new("enrollment-evidence.json"), content).is_err());
+    }
+}

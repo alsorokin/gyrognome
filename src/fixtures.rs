@@ -10,6 +10,8 @@ pub enum FixtureSafetyError {
     SignedRequest,
     #[error("fixture must not contain a browser profile path")]
     BrowserProfile,
+    #[error("fixture must not contain a raw browser save or response body")]
+    RawBrowserData,
     #[error("checkpoint fixture must not contain an online passkey")]
     Passkey,
 }
@@ -31,6 +33,14 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
     {
         return Err(FixtureSafetyError::BrowserProfile);
     }
+    let lower = content.to_ascii_lowercase();
+    if lower.contains("\"response\"")
+        || lower.contains("\"response_body\"")
+        || lower.contains("\"raw_save\"")
+        || lower.contains("\"profile\"")
+    {
+        return Err(FixtureSafetyError::RawBrowserData);
+    }
     let is_trace_or_experiment =
         path.file_name()
             .and_then(|name| name.to_str())
@@ -46,7 +56,7 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.starts_with("checkpoint-"))
         || is_trace_or_experiment)
-        && content.to_ascii_lowercase().contains("passkey")
+        && lower.contains("passkey")
     {
         return Err(FixtureSafetyError::Passkey);
     }
@@ -87,6 +97,13 @@ mod tests {
                 r#"{"profile": "Chrome/User Data"}"#
             ),
             Err(FixtureSafetyError::BrowserProfile)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("enrollment-evidence.json"),
+                r#"{"response_body": "unsafe"}"#
+            ),
+            Err(FixtureSafetyError::RawBrowserData)
         );
     }
 }

@@ -102,17 +102,28 @@ cheaters:
 General leaderboard reporting for managed characters remains unsupported
 until a dedicated change adds it.
 
+## Completed: Online Enrollment Conformance
+
+The `online-enrollment-conformance` capability establishes browser-derived,
+credential-free evidence for a future native enrollment feature:
+
+- Explicitly confirmed disposable browser runs record redacted `cmd=create`
+  metadata, successful enrollment, and create-before-initial-`s` ordering.
+- A separate ephemeral context confirms duplicate-name rejection without
+  creating a second online identity.
+- An interrupted creation response is recorded as unconfirmed, including
+  observed retry behavior, without claiming whether the server reserved the
+  name.
+- Evidence validation rejects incomplete observations and sensitive data;
+  normal CLI paths remain transport-free.
+
 ## Planned Sequence
 
-1. Establish online-enrollment conformance using only disposable characters:
-   capture the browser's `Sold!` creation handshake, accepted and duplicate-name
-   responses, first-report ordering, and ambiguous transport failures. This is
-   evidence-only and must not enable normal-user leaderboard transport.
-2. Add explicit, opt-in leaderboard reporting for imported browser characters
+1. Add explicit, opt-in leaderboard reporting for imported browser characters
    whose names and online credentials were already established by the browser.
    Preserve browser-equivalent report triggers and safe error/retry behavior
    without adding native character creation.
-3. Add online New Guy enrollment. Its `Sold!` action must make the
+2. Add online New Guy enrollment. Its `Sold!` action must make the
    server-authoritative name-creation request, retain the editable draft on a
    rejected name, and persist an online managed character only after successful
    creation and browser-equivalent initial reporting. Creation and initial

@@ -217,8 +217,10 @@ build never talks to the leaderboard.
   directly, rather than waiting out real in-game hours or reimplementing
   browser behavior.
 - By default (no `--submit`), intercepts every leaderboard request so no
-  network report is ever actually sent; this is enough to compare browser and
-  Gyrognome-bridge report traces for exact conformance.
+  network create or report is ever actually sent. Its dry-run evidence records
+  the redacted `cmd=create` descriptor before the initial `s` report; the
+  server-dependent duplicate-name and interrupted-response observations are
+  explicitly marked not run.
 - Only submits real reports and polls the live leaderboard for
   classification when both `--submit` and a second, distinct
   `--confirm-live-submission` flag are given. Classification is read from
@@ -230,11 +232,22 @@ build never talks to the leaderboard.
   is still unindexed when that bound is reached is recorded `inconclusive`
   and fails the gate, exactly like a `cheater` result — neither is ever
   treated as a pass.
+- With both confirmations, creates a second ephemeral browser context that
+  attempts the generated name from the successful enrollment and records only
+  its browser-visible rejection, redacted request descriptor, and confirmation
+  that no second online identity was created. A third context aborts the
+  creation response before it is usable, records the browser's retry count,
+  and labels that result `unconfirmed`; it never claims whether the server
+  reserved that interrupted name.
 - Writes only credential-free evidence (`--evidence <path>`, and always to
-  stdout): per-scenario pass/fail, expected-vs-observed report traces, and
-  (when submitting) classification results. Errors, logs, and evidence are
-  scrubbed of passkeys, the retained original document, `.pqw`/Playwright
-  profile paths, and complete signed leaderboard URLs.
+  stdout): per-scenario pass/fail, redacted `cmd=create` and `cmd=b`
+  descriptors (endpoint, method, operation, trigger, and unsigned field
+  names), browser-visible enrollment outcomes, ordering, and (when
+  submitting) classification results. The evidence gate requires a successful
+  creation, duplicate-name rejection, create-before-initial-report ordering,
+  and an interrupted enrollment observation. Errors, logs, and evidence reject
+  passkeys, response bodies, raw saves, browser profiles, the retained
+  original document, and complete signed leaderboard URLs.
 
 Run the credential-free, no-network-report dry run with:
 
