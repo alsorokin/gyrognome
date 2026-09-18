@@ -8,15 +8,20 @@ use std::{
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+        disable_raw_mode, enable_raw_mode,
+    },
 };
 use ratatui::{
     Terminal,
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 use thiserror::Error;
 
@@ -397,9 +402,9 @@ pub fn run<P: DashboardProvider>(
         panes: PaneVisibility::default(),
     };
     loop {
-        session
-            .terminal
-            .draw(|frame| render(frame, &state.current, state.confirmation, &state.panes))?;
+        session.draw_synchronized(|frame| {
+            render(frame, &state.current, state.confirmation, &state.panes)
+        })?;
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
@@ -495,6 +500,16 @@ impl TerminalSession {
                 Err(error.into())
             }
         }
+    }
+
+    fn draw_synchronized(
+        &mut self,
+        render_callback: impl FnOnce(&mut ratatui::Frame<'_>),
+    ) -> io::Result<()> {
+        execute!(self.terminal.backend_mut(), BeginSynchronizedUpdate)?;
+        let draw_result = self.terminal.draw(render_callback).map(|_| ());
+        let end_result = execute!(self.terminal.backend_mut(), EndSynchronizedUpdate);
+        draw_result.and(end_result)
     }
 }
 
@@ -830,34 +845,53 @@ fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Re
     frame.render_widget(pane_block("Progress", pane), area);
     for ((label, bar), row) in bars.into_iter().zip(rows.iter().copied()) {
         let label = format!("{label} {}%", bar.percent);
-        let filled_end = row.left()
-            + (f64::from(row.width) * (bar.percent.min(100) as f64 / 100.0)).round() as u16;
-        let label_start = row.left() + (row.width - label.len() as u16) / 2;
         frame.render_widget(
-            Gauge::default()
-                .gauge_style(Style::default().fg(Color::Cyan))
-                .ratio((bar.percent.min(100) as f64) / 100.0)
-                .label(label.clone()),
+            ProgressGauge {
+                label: &label,
+                percent: bar.percent.min(100),
+            },
             row,
         );
-        frame.render_widget(
-            Paragraph::new(Line::from(
-                label
-                    .chars()
-                    .enumerate()
-                    .map(|(index, character)| {
-                        let color = if label_start + (index as u16) < filled_end {
-                            Color::Black
-                        } else {
-                            Color::Cyan
-                        };
-                        Span::styled(character.to_string(), Style::default().fg(color))
-                    })
-                    .collect::<Vec<_>>(),
-            ))
-            .alignment(Alignment::Center),
-            row,
-        );
+    }
+}
+
+struct ProgressGauge<'a> {
+    label: &'a str,
+    percent: u64,
+}
+
+impl Widget for ProgressGauge<'_> {
+    fn render(self, area: Rect, buffer: &mut Buffer) {
+        if area.is_empty() {
+            return;
+        }
+
+        let filled_width = (f64::from(area.width) * (self.percent as f64 / 100.0)).round() as u16;
+        let label = self
+            .label
+            .chars()
+            .take(area.width as usize)
+            .collect::<Vec<_>>();
+        let label_start = (area.width - label.len() as u16) / 2;
+
+        for offset in 0..area.width {
+            let cell = &mut buffer[(area.left() + offset, area.top())];
+            cell.reset();
+            let filled = offset < filled_width;
+            if let Some(character) = offset
+                .checked_sub(label_start)
+                .and_then(|index| label.get(index as usize))
+            {
+                cell.set_char(*character);
+                if filled {
+                    cell.set_fg(Color::Black).set_bg(Color::Cyan);
+                } else {
+                    cell.set_fg(Color::Cyan);
+                }
+            } else if filled {
+                cell.set_symbol(symbols::block::FULL).set_fg(Color::Cyan);
+            }
+        }
     }
 }
 
@@ -1217,6 +1251,54 @@ mod tests {
 
         assert!(label_cells.iter().any(|cell| cell.fg == Color::Black));
         assert!(label_cells.iter().any(|cell| cell.fg == Color::Cyan));
+    }
+
+    #[test]
+    fn progress_gauge_handles_digit_width_transitions_without_padding() {
+        let backend = TestBackend::new(20, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        for (label, percent) in [("Plot 9%", 9), ("Plot 10%", 10), ("Plot 9%", 9)] {
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(ProgressGauge { label, percent }, frame.area());
+                })
+                .unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+
+            assert!(rendered.contains(label));
+        }
+    }
+
+    #[test]
+    fn progress_gauge_fills_the_cell_immediately_after_its_label() {
+        let backend = TestBackend::new(20, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    ProgressGauge {
+                        label: "Plot 90%",
+                        percent: 90,
+                    },
+                    frame.area(),
+                );
+            })
+            .unwrap();
+
+        let label_start = (20 - "Plot 90%".len()) / 2;
+        let cell_after_label =
+            &terminal.backend().buffer().content()[label_start + "Plot 90%".len()];
+
+        assert_eq!(cell_after_label.symbol(), symbols::block::FULL);
+        assert_eq!(cell_after_label.fg, Color::Cyan);
+        assert_eq!(cell_after_label.bg, Color::Reset);
     }
 
     #[test]
