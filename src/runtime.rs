@@ -23,7 +23,6 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::state::Character;
-#[cfg(test)]
 use rusqlite::OptionalExtension;
 #[cfg(test)]
 use serde_json::Value;
@@ -112,6 +111,8 @@ pub enum StorageError {
     NotFound(CharacterId),
     #[error("managed character {0} is already running")]
     AlreadyOwned(CharacterId),
+    #[error("managed character is not eligible for reporting")]
+    ReportingIneligible,
     #[error("numeric value is outside SQLite's signed integer range: {0}")]
     IntegerOutOfRange(&'static str),
     #[cfg(test)]
@@ -156,6 +157,13 @@ pub struct Store {
 /// An advisory lock held for a managed character's worker lifetime.
 pub struct CharacterLock {
     _file: File,
+}
+
+pub(crate) struct ReportingTarget {
+    pub(crate) identity: CharacterIdentity,
+    pub(crate) state: Character,
+    pub(crate) passkey: i32,
+    _lock: CharacterLock,
 }
 
 impl Store {
@@ -303,6 +311,40 @@ impl Store {
             Some(row) => managed_character_from_row(row),
             None => Err(StorageError::NotFound(id.clone())),
         }
+    }
+
+    /// Resolves an inactive imported online character while retaining its
+    /// ownership lock for the reporting operation.
+    pub(crate) fn reporting_target(
+        &self,
+        id: &CharacterId,
+    ) -> Result<ReportingTarget, StorageError> {
+        let lock = self.acquire_lock(id)?;
+        let character = self.get(id)?;
+        if character.state.online.is_none() {
+            return Err(StorageError::ReportingIneligible);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT original_document FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let document: serde_json::Value =
+            serde_json::from_str(&source).map_err(StorageError::StateJson)?;
+        let passkey = document["online"]["passkey"]
+            .as_i64()
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or(StorageError::ReportingIneligible)?;
+        Ok(ReportingTarget {
+            identity: character.identity,
+            state: character.state,
+            passkey,
+            _lock: lock,
+        })
     }
 
     /// Atomically removes every persisted record for an inactive character.
@@ -650,6 +692,63 @@ mod tests {
         let looked_up = store.get(&registered.id).unwrap();
         assert_eq!(looked_up.state.traits.name, "Reference Hero");
         assert_eq!(looked_up.state.document, Value::Null);
+    }
+
+    #[test]
+    fn reporting_target_requires_an_inactive_online_credential() {
+        let directory = TestDirectory::new("reporting-target");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let target = store.reporting_target(&registered.id).unwrap();
+        assert_eq!(target.identity, registered.identity);
+        assert_eq!(target.state.document, Value::Null);
+        drop(target);
+
+        let mut offline = fixture_character();
+        offline.online = None;
+        let offline = store.register(&offline).unwrap();
+        assert!(matches!(
+            store.reporting_target(&offline.id),
+            Err(StorageError::ReportingIneligible)
+        ));
+
+        assert!(matches!(
+            store.reporting_target(&CharacterId::new()),
+            Err(StorageError::NotFound(_))
+        ));
+
+        let owned = store.register(&fixture_character()).unwrap();
+        let worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), owned.id.clone()).unwrap();
+        assert!(matches!(
+            store.reporting_target(&owned.id),
+            Err(StorageError::AlreadyOwned(_))
+        ));
+        drop(worker);
+
+        store
+            .connection
+            .execute(
+                "UPDATE characters SET original_document = ?1 WHERE id = ?2",
+                ["{}", registered.id.to_string().as_str()],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.reporting_target(&registered.id),
+            Err(StorageError::ReportingIneligible)
+        ));
+
+        store
+            .connection
+            .execute(
+                "UPDATE characters SET original_document = ?1 WHERE id = ?2",
+                ["not json", registered.id.to_string().as_str()],
+            )
+            .unwrap();
+        assert!(matches!(
+            store.reporting_target(&registered.id),
+            Err(StorageError::StateJson(_))
+        ));
     }
 
     #[test]

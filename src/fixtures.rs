@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
+use serde_json::Value;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -14,6 +15,81 @@ pub enum FixtureSafetyError {
     RawBrowserData,
     #[error("checkpoint fixture must not contain an online passkey")]
     Passkey,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum EnrollmentEvidenceError {
+    #[error("enrollment conformance evidence is unavailable")]
+    Unavailable,
+    #[error("enrollment conformance evidence is malformed")]
+    Malformed,
+    #[error("enrollment conformance evidence contains sensitive data")]
+    Sensitive,
+    #[error("enrollment conformance evidence is not a complete passing live result")]
+    NotLiveOrPassing,
+    #[error("enrollment conformance evidence is incomplete")]
+    Incomplete,
+}
+
+pub fn validate_enrollment_evidence(content: &str) -> Result<(), EnrollmentEvidenceError> {
+    if validate_fixture(Path::new("enrollment-conformance-evidence.json"), content).is_err() {
+        return Err(EnrollmentEvidenceError::Sensitive);
+    }
+    let evidence: Value =
+        serde_json::from_str(content).map_err(|_| EnrollmentEvidenceError::Malformed)?;
+    if evidence["format"] != "gyrognome-disposable-conformance/v2" {
+        return Err(EnrollmentEvidenceError::Malformed);
+    }
+    if evidence["mode"] != "submission-enabled"
+        || evidence["source"]["client"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || evidence["source"]["revision"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || evidence["source"]["content_sha256"]
+            .as_str()
+            .is_none_or(str::is_empty)
+        || evidence["summary"]["total"] != evidence["summary"]["passed"]
+        || !evidence["summary"]["failed"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    {
+        return Err(EnrollmentEvidenceError::NotLiveOrPassing);
+    }
+    let enrollment = &evidence["enrollment"];
+    if enrollment["successfulCreation"]["outcome"] != "success"
+        || enrollment["successfulCreation"]["creation"].is_null()
+        || enrollment["successfulCreation"]["initialReport"].is_null()
+        || enrollment["successfulCreation"]["order"] != "create-before-initial-report"
+        || enrollment["successfulCreation"]["pass"] != true
+        || enrollment["duplicateName"]["outcome"] != "rejected"
+        || enrollment["duplicateName"]["creation"].is_null()
+        || enrollment["duplicateName"]["creationAttempts"] != 1
+        || enrollment["duplicateName"]["initialReportAttempts"] != 0
+        || enrollment["duplicateName"]["additionalOnlineIdentity"] != false
+        || enrollment["duplicateName"]["pass"] != true
+        || enrollment["interruptedEnrollment"]["outcome"] != "unconfirmed"
+        || enrollment["interruptedEnrollment"]["creations"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+        || enrollment["interruptedEnrollment"]["initialReportAttempts"] != 0
+        || enrollment["interruptedEnrollment"]["pass"] != true
+    {
+        return Err(EnrollmentEvidenceError::Incomplete);
+    }
+    Ok(())
+}
+
+pub fn validate_enrollment_evidence_file(path: &Path) -> Result<(), EnrollmentEvidenceError> {
+    let content = fs::read_to_string(path).map_err(|_| EnrollmentEvidenceError::Unavailable)?;
+    validate_enrollment_evidence(&content)
+}
+
+pub fn validate_bundled_enrollment_evidence() -> Result<(), EnrollmentEvidenceError> {
+    validate_enrollment_evidence(include_str!(
+        "../tests/fixtures/enrollment-conformance-evidence.json"
+    ))
 }
 
 pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyError> {
@@ -104,6 +180,24 @@ mod tests {
                 r#"{"response_body": "unsafe"}"#
             ),
             Err(FixtureSafetyError::RawBrowserData)
+        );
+    }
+
+    #[test]
+    fn enrollment_evidence_gate_is_credential_free_and_complete() {
+        let valid = include_str!("../tests/fixtures/enrollment-conformance-evidence.json");
+        assert!(validate_enrollment_evidence(valid).is_ok());
+        assert_eq!(
+            validate_enrollment_evidence(r#"{"passkey": 1}"#),
+            Err(EnrollmentEvidenceError::Sensitive)
+        );
+        assert_eq!(
+            validate_enrollment_evidence(r#"{"format":"gyrognome-disposable-conformance/v2"}"#),
+            Err(EnrollmentEvidenceError::NotLiveOrPassing)
+        );
+        assert_eq!(
+            validate_enrollment_evidence_file(Path::new("target/no-evidence.json")),
+            Err(EnrollmentEvidenceError::Unavailable)
         );
     }
 }

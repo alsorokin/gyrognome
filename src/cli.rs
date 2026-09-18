@@ -17,6 +17,7 @@ use crate::{
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
     newguy::{self, NewGuyError, Selection},
     newguy_wizard::{self, WizardError},
+    reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
     runtime::{CharacterId, CharacterIdentity, StorageError, Store, Worker, WorkerError},
     save::{self, SaveError},
 };
@@ -82,6 +83,8 @@ enum Command {
     Recover { id: String },
     /// Delete an inactive managed character after confirmation.
     Delete { id: String },
+    /// Submit one confirmed browser-compatible leaderboard report.
+    Report { id: String },
     /// Open an interactive credential-safe dashboard for a managed character.
     Dashboard {
         id: Option<String>,
@@ -126,6 +129,8 @@ pub enum CliError {
     Signal(#[from] std::io::Error),
     #[error("could not read deletion confirmation: {0}")]
     Confirmation(#[source] std::io::Error),
+    #[error(transparent)]
+    Reporting(#[from] ReportingError),
     #[error("managed character {0} is running; stop it before deleting")]
     CharacterRunning(CharacterId),
     #[error(transparent)]
@@ -257,6 +262,33 @@ pub fn run() -> Result<(), CliError> {
                 Err(error) => return Err(error.into()),
             }
             println!("Deleted managed character {id}.");
+        }
+        Command::Report { id } => {
+            let id = parse_id(&id)?;
+            let store = Store::open_default()?;
+            let character = store.get(&id)?;
+            println!(
+                "Submit one leaderboard report for managed character {id}?\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\nType yes to confirm: ",
+                character.identity.name,
+                character.identity.race,
+                character.identity.class,
+                character.identity.level
+            );
+            io::stdout().flush().map_err(CliError::Confirmation)?;
+            if !delete_confirmed(&mut io::stdin().lock())? {
+                println!("Report cancelled.");
+                return Ok(());
+            }
+            let result = reporting::submit(&store, &id, &HttpsTransport)?;
+            match result.outcome {
+                DeliveryOutcome::Delivered => println!("Leaderboard report delivered."),
+                DeliveryOutcome::EndpointRejected => {
+                    println!("Leaderboard report was not accepted by the endpoint.")
+                }
+                DeliveryOutcome::DeliveryFailed => {
+                    println!("Leaderboard report could not be delivered.")
+                }
+            }
         }
         Command::Dashboard { id, refresh_ms } => {
             let stop = shutdown_flag()?;

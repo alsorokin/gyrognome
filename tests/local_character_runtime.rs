@@ -250,6 +250,33 @@ fn cli_deletes_only_after_explicit_confirmation_without_sensitive_output() {
 }
 
 #[test]
+fn cli_declined_report_sends_no_request_and_keeps_safe_output() {
+    let directory = TestDirectory::new("report-cancelled");
+    let save = directory.save_file();
+    let registration = directory.command(&["register", save.to_str().unwrap()]);
+    let id = stdout(&registration)
+        .strip_prefix("Registered managed character: ")
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let cancelled = directory.command_with_input(&["report", &id], "no\n");
+    assert!(cancelled.status.success(), "{}", stderr(&cancelled));
+    let output = [stdout(&cancelled), stderr(&cancelled)].join("");
+    assert!(output.contains("Report cancelled."));
+    assert!(!output.contains("4242"));
+    assert!(!output.contains("unrecognized-future-field"));
+    assert!(
+        directory
+            .command(&["managed-inspect", &id])
+            .status
+            .success()
+    );
+}
+
+#[test]
 fn cli_delete_reports_invalid_and_unknown_identifiers() {
     let directory = TestDirectory::new("delete-errors");
     let invalid = directory.command_with_input(&["delete", "not-an-id"], "yes\n");

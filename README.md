@@ -9,8 +9,9 @@ its offline-only Rust compatibility core.
 - Preserves unmodified imported JSON documents for export by library consumers.
 - Implements browser-compatible Alea state continuation, form-style URL encoding,
   URL normalization, and LFSR request validators.
-- Constructs request data only. It has no HTTP dependency and never creates
-  characters or submits leaderboard reports.
+- Constructs request data and provides a separately confirmed reporting path
+  for eligible browser-imported managed characters. It never creates online
+  characters or reports automatically.
 - Provides a pure deterministic simulation API plus an opt-in local runtime
   that schedules and persists explicitly registered characters. Neither layer
   mutates browser saves, renders a UI, or transports data.
@@ -95,6 +96,31 @@ gyrognome delete <character-id>
 The command prints only the target's safe identity and requires `yes` before
 removing it. Stop an active worker or user service first; deletion never stops
 it automatically.
+
+### Confirmed leaderboard reporting
+
+An imported browser character may submit exactly one manual-brag report only
+when it has an existing browser-issued online credential, no local worker owns
+it, its endpoint is the official Progress Quest leaderboard, and the bundled
+credential-free enrollment-conformance evidence is complete and passing. The
+command builds its report from the current persisted canonical state:
+
+```sh
+gyrognome report <character-id>
+```
+
+It displays the safe identity and requires typing `yes` for every submission.
+Declining changes nothing and sends no request. A successful HTTP response is
+reported only as delivered; it does not establish leaderboard classification.
+Rejected and failed deliveries do not retry automatically. Reporting is never
+performed by registration, inspection, dashboard refresh, workers, lifecycle
+commands, or character administration.
+
+Do not provide a passkey, raw save contents, or a signed request URL to this
+command or to any Gyrognome diagnostic. Offline-created characters and active
+managed characters are ineligible. Native online enrollment, automatic
+reporting, queues, retries, and leaderboard polling are intentionally out of
+scope.
 
 These commands can be exercised with a synthetic save and isolated data root:
 

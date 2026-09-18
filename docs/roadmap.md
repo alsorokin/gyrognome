@@ -1,8 +1,7 @@
 # Gyrognome Roadmap
 
 Gyrognome is a Linux-native Progress Quest client. Its compatibility,
-inspection, deterministic simulation, and local-runtime foundations are complete
-and intentionally offline-only.
+inspection, deterministic simulation, and local-runtime foundations are complete.
 
 ## Completed: Compatibility Core
 
@@ -99,8 +98,20 @@ cheaters:
   browser/Gyrognome scenario traces match, and the disposable character
   remains in the normal leaderboard population rather than the cheater one.
 
-General leaderboard reporting for managed characters remains unsupported
-until a dedicated change adds it.
+## Completed: Opt-in Imported-character Reporting
+
+Eligible browser-imported managed characters can send one browser-compatible
+manual-brag report after an explicit per-submission confirmation. The reporting
+path is synchronous and foreground-only; registration, inspection, dashboard
+refresh, worker progression, lifecycle operations, and administration remain
+transport-free. It rejects offline, active, malformed, missing-credential, and
+non-official-endpoint targets before delivery, and validates bundled
+credential-free enrollment-conformance evidence first.
+
+Delivery results are limited to delivered, endpoint-rejected, and
+delivery-failed. They do not expose passkeys, raw saves, signed URLs, response
+bodies, or leaderboard classification, and no automated retries are attempted.
+Native online enrollment and scheduled reporting remain out of scope.
 
 ## Completed: Online Enrollment Conformance
 
@@ -119,11 +130,7 @@ credential-free evidence for a future native enrollment feature:
 
 ## Planned Sequence
 
-1. Add explicit, opt-in leaderboard reporting for imported browser characters
-   whose names and online credentials were already established by the browser.
-   Preserve browser-equivalent report triggers and safe error/retry behavior
-   without adding native character creation.
-2. Add online New Guy enrollment. Its `Sold!` action must make the
+1. Add online New Guy enrollment. Its `Sold!` action must make the
    server-authoritative name-creation request, retain the editable draft on a
    rejected name, and persist an online managed character only after successful
    creation and browser-equivalent initial reporting. Creation and initial

@@ -1,12 +1,12 @@
 use std::{fs, process::Command};
 
 #[test]
-fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
+fn reporting_is_the_only_http_transport_execution_path() {
     let manifest = fs::read_to_string("Cargo.toml").unwrap();
-    for dependency in ["reqwest", "ureq", "hyper", "curl", "isahc"] {
+    for dependency in ["reqwest", "hyper", "curl", "isahc"] {
         assert!(
             !manifest.contains(dependency),
-            "local runtime must not depend on {dependency}"
+            "reporting must use only the dedicated HTTPS client"
         );
     }
 
@@ -28,6 +28,9 @@ fn local_runtime_has_no_http_transport_dependency_or_execution_path() {
             );
         }
     }
+    let reporting = fs::read_to_string("src/reporting.rs").unwrap();
+    assert!(reporting.contains("ureq::get"));
+    assert!(reporting.contains("OFFICIAL_LEADERBOARD_ENDPOINT"));
 }
 
 #[test]
@@ -38,8 +41,8 @@ fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
     assert!(manifest.contains("conformance-bridge = []"));
     assert!(cli.contains("#[cfg(feature = \"conformance-bridge\")]"));
     assert!(
-        !cli.contains("std::net"),
-        "normal CLI commands must not initiate HTTP"
+        !cli.contains("ureq::"),
+        "only the reporting service may initiate HTTP"
     );
     for source in ["src/newguy.rs", "src/newguy_wizard.rs"] {
         let content = fs::read_to_string(source).unwrap();

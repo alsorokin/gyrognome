@@ -8,6 +8,7 @@ pub mod lifecycle;
 pub mod newguy;
 pub mod newguy_wizard;
 pub mod protocol;
+pub mod reporting;
 pub mod rng;
 pub mod ruleset;
 pub mod runtime;
