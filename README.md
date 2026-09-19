@@ -1,7 +1,7 @@
 # Gyrognome
 
-Gyrognome is a Linux-native Progress Quest client. This initial release provides
-its offline-only Rust compatibility core.
+Gyrognome is a Linux-native Progress Quest client with a Rust compatibility
+core and opt-in online leaderboard reporting for eligible managed characters.
 
 ## Current support
 
@@ -9,10 +9,9 @@ its offline-only Rust compatibility core.
 - Preserves unmodified imported JSON documents for export by library consumers.
 - Implements browser-compatible Alea state continuation, form-style URL encoding,
   URL normalization, and LFSR request validators.
-- Constructs request data, provides an explicitly confirmed reporting path for
-  eligible browser-imported managed characters, and supports foreground online
-  enrollment from the interactive New Guy wizard. It never reports
-  automatically.
+- Constructs request data, provides manual reporting and persisted online
+  worker event reporting for eligible browser-imported managed characters, and
+  supports foreground online enrollment from the interactive New Guy wizard.
 - Provides a pure deterministic simulation API plus an opt-in local runtime
   that schedules and persists explicitly registered characters. Neither layer
   mutates browser saves, renders a UI, or transports data.
@@ -66,8 +65,9 @@ reporting and must not be committed.
 ## Local managed-character runtime
 
 The local runtime imports an existing browser save into a per-user SQLite
-database. Workers and lifecycle operations are local-only: they make no HTTP
-requests, create no online characters, and never print passkeys or
+database. Online workers send one best-effort official-endpoint report after
+each persisted level-up or act-completion event; offline workers never report.
+Workers do not create online characters and never print passkeys or
 unrecognized raw save fields. The original browser document is retained
 privately for a future export feature; the runtime stores its versioned
 canonical state separately.
@@ -116,14 +116,15 @@ gyrognome report <character-id>
 It displays the safe identity and requires typing `yes` for every submission.
 Declining changes nothing and sends no request. A successful HTTP response is
 reported only as delivered; it does not establish leaderboard classification.
-Rejected and failed deliveries do not retry automatically. Reporting is never
-performed by registration, inspection, dashboard refresh, workers, lifecycle
-commands, or character administration.
+Rejected and failed deliveries do not retry automatically. A worker attempts
+each persisted online level-up and act-completion event once, then continues
+regardless of delivery outcome. Registration, inspection, dashboard refresh,
+lifecycle commands, and character administration never report.
 
 Do not provide a passkey, raw save contents, or a signed request URL to this
 command or to any Gyrognome diagnostic. Offline-created characters and active
-managed characters are ineligible. Automatic reporting, queues, retries, and
-leaderboard polling are intentionally out of scope.
+managed characters are ineligible. Delivery queues, retries, and leaderboard
+polling are intentionally out of scope.
 
 ### Interactive New Guy enrollment
 
@@ -210,19 +211,21 @@ gyrognome dashboard <character-id>
 The dashboard reads the persisted canonical state and `systemctl --user`
 status every second by default; change that bounded interval with
 `--refresh-ms` (100 through 60000). It never advances simulation, acquires
-the worker lock, writes state, makes HTTP requests, or sends leaderboard data.
-It displays only the credential-safe canonical fields, never browser passkeys,
-the retained original save, or unrecognized source fields.
+the worker lock, or writes state. It displays only the credential-safe
+canonical fields, never browser passkeys, the retained original save, or
+unrecognized source fields.
 
-Press `q` to quit, `r` to refresh, `s` to start, `x` to stop, or `c` to
-recover the selected service. Start, stop, and recover require `Enter`
-confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit through the same
-terminal-restoration path. The same logged-in-user systemd prerequisites
-described above apply to service status and lifecycle actions. If the user
-service manager is unavailable or an action fails, the dashboard preserves the
-last successfully displayed character state and shows the actionable error.
-The selection flow accepts Up/Down or `j`/`k`, `Enter` to open a character, and
-`Esc` or `q` to cancel. It reports an error without entering a dashboard when
+Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
+manual Brag report, `s` to start, `x` to stop, or `c` to recover the selected
+service. Brag has no confirmation overlay and shows only delivered,
+endpoint-rejected, or delivery-failed outcomes. Start, stop, and recover
+require `Enter` confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit
+through the same terminal-restoration path. The same logged-in-user systemd
+prerequisites described above apply to service status and lifecycle actions.
+If the user service manager is unavailable or an action fails, the dashboard
+preserves the last successfully displayed character state and shows the
+actionable error. The selection flow accepts Up/Down or `j`/`k`, `Enter` to
+open a character, and `Esc` or `q` to cancel. It reports an error without entering a dashboard when
 no characters are registered.
 
 ## Reference fixtures

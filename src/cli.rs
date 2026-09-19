@@ -61,7 +61,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Run a managed character in this process until it receives SIGINT or SIGTERM.
+    /// Run a managed character and best-effort report persisted online level-ups and act completions.
     Worker {
         id: String,
         /// Milliseconds between monotonic-clock persistence updates.
@@ -85,7 +85,7 @@ enum Command {
     Delete { id: String },
     /// Submit one confirmed browser-compatible leaderboard report.
     Report { id: String },
-    /// Open an interactive credential-safe dashboard for a managed character.
+    /// Open an interactive credential-safe dashboard with an immediate manual Brag action.
     Dashboard {
         id: Option<String>,
         /// Milliseconds between persisted-state refreshes.

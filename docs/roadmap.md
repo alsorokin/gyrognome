@@ -37,7 +37,9 @@ no clock, filesystem, database, or network access is reachable from simulation.
 The `local-character-runtime` capability adds XDG-scoped SQLite persistence,
 per-character process locking, and `systemd --user` lifecycle control. Managed
 characters progress only while their local runtime is active; stopped time does
-not catch up. The runtime remains local-only and does not report to leaderboards.
+not catch up. Eligible online workers deliver each persisted level-up and
+act-completion event once to the official leaderboard endpoint; delivery is
+best effort and never queues or retries.
 
 ## Completed: Managed Character Administration
 
@@ -64,8 +66,8 @@ of a managed character:
   simulation.
 - Provides confirmed lifecycle actions through the existing runtime controls.
 - Restores the terminal on quit, terminal failure, or interrupt.
-- Keeps browser passkeys, raw save documents, HTTP transport, and leaderboard
-  reporting out of scope.
+- Keeps browser passkeys, raw save documents, and raw request data out of the
+  presentation layer.
 
 ## Completed: Simulation Timing Conformance
 
@@ -101,17 +103,17 @@ cheaters:
 ## Completed: Opt-in Imported-character Reporting
 
 Eligible browser-imported managed characters can send one browser-compatible
-manual-brag report after an explicit per-submission confirmation. The reporting
-path is synchronous and foreground-only; registration, inspection, dashboard
-refresh, worker progression, lifecycle operations, and administration remain
-transport-free. It rejects offline, active, malformed, missing-credential, and
-non-official-endpoint targets before delivery, and validates bundled
-credential-free enrollment-conformance evidence first.
+manual-brag report after an explicit per-submission confirmation, or from the
+dashboard's immediate `b` Brag action. Active online workers also deliver each
+persisted level-up and act-completion trace event once. The reporting path
+rejects offline, malformed, missing-credential, and non-official-endpoint
+targets before delivery, and validates bundled credential-free
+enrollment-conformance evidence first.
 
 Delivery results are limited to delivered, endpoint-rejected, and
 delivery-failed. They do not expose passkeys, raw saves, signed URLs, response
 bodies, or leaderboard classification, and no automated retries are attempted.
-Scheduled reporting remains out of scope.
+Automatic worker failures preserve progression and are not queued for replay.
 
 ## Completed: Online Enrollment Conformance
 

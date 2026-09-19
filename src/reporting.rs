@@ -1,4 +1,4 @@
-//! Explicit, foreground-only leaderboard report delivery.
+//! Credential-safe leaderboard report delivery.
 
 use thiserror::Error;
 use url::Url;
@@ -7,6 +7,7 @@ use crate::{
     fixtures::{EnrollmentEvidenceError, validate_bundled_enrollment_evidence},
     protocol::{self, ReportFields},
     runtime::{CharacterId, CharacterIdentity, StorageError, Store},
+    simulation::{ReportEvent, ReportTrigger},
     state::{Character, OnlineMetadata},
 };
 
@@ -47,7 +48,7 @@ pub enum ReportingError {
     IncompleteEnrollment,
 }
 
-pub trait ReportTransport {
+pub trait ReportTransport: Send {
     fn deliver(&self, request: Url) -> DeliveryOutcome;
 }
 
@@ -321,6 +322,56 @@ pub fn submit(
     })
 }
 
+/// Delivers one persisted worker trace event through the official endpoint.
+///
+/// The caller must own the managed-character worker lock and persist the
+/// canonical successor state before calling this function.
+pub(crate) fn submit_event(
+    store: &Store,
+    id: &CharacterId,
+    event: &ReportEvent,
+    transport: &(impl ReportTransport + ?Sized),
+) -> Result<ReportResult, ReportingError> {
+    if !matches!(
+        event.trigger,
+        ReportTrigger::LevelUp | ReportTrigger::ActCompletion
+    ) {
+        return Err(ReportingError::Construction);
+    }
+    validate_bundled_enrollment_evidence()?;
+    let target = store.reporting_target_for_worker(id)?;
+    let state = &event.snapshot.character;
+    let host = state
+        .online
+        .as_ref()
+        .map(|online| online.host.as_str())
+        .ok_or(StorageError::ReportingIneligible)?;
+    let endpoint = official_endpoint(host)?;
+    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
+        return Err(ReportingError::UnofficialEndpoint);
+    }
+    let request = protocol::progress_report(
+        host,
+        state,
+        event.trigger.code(),
+        ReportFields {
+            xp_position: state.progress.experience.position as u64,
+            best_equipment: &state.bestequip,
+            best_spell: &state.bestspell,
+            best_stat: &state.beststat,
+            best_plot: &state.plot.bestplot,
+            motto: &event.motto,
+        },
+        target.passkey,
+    )
+    .map_err(|_| ReportingError::Construction)?;
+    let request = official_endpoint(&request)?;
+    Ok(ReportResult {
+        identity: target.identity,
+        outcome: transport.deliver(request),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -333,7 +384,12 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::{newguy, runtime::Store, save};
+    use crate::{
+        checkpoint, newguy,
+        runtime::Store,
+        save,
+        simulation::{ReportTrigger, advance_with_trace},
+    };
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -681,6 +737,70 @@ mod tests {
             .unwrap();
             assert_eq!(result.outcome, expected);
             assert_eq!(result.identity.name, "Reference Hero");
+        }
+    }
+
+    #[test]
+    fn delivers_persisted_level_and_act_events_in_browser_order() {
+        let (_directory, store, id) = registered_store();
+        let mut initial = checkpoint::load(Path::new("tests/fixtures/checkpoint-level-up.json"))
+            .unwrap()
+            .initial;
+        initial.online = store.get(&id).unwrap().state.online;
+        initial.queue = vec!["plot|1|Loading".to_owned()];
+        let events = advance_with_trace(
+            &initial,
+            &crate::ruleset::BUNDLED,
+            1_000,
+            "Credential-safe motto",
+        )
+        .unwrap()
+        .events;
+        assert_eq!(
+            events.iter().map(|event| event.trigger).collect::<Vec<_>>(),
+            vec![ReportTrigger::LevelUp, ReportTrigger::ActCompletion]
+        );
+
+        struct EventTransport {
+            triggers: RefCell<Vec<String>>,
+            outcome: DeliveryOutcome,
+        }
+        impl ReportTransport for EventTransport {
+            fn deliver(&self, request: Url) -> DeliveryOutcome {
+                assert_eq!(
+                    request.as_str().split('?').next(),
+                    Some(OFFICIAL_LEADERBOARD_ENDPOINT)
+                );
+                self.triggers.borrow_mut().push(
+                    request
+                        .query_pairs()
+                        .find(|(key, _)| key == "t")
+                        .unwrap()
+                        .1
+                        .into_owned(),
+                );
+                self.outcome
+            }
+        }
+
+        for outcome in [
+            DeliveryOutcome::Delivered,
+            DeliveryOutcome::EndpointRejected,
+            DeliveryOutcome::DeliveryFailed,
+        ] {
+            let transport = EventTransport {
+                triggers: RefCell::new(Vec::new()),
+                outcome,
+            };
+            for event in &events {
+                assert_eq!(
+                    submit_event(&store, &id, event, &transport)
+                        .unwrap()
+                        .outcome,
+                    outcome
+                );
+            }
+            assert_eq!(*transport.triggers.borrow(), ["l", "a"]);
         }
     }
 }

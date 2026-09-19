@@ -22,7 +22,10 @@ use serde::{Serialize, Serializer};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::state::Character;
+use crate::{
+    reporting::{HttpsTransport, ReportTransport},
+    state::Character,
+};
 use rusqlite::OptionalExtension;
 #[cfg(test)]
 use serde_json::Value;
@@ -163,7 +166,7 @@ pub(crate) struct ReportingTarget {
     pub(crate) identity: CharacterIdentity,
     pub(crate) state: Character,
     pub(crate) passkey: i32,
-    _lock: CharacterLock,
+    _lock: Option<CharacterLock>,
 }
 
 impl Store {
@@ -343,7 +346,41 @@ impl Store {
             identity: character.identity,
             state: character.state,
             passkey,
-            _lock: lock,
+            _lock: Some(lock),
+        })
+    }
+
+    /// Resolves an online credential for the active worker that already owns
+    /// this character. Foreground reporting must use [`Self::reporting_target`]
+    /// so it acquires an inactive-character lock instead.
+    pub(crate) fn reporting_target_for_worker(
+        &self,
+        id: &CharacterId,
+    ) -> Result<ReportingTarget, StorageError> {
+        let character = self.get(id)?;
+        if character.state.online.is_none() {
+            return Err(StorageError::ReportingIneligible);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT original_document FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let document: serde_json::Value =
+            serde_json::from_str(&source).map_err(StorageError::StateJson)?;
+        let passkey = document["online"]["passkey"]
+            .as_i64()
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or(StorageError::ReportingIneligible)?;
+        Ok(ReportingTarget {
+            identity: character.identity,
+            state: character.state,
+            passkey,
+            _lock: None,
         })
     }
 
@@ -549,6 +586,7 @@ pub struct Worker {
     id: CharacterId,
     _lock: CharacterLock,
     last_tick: Instant,
+    transport: Box<dyn ReportTransport>,
 }
 
 impl Worker {
@@ -561,7 +599,19 @@ impl Worker {
             id,
             _lock: lock,
             last_tick: Instant::now(),
+            transport: Box::new(HttpsTransport),
         })
+    }
+
+    #[cfg(test)]
+    fn start_with_transport(
+        store: Store,
+        id: CharacterId,
+        transport: impl ReportTransport + 'static,
+    ) -> Result<Self, WorkerError> {
+        let mut worker = Self::start(store, id)?;
+        worker.transport = Box::new(transport);
+        Ok(worker)
     }
 
     /// Advances with an explicit duration. This is useful for deterministic
@@ -575,8 +625,16 @@ impl Worker {
             return Ok(());
         }
         let state = self.store.get(&self.id)?.state;
-        let next = crate::simulation::advance(&state, &crate::ruleset::BUNDLED, elapsed_ms)?;
-        self.store.replace_state(&self.id, &next)?;
+        let trace = crate::simulation::advance_with_trace(
+            &state,
+            &crate::ruleset::BUNDLED,
+            elapsed_ms,
+            "",
+        )?;
+        self.store.replace_state(&self.id, &trace.state)?;
+        for event in &trace.events {
+            let _ = crate::reporting::submit_event(&self.store, &self.id, event, &*self.transport);
+        }
         Ok(())
     }
 
@@ -613,9 +671,15 @@ mod tests {
 
     use base64::{Engine, engine::general_purpose::STANDARD};
     use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    use url::Url;
 
     use super::*;
-    use crate::save;
+    use crate::{
+        checkpoint,
+        reporting::{DeliveryOutcome, OFFICIAL_LEADERBOARD_ENDPOINT, ReportTransport},
+        save,
+    };
 
     struct TestDirectory(PathBuf);
 
@@ -1062,5 +1126,126 @@ mod tests {
                 .position,
             original.progress.task.position
         );
+    }
+
+    struct RecordingTransport {
+        triggers: Arc<Mutex<Vec<String>>>,
+        outcome: DeliveryOutcome,
+    }
+
+    impl ReportTransport for RecordingTransport {
+        fn deliver(&self, request: Url) -> DeliveryOutcome {
+            self.triggers.lock().unwrap().push(
+                request
+                    .query_pairs()
+                    .find(|(key, _)| key == "t")
+                    .unwrap()
+                    .1
+                    .into_owned(),
+            );
+            self.outcome
+        }
+    }
+
+    #[test]
+    fn worker_persists_trace_before_delivering_each_online_event_once() {
+        let directory = TestDirectory::new("worker-reports");
+        let mut initial = checkpoint::load(Path::new("tests/fixtures/checkpoint-level-up.json"))
+            .unwrap()
+            .initial;
+        initial.online = fixture_character().online;
+        initial.online.as_mut().unwrap().host = format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?");
+        initial.document = fixture_character().document;
+        initial.document["online"]["host"] =
+            serde_json::Value::String(format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?"));
+        initial.queue = vec!["plot|1|Loading".to_owned()];
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&initial).unwrap();
+        let triggers = Arc::new(Mutex::new(Vec::new()));
+        let transport = RecordingTransport {
+            triggers: Arc::clone(&triggers),
+            outcome: DeliveryOutcome::Delivered,
+        };
+        let mut worker = Worker::start_with_transport(
+            Store::open_at(&directory.0).unwrap(),
+            registered.id.clone(),
+            transport,
+        )
+        .unwrap();
+
+        worker
+            .advance_elapsed(Duration::from_millis(1_000))
+            .unwrap();
+
+        assert_eq!(*triggers.lock().unwrap(), ["l", "a"]);
+        assert_eq!(
+            Store::open_at(&directory.0)
+                .unwrap()
+                .get(&registered.id)
+                .unwrap()
+                .state
+                .plot
+                .act,
+            1
+        );
+    }
+
+    #[test]
+    fn worker_suppresses_offline_events_and_keeps_progress_on_delivery_failures() {
+        let directory = TestDirectory::new("worker-report-failures");
+        let mut online = checkpoint::load(Path::new("tests/fixtures/checkpoint-level-up.json"))
+            .unwrap()
+            .initial;
+        online.online = fixture_character().online;
+        online.online.as_mut().unwrap().host = format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?");
+        online.document = fixture_character().document;
+        online.document["online"]["host"] =
+            serde_json::Value::String(format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?"));
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let online_registered = store.register(&online).unwrap();
+        let failed_triggers = Arc::new(Mutex::new(Vec::new()));
+        let failed = RecordingTransport {
+            triggers: Arc::clone(&failed_triggers),
+            outcome: DeliveryOutcome::DeliveryFailed,
+        };
+        let mut online_worker = Worker::start_with_transport(
+            Store::open_at(&directory.0).unwrap(),
+            online_registered.id.clone(),
+            failed,
+        )
+        .unwrap();
+        online_worker
+            .advance_elapsed(Duration::from_millis(1_000))
+            .unwrap();
+        assert_eq!(*failed_triggers.lock().unwrap(), ["l"]);
+        assert_eq!(
+            Store::open_at(&directory.0)
+                .unwrap()
+                .get(&online_registered.id)
+                .unwrap()
+                .state
+                .traits
+                .level,
+            2
+        );
+
+        let mut offline = online;
+        offline.online = None;
+        let offline_registered = store.register(&offline).unwrap();
+        let suppressed_triggers = Arc::new(Mutex::new(Vec::new()));
+        let suppressed = RecordingTransport {
+            triggers: Arc::clone(&suppressed_triggers),
+            outcome: DeliveryOutcome::Delivered,
+        };
+        let mut offline_worker = Worker::start_with_transport(
+            Store::open_at(&directory.0).unwrap(),
+            offline_registered.id.clone(),
+            suppressed,
+        )
+        .unwrap();
+        offline_worker
+            .advance_elapsed(Duration::from_millis(1_000))
+            .unwrap();
+        assert!(suppressed_triggers.lock().unwrap().is_empty());
     }
 }

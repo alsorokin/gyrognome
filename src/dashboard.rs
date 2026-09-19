@@ -27,6 +27,7 @@ use thiserror::Error;
 
 use crate::{
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, ServiceState, SystemctlRunner},
+    reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
     runtime::{CharacterId, CharacterIdentity, ManagedCharacter, StorageError, Store},
     state::{Activity, Equipment, InventoryEntry, Plot, Progress, Spell},
 };
@@ -93,6 +94,7 @@ impl LifecycleAction {
 pub trait DashboardProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError>;
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError>;
+    fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError>;
 }
 
 pub struct LocalProvider {
@@ -120,6 +122,10 @@ impl DashboardProvider for LocalProvider {
             LifecycleAction::Recover => lifecycle.recover(id)?,
         }
         Ok(())
+    }
+
+    fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+        Ok(reporting::submit(&self.store, id, &HttpsTransport)?.outcome)
     }
 }
 
@@ -159,6 +165,8 @@ pub enum DashboardError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     Lifecycle(#[from] LifecycleError),
+    #[error(transparent)]
+    Reporting(#[from] ReportingError),
     #[error("terminal operation failed: {0}")]
     Terminal(#[from] io::Error),
     #[error("no managed characters are registered")]
@@ -291,6 +299,7 @@ fn render_selector(
 enum Command {
     Quit,
     Refresh,
+    Brag,
     Confirm(LifecycleAction),
     ConfirmAction,
     Cancel,
@@ -373,6 +382,7 @@ fn command(event: Event) -> Command {
     match key.code {
         KeyCode::Char('q') => Command::Quit,
         KeyCode::Char('r') => Command::Refresh,
+        KeyCode::Char('b') => Command::Brag,
         KeyCode::Char('s') => Command::Confirm(LifecycleAction::Start),
         KeyCode::Char('x') => Command::Confirm(LifecycleAction::Stop),
         KeyCode::Char('c') => Command::Confirm(LifecycleAction::Recover),
@@ -444,6 +454,21 @@ impl DashboardState {
             Command::Quit => true,
             Command::Refresh => {
                 self.refresh(provider, id);
+                false
+            }
+            Command::Brag => {
+                let message = match provider.brag(id) {
+                    Ok(DeliveryOutcome::Delivered) => "Leaderboard report delivered.".to_owned(),
+                    Ok(DeliveryOutcome::EndpointRejected) => {
+                        "Leaderboard report was not accepted by the endpoint.".to_owned()
+                    }
+                    Ok(DeliveryOutcome::DeliveryFailed) => {
+                        "Leaderboard report could not be delivered.".to_owned()
+                    }
+                    Err(error) => format!("Could not submit leaderboard report: {error}"),
+                };
+                self.refresh(provider, id);
+                self.current.message = Some(message);
                 false
             }
             Command::Confirm(action) => {
@@ -582,7 +607,7 @@ fn render(
     }
     let footer = match confirmation {
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
-        None => "q quit | r refresh | s start | x stop | c recover".to_owned(),
+        None => "q quit | r refresh | b brag | s start | x stop | c recover".to_owned(),
     };
     frame.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::ALL).title("Keys")),
@@ -979,6 +1004,8 @@ mod tests {
         snapshots: std::cell::RefCell<Vec<Result<DashboardSnapshot, DashboardError>>>,
         actions: std::cell::RefCell<Vec<LifecycleAction>>,
         action_results: std::cell::RefCell<Vec<Result<(), DashboardError>>>,
+        brags: std::cell::RefCell<Vec<CharacterId>>,
+        brag_results: std::cell::RefCell<Vec<Result<DeliveryOutcome, DashboardError>>>,
     }
 
     struct TestDirectory(PathBuf);
@@ -1025,6 +1052,11 @@ mod tests {
         ) -> Result<(), DashboardError> {
             self.actions.borrow_mut().push(action);
             self.action_results.borrow_mut().remove(0)
+        }
+
+        fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+            self.brags.borrow_mut().push(id.clone());
+            self.brag_results.borrow_mut().remove(0)
         }
     }
 
@@ -1317,6 +1349,12 @@ mod tests {
         );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
+                'b'
+            )))),
+            Command::Brag
+        );
+        assert_eq!(
+            command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 's'
             )))),
             Command::Confirm(LifecycleAction::Start)
@@ -1371,6 +1409,8 @@ mod tests {
             snapshots: std::cell::RefCell::new(vec![Ok(snapshot)]),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(Vec::new()),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
         };
         let interrupted = AtomicBool::new(true);
         // Terminal interaction is intentionally not entered in unit tests; the
@@ -1389,6 +1429,8 @@ mod tests {
             snapshots: std::cell::RefCell::new(vec![Ok(second.clone()), Ok(second.clone())]),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(vec![Ok(())]),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
         };
         let mut state = DashboardState {
             current: first,
@@ -1416,6 +1458,46 @@ mod tests {
     }
 
     #[test]
+    fn brag_submits_immediately_with_a_safe_outcome_message() {
+        let id = CharacterId::new();
+        let first = sample();
+        for (outcome, message) in [
+            (DeliveryOutcome::Delivered, "Leaderboard report delivered."),
+            (
+                DeliveryOutcome::EndpointRejected,
+                "Leaderboard report was not accepted by the endpoint.",
+            ),
+            (
+                DeliveryOutcome::DeliveryFailed,
+                "Leaderboard report could not be delivered.",
+            ),
+        ] {
+            let provider = FakeProvider {
+                snapshots: std::cell::RefCell::new(vec![Ok(sample())]),
+                actions: std::cell::RefCell::new(Vec::new()),
+                action_results: std::cell::RefCell::new(Vec::new()),
+                brags: std::cell::RefCell::new(Vec::new()),
+                brag_results: std::cell::RefCell::new(vec![Ok(outcome)]),
+            };
+            let mut state = DashboardState {
+                current: first.clone(),
+                confirmation: None,
+                panes: PaneVisibility::default(),
+            };
+
+            assert!(!state.apply(&provider, &id, Command::Brag));
+            assert_eq!(
+                provider.brags.borrow().as_slice(),
+                std::slice::from_ref(&id)
+            );
+            assert_eq!(state.confirmation, None);
+            assert_eq!(state.current.message.as_deref(), Some(message));
+            let rendered = rendered(120, 40);
+            assert!(rendered.contains("b brag"));
+        }
+    }
+
+    #[test]
     fn lifecycle_failure_keeps_last_successful_snapshot() {
         let id = CharacterId::new();
         let snapshot = sample();
@@ -1425,6 +1507,8 @@ mod tests {
             action_results: std::cell::RefCell::new(vec![Err(DashboardError::Lifecycle(
                 LifecycleError::ManagerUnavailable("no user manager".to_owned()),
             ))]),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
         };
         let mut state = DashboardState {
             current: snapshot.clone(),
