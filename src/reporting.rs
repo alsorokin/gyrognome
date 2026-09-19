@@ -7,14 +7,29 @@ use crate::{
     fixtures::{EnrollmentEvidenceError, validate_bundled_enrollment_evidence},
     protocol::{self, ReportFields},
     runtime::{CharacterId, CharacterIdentity, StorageError, Store},
+    state::{Character, OnlineMetadata},
 };
 
 pub const OFFICIAL_LEADERBOARD_ENDPOINT: &str = "https://progressquest.com/alpaquil.php";
+const OFFICIAL_LEADERBOARD_HOST: &str = "https://progressquest.com/alpaquil.php?";
+const OFFICIAL_REALM: &str = "Alpaquil";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome {
     Delivered,
     EndpointRejected,
+    DeliveryFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateOutcome {
+    Enrolled(i32),
+    DuplicateName,
+    Incomplete,
+}
+
+pub enum CreateDelivery {
+    Response(String),
     DeliveryFailed,
 }
 
@@ -28,10 +43,16 @@ pub enum ReportingError {
     UnofficialEndpoint,
     #[error("could not construct the leaderboard report")]
     Construction,
+    #[error("online enrollment is incomplete; no local character was registered")]
+    IncompleteEnrollment,
 }
 
 pub trait ReportTransport {
     fn deliver(&self, request: Url) -> DeliveryOutcome;
+}
+
+pub trait EnrollmentTransport: ReportTransport {
+    fn create(&self, request: Url) -> CreateDelivery;
 }
 
 pub struct HttpsTransport;
@@ -44,6 +65,216 @@ impl ReportTransport for HttpsTransport {
             Err(_) => DeliveryOutcome::DeliveryFailed,
         }
     }
+}
+
+impl EnrollmentTransport for HttpsTransport {
+    fn create(&self, request: Url) -> CreateDelivery {
+        match ureq::get(request.as_str()).call() {
+            Ok(mut response) => response
+                .body_mut()
+                .read_to_string()
+                .map(CreateDelivery::Response)
+                .unwrap_or(CreateDelivery::DeliveryFailed),
+            Err(_) => CreateDelivery::DeliveryFailed,
+        }
+    }
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+pub struct TestEnrollmentTransport {
+    create: std::cell::RefCell<std::collections::VecDeque<CreateDelivery>>,
+    report: DeliveryOutcome,
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+impl TestEnrollmentTransport {
+    pub fn from_environment() -> Self {
+        let create: std::collections::VecDeque<_> = std::env::var("GYROGNOME_TEST_CREATE")
+            .unwrap_or_else(|_| "success".to_owned())
+            .split(',')
+            .map(|outcome| match outcome {
+                "success" => CreateDelivery::Response("ok|73".to_owned()),
+                "duplicate" => CreateDelivery::Response("That name is already taken.".to_owned()),
+                _ => CreateDelivery::DeliveryFailed,
+            })
+            .collect();
+        let report = match std::env::var("GYROGNOME_TEST_REPORT").as_deref() {
+            Ok("rejected") => DeliveryOutcome::EndpointRejected,
+            Ok("failed") => DeliveryOutcome::DeliveryFailed,
+            _ => DeliveryOutcome::Delivered,
+        };
+        Self {
+            create: std::cell::RefCell::new(create),
+            report,
+        }
+    }
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+impl ReportTransport for TestEnrollmentTransport {
+    fn deliver(&self, _: Url) -> DeliveryOutcome {
+        self.report
+    }
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+impl EnrollmentTransport for TestEnrollmentTransport {
+    fn create(&self, _: Url) -> CreateDelivery {
+        self.create
+            .borrow_mut()
+            .pop_front()
+            .map(|outcome| match outcome {
+                CreateDelivery::Response(response) => CreateDelivery::Response(response.clone()),
+                CreateDelivery::DeliveryFailed => CreateDelivery::DeliveryFailed,
+            })
+            .unwrap_or(CreateDelivery::DeliveryFailed)
+    }
+}
+
+pub fn classify_create_response(response: &str) -> CreateOutcome {
+    let response = response.trim();
+    let Some(passkey) = response
+        .strip_prefix("ok|")
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|passkey| *passkey != 0)
+    else {
+        return if duplicate_name_rejection(response) {
+            CreateOutcome::DuplicateName
+        } else {
+            CreateOutcome::Incomplete
+        };
+    };
+    CreateOutcome::Enrolled(passkey)
+}
+
+pub fn create(
+    name: &str,
+    realm: &str,
+    transport: &impl EnrollmentTransport,
+) -> Result<CreateOutcome, ReportingError> {
+    let request = protocol::create_request(OFFICIAL_LEADERBOARD_HOST, name, realm);
+    let request = official_endpoint(&request)?;
+    Ok(match transport.create(request) {
+        CreateDelivery::Response(response) => classify_create_response(&response),
+        CreateDelivery::DeliveryFailed => CreateOutcome::Incomplete,
+    })
+}
+
+#[derive(Debug)]
+pub enum EnrollmentOutcome {
+    Registered(Box<crate::runtime::ManagedCharacter>),
+    DuplicateName,
+}
+
+pub fn enroll(
+    store: &mut Store,
+    draft: Character,
+    transport: &impl EnrollmentTransport,
+) -> Result<EnrollmentOutcome, ReportingError> {
+    enroll_with_evidence(
+        store,
+        draft,
+        transport,
+        validate_bundled_enrollment_evidence(),
+    )
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+pub fn enroll_for_test(
+    store: &mut Store,
+    draft: Character,
+    transport: &impl EnrollmentTransport,
+) -> Result<EnrollmentOutcome, ReportingError> {
+    let evidence = match std::env::var("GYROGNOME_TEST_EVIDENCE").as_deref() {
+        Ok("unavailable") => Err(EnrollmentEvidenceError::Unavailable),
+        Ok("malformed") => Err(EnrollmentEvidenceError::Malformed),
+        Ok("sensitive") => Err(EnrollmentEvidenceError::Sensitive),
+        Ok("non-passing") => Err(EnrollmentEvidenceError::NotLiveOrPassing),
+        _ => validate_bundled_enrollment_evidence(),
+    };
+    enroll_with_evidence(store, draft, transport, evidence)
+}
+
+fn enroll_with_evidence(
+    store: &mut Store,
+    draft: Character,
+    transport: &impl EnrollmentTransport,
+    evidence: Result<(), EnrollmentEvidenceError>,
+) -> Result<EnrollmentOutcome, ReportingError> {
+    evidence?;
+    let passkey = match create(&draft.traits.name, OFFICIAL_REALM, transport)? {
+        CreateOutcome::Enrolled(passkey) => passkey,
+        CreateOutcome::DuplicateName => return Ok(EnrollmentOutcome::DuplicateName),
+        CreateOutcome::Incomplete => return Err(ReportingError::IncompleteEnrollment),
+    };
+    let character = enrolled_character(draft, OFFICIAL_REALM, passkey)?;
+    let request = protocol::progress_report(
+        OFFICIAL_LEADERBOARD_HOST,
+        &character,
+        's',
+        ReportFields {
+            xp_position: character.progress.experience.position as u64,
+            best_equipment: &character.bestequip,
+            best_spell: &character.bestspell,
+            best_stat: &character.beststat,
+            best_plot: &character.plot.bestplot,
+            motto: "",
+        },
+        passkey,
+    )
+    .map_err(|_| ReportingError::Construction)?;
+    let request = official_endpoint(&request)?;
+    match transport.deliver(request) {
+        DeliveryOutcome::Delivered => Ok(EnrollmentOutcome::Registered(Box::new(
+            store.register(&character)?,
+        ))),
+        DeliveryOutcome::EndpointRejected | DeliveryOutcome::DeliveryFailed => {
+            Err(ReportingError::IncompleteEnrollment)
+        }
+    }
+}
+
+fn enrolled_character(
+    mut character: Character,
+    realm: &str,
+    passkey: i32,
+) -> Result<Character, ReportingError> {
+    character.online = Some(OnlineMetadata {
+        realm: realm.to_owned(),
+        host: OFFICIAL_LEADERBOARD_HOST.to_owned(),
+    });
+    character.save_name = format!("{} [{realm}]", character.traits.name);
+    let mut document =
+        serde_json::to_value(&character).map_err(|_| ReportingError::Construction)?;
+    document["online"]["passkey"] = serde_json::Value::from(passkey);
+    character.document = document;
+    Ok(character)
+}
+
+fn duplicate_name_rejection(response: &str) -> bool {
+    let response = response.to_ascii_lowercase();
+    [
+        "name already",
+        "name is already",
+        "name has already",
+        "duplicate name",
+        "name is taken",
+        "name taken",
+    ]
+    .iter()
+    .any(|phrase| response.contains(phrase))
+}
+
+fn official_endpoint(request: &str) -> Result<Url, ReportingError> {
+    let endpoint = Url::parse(request).map_err(|_| ReportingError::Construction)?;
+    if endpoint.scheme() != "https"
+        || endpoint.host_str() != Some("progressquest.com")
+        || endpoint.path() != "/alpaquil.php"
+        || endpoint.port().is_some()
+    {
+        return Err(ReportingError::UnofficialEndpoint);
+    }
+    Ok(endpoint)
 }
 
 pub struct ReportResult {
@@ -64,7 +295,7 @@ pub fn submit(
         .as_ref()
         .map(|online| online.host.as_str())
         .ok_or(StorageError::ReportingIneligible)?;
-    let endpoint = Url::parse(host).map_err(|_| ReportingError::UnofficialEndpoint)?;
+    let endpoint = official_endpoint(host)?;
     if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
         return Err(ReportingError::UnofficialEndpoint);
     }
@@ -83,7 +314,7 @@ pub fn submit(
         target.passkey,
     )
     .map_err(|_| ReportingError::Construction)?;
-    let request = Url::parse(&request).map_err(|_| ReportingError::Construction)?;
+    let request = official_endpoint(&request)?;
     Ok(ReportResult {
         identity: target.identity,
         outcome: transport.deliver(request),
@@ -93,6 +324,7 @@ pub fn submit(
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::RefCell,
         fs,
         path::{Path, PathBuf},
     };
@@ -101,7 +333,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::{runtime::Store, save};
+    use crate::{newguy, runtime::Store, save};
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -116,17 +348,305 @@ mod tests {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-    struct FakeTransport(DeliveryOutcome);
+    struct FakeTransport {
+        create: CreateDelivery,
+        report: DeliveryOutcome,
+    }
+
     impl ReportTransport for FakeTransport {
         fn deliver(&self, request: Url) -> DeliveryOutcome {
             assert_eq!(request.scheme(), "https");
             assert_eq!(request.host_str(), Some("progressquest.com"));
             assert_eq!(request.path(), "/alpaquil.php");
-            assert_eq!(
-                request.query_pairs().find(|(key, _)| key == "t").unwrap().1,
-                "b"
+            assert!(matches!(
+                request
+                    .query_pairs()
+                    .find(|(key, _)| key == "t")
+                    .map(|(_, value)| value.into_owned()),
+                Some(value) if value == "b" || value == "s"
+            ));
+            self.report
+        }
+    }
+
+    impl EnrollmentTransport for FakeTransport {
+        fn create(&self, request: Url) -> CreateDelivery {
+            assert_eq!(request.scheme(), "https");
+            assert_eq!(request.host_str(), Some("progressquest.com"));
+            assert_eq!(request.path(), "/alpaquil.php");
+            match &self.create {
+                CreateDelivery::Response(response) => CreateDelivery::Response(response.clone()),
+                CreateDelivery::DeliveryFailed => CreateDelivery::DeliveryFailed,
+            }
+        }
+    }
+
+    struct Numbers(u32);
+
+    impl crate::newguy::RandomSource for Numbers {
+        fn next_u32(&mut self) -> Result<u32, crate::newguy::NewGuyError> {
+            let value = self.0;
+            self.0 = self.0.wrapping_add(1);
+            Ok(value)
+        }
+    }
+
+    struct RecordingTransport {
+        requests: RefCell<Vec<Vec<String>>>,
+    }
+
+    impl ReportTransport for RecordingTransport {
+        fn deliver(&self, request: Url) -> DeliveryOutcome {
+            self.requests.borrow_mut().push(
+                request
+                    .query_pairs()
+                    .map(|(key, _)| key.into_owned())
+                    .collect(),
             );
-            self.0
+            DeliveryOutcome::Delivered
+        }
+    }
+
+    impl EnrollmentTransport for RecordingTransport {
+        fn create(&self, request: Url) -> CreateDelivery {
+            self.requests.borrow_mut().push(
+                request
+                    .query_pairs()
+                    .map(|(key, _)| key.into_owned())
+                    .collect(),
+            );
+            CreateDelivery::Response("ok|73".to_owned())
+        }
+    }
+
+    struct CountingTransport {
+        create: CreateDelivery,
+        report: DeliveryOutcome,
+        calls: RefCell<Vec<&'static str>>,
+    }
+
+    impl ReportTransport for CountingTransport {
+        fn deliver(&self, _: Url) -> DeliveryOutcome {
+            self.calls.borrow_mut().push("report");
+            self.report
+        }
+    }
+
+    impl EnrollmentTransport for CountingTransport {
+        fn create(&self, _: Url) -> CreateDelivery {
+            self.calls.borrow_mut().push("create");
+            match &self.create {
+                CreateDelivery::Response(response) => CreateDelivery::Response(response.clone()),
+                CreateDelivery::DeliveryFailed => CreateDelivery::DeliveryFailed,
+            }
+        }
+    }
+
+    fn draft() -> Character {
+        newguy::generate(
+            &newguy::Selection {
+                name: "Online Hero".to_owned(),
+                race: "Gyrognome".to_owned(),
+                class: "Robot Monk".to_owned(),
+            },
+            &crate::ruleset::BUNDLED,
+            &mut Numbers(1),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn classifies_only_safe_enrollment_outcomes() {
+        assert_eq!(
+            classify_create_response("ok|73"),
+            CreateOutcome::Enrolled(73)
+        );
+        assert_eq!(
+            classify_create_response("That name is already taken."),
+            CreateOutcome::DuplicateName
+        );
+        for response in ["ok|0", "ok|not-a-number", "unexpected server output"] {
+            assert_eq!(
+                classify_create_response(response),
+                CreateOutcome::Incomplete
+            );
+        }
+    }
+
+    #[test]
+    fn create_uses_only_the_official_endpoint() {
+        assert_eq!(
+            create(
+                "Safe Name",
+                "Alpaquil",
+                &FakeTransport {
+                    create: CreateDelivery::Response("ok|73".to_owned()),
+                    report: DeliveryOutcome::Delivered,
+                }
+            )
+            .unwrap(),
+            CreateOutcome::Enrolled(73)
+        );
+    }
+
+    #[test]
+    fn keeps_enrollment_credentials_only_in_the_private_source_document() {
+        let character = newguy::generate(
+            &newguy::Selection {
+                name: "Online Hero".to_owned(),
+                race: "Gyrognome".to_owned(),
+                class: "Robot Monk".to_owned(),
+            },
+            &crate::ruleset::BUNDLED,
+            &mut Numbers(1),
+        )
+        .unwrap();
+        let character = enrolled_character(character, "Alpaquil", 73).unwrap();
+
+        assert_eq!(character.online.as_ref().unwrap().realm, "Alpaquil");
+        assert_eq!(
+            character.online.as_ref().unwrap().host,
+            OFFICIAL_LEADERBOARD_HOST
+        );
+        assert_eq!(character.document["online"]["passkey"], 73);
+        let canonical = serde_json::to_value(&character).unwrap();
+        assert_eq!(canonical["online"]["realm"], "Alpaquil");
+        assert_eq!(canonical["online"]["host"], OFFICIAL_LEADERBOARD_HOST);
+        assert!(canonical["online"].get("passkey").is_none());
+    }
+
+    #[test]
+    fn enrolls_before_registering_with_a_browser_ordered_initial_report() {
+        let directory = TestDirectory::new();
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let draft = newguy::generate(
+            &newguy::Selection {
+                name: "Online Hero".to_owned(),
+                race: "Gyrognome".to_owned(),
+                class: "Robot Monk".to_owned(),
+            },
+            &crate::ruleset::BUNDLED,
+            &mut Numbers(1),
+        )
+        .unwrap();
+        let transport = RecordingTransport {
+            requests: RefCell::new(Vec::new()),
+        };
+
+        let EnrollmentOutcome::Registered(registered) =
+            enroll(&mut store, draft, &transport).unwrap()
+        else {
+            panic!("successful enrollment must register");
+        };
+
+        assert_eq!(
+            registered.state.online.as_ref().unwrap().realm,
+            OFFICIAL_REALM
+        );
+        let private = store.original_document(&registered.id).unwrap();
+        assert_eq!(private["online"]["passkey"], 73);
+        assert!(
+            serde_json::to_string(&registered)
+                .unwrap()
+                .contains("Online Hero")
+        );
+        assert!(
+            !serde_json::to_string(&registered)
+                .unwrap()
+                .contains("passkey")
+        );
+        assert_eq!(
+            *transport.requests.borrow(),
+            vec![
+                vec!["cmd", "name", "realm", "rev"],
+                vec![
+                    "cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "p", "m",
+                ],
+            ]
+        );
+    }
+
+    #[test]
+    fn evidence_failures_stop_enrollment_before_transport() {
+        let draft = draft();
+        for evidence in [
+            EnrollmentEvidenceError::Unavailable,
+            EnrollmentEvidenceError::Malformed,
+            EnrollmentEvidenceError::Sensitive,
+            EnrollmentEvidenceError::NotLiveOrPassing,
+        ] {
+            let directory = TestDirectory::new();
+            let mut store = Store::open_at(&directory.0).unwrap();
+            let transport = RecordingTransport {
+                requests: RefCell::new(Vec::new()),
+            };
+
+            assert!(matches!(
+                enroll_with_evidence(&mut store, draft.clone(), &transport, Err(evidence)),
+                Err(ReportingError::Evidence(_))
+            ));
+            assert!(transport.requests.borrow().is_empty());
+            assert!(store.list().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn duplicate_name_does_not_report_or_register() {
+        let directory = TestDirectory::new();
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let transport = CountingTransport {
+            create: CreateDelivery::Response("That name is already taken.".to_owned()),
+            report: DeliveryOutcome::Delivered,
+            calls: RefCell::new(Vec::new()),
+        };
+
+        assert!(matches!(
+            enroll(&mut store, draft(), &transport),
+            Ok(EnrollmentOutcome::DuplicateName)
+        ));
+        assert_eq!(*transport.calls.borrow(), ["create"]);
+        assert!(store.list().unwrap().is_empty());
+    }
+
+    #[test]
+    fn incomplete_enrollment_never_retries_or_registers() {
+        for (create, report, calls) in [
+            (
+                CreateDelivery::DeliveryFailed,
+                DeliveryOutcome::Delivered,
+                vec!["create"],
+            ),
+            (
+                CreateDelivery::Response("private response body".to_owned()),
+                DeliveryOutcome::Delivered,
+                vec!["create"],
+            ),
+            (
+                CreateDelivery::Response("ok|73".to_owned()),
+                DeliveryOutcome::EndpointRejected,
+                vec!["create", "report"],
+            ),
+            (
+                CreateDelivery::Response("ok|73".to_owned()),
+                DeliveryOutcome::DeliveryFailed,
+                vec!["create", "report"],
+            ),
+        ] {
+            let directory = TestDirectory::new();
+            let mut store = Store::open_at(&directory.0).unwrap();
+            let transport = CountingTransport {
+                create,
+                report,
+                calls: RefCell::new(Vec::new()),
+            };
+
+            let error = enroll(&mut store, draft(), &transport).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "online enrollment is incomplete; no local character was registered"
+            );
+            assert_eq!(*transport.calls.borrow(), calls);
+            assert!(store.list().unwrap().is_empty());
         }
     }
 
@@ -150,7 +670,15 @@ mod tests {
             DeliveryOutcome::DeliveryFailed,
         ] {
             let (_directory, store, id) = registered_store();
-            let result = submit(&store, &id, &FakeTransport(expected)).unwrap();
+            let result = submit(
+                &store,
+                &id,
+                &FakeTransport {
+                    create: CreateDelivery::DeliveryFailed,
+                    report: expected,
+                },
+            )
+            .unwrap();
             assert_eq!(result.outcome, expected);
             assert_eq!(result.identity.name, "Reference Hero");
         }

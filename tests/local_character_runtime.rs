@@ -61,6 +61,16 @@ impl TestDirectory {
             .unwrap();
         child.wait_with_output().unwrap()
     }
+
+    #[cfg(feature = "enrollment-test-transport")]
+    fn command_with_env(&self, arguments: &[&str], environment: &[(&str, &str)]) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gyrognome"));
+        command.args(arguments).env("XDG_DATA_HOME", &self.0);
+        for (key, value) in environment {
+            command.env(key, value);
+        }
+        command.output().unwrap()
+    }
 }
 
 impl Drop for TestDirectory {
@@ -146,6 +156,76 @@ fn cli_creates_and_registers_an_offline_character_from_complete_traits() {
     assert!(persisted.status.success(), "{}", stderr(&persisted));
     assert!(stdout(&persisted).contains("Offline Hero"));
     assert!(stdout(&persisted).contains("\"online\": null"));
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+#[test]
+fn cli_enrolls_online_characters_and_redacts_persisted_output() {
+    let directory = TestDirectory::new("online-new-guy");
+    let output = directory.command_with_env(
+        &["new-guy", "--json"],
+        &[("GYROGNOME_TEST_WIZARD", "online")],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let registration: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let id = registration["id"].as_str().unwrap();
+    assert_eq!(registration["state"]["online"]["realm"], "Alpaquil");
+    assert!(!stdout(&output).contains("passkey"));
+
+    let persisted = directory.command(&["managed-inspect", id, "--json"]);
+    assert!(persisted.status.success(), "{}", stderr(&persisted));
+    assert!(stdout(&persisted).contains("\"realm\": \"Alpaquil\""));
+    assert!(!stdout(&persisted).contains("passkey"));
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+#[test]
+fn cli_handles_duplicate_cancellation_and_invalid_online_drafts_without_registration() {
+    let directory = TestDirectory::new("online-new-guy-no-registration");
+    let duplicate = directory.command_with_env(
+        &["new-guy", "--json"],
+        &[
+            ("GYROGNOME_TEST_WIZARD", "duplicate-correct"),
+            ("GYROGNOME_TEST_CREATE", "duplicate,success"),
+        ],
+    );
+    assert!(duplicate.status.success(), "{}", stderr(&duplicate));
+    assert!(stdout(&duplicate).contains("\"online\""));
+
+    let cancellation =
+        directory.command_with_env(&["new-guy"], &[("GYROGNOME_TEST_WIZARD", "cancel")]);
+    assert!(cancellation.status.success(), "{}", stderr(&cancellation));
+
+    let invalid = directory.command_with_env(&["new-guy"], &[("GYROGNOME_TEST_WIZARD", "invalid")]);
+    assert!(invalid.status.success(), "{}", stderr(&invalid));
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+#[test]
+fn cli_stops_evidence_and_incomplete_online_enrollment_safely() {
+    for environment in [
+        vec![
+            ("GYROGNOME_TEST_WIZARD", "online"),
+            ("GYROGNOME_TEST_EVIDENCE", "malformed"),
+        ],
+        vec![
+            ("GYROGNOME_TEST_WIZARD", "online"),
+            ("GYROGNOME_TEST_CREATE", "incomplete"),
+        ],
+        vec![
+            ("GYROGNOME_TEST_WIZARD", "online"),
+            ("GYROGNOME_TEST_REPORT", "failed"),
+        ],
+    ] {
+        let directory = TestDirectory::new("online-new-guy-failure");
+        let output = directory.command_with_env(&["new-guy"], &environment);
+        assert!(!output.status.success());
+        let diagnostic = stderr(&output);
+        assert!(!diagnostic.contains("passkey"));
+        assert!(!diagnostic.contains("cmd="));
+        let listed = directory.command(&["list", "--json"]);
+        assert_eq!(stdout(&listed).trim(), "[]");
+    }
 }
 
 #[test]

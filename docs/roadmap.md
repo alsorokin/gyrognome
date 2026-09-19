@@ -111,7 +111,7 @@ credential-free enrollment-conformance evidence first.
 Delivery results are limited to delivered, endpoint-rejected, and
 delivery-failed. They do not expose passkeys, raw saves, signed URLs, response
 bodies, or leaderboard classification, and no automated retries are attempted.
-Native online enrollment and scheduled reporting remain out of scope.
+Scheduled reporting remains out of scope.
 
 ## Completed: Online Enrollment Conformance
 
@@ -128,10 +128,29 @@ credential-free evidence for a future native enrollment feature:
 - Evidence validation rejects incomplete observations and sensitive data;
   normal CLI paths remain transport-free.
 
+## Completed: Online New Guy Enrollment
+
+The interactive `gyrognome new-guy` wizard now provides Offline and Online
+modes. Online Sold! validates the bundled enrollment evidence, makes one
+official `cmd=create` request, and delivers the browser-compatible initial
+`s` report before registering an online managed character.
+
+- Duplicate-name rejection preserves the editable draft for correction without
+  sending an initial report or registering a character.
+- Unusable creation results and initial-report delivery failures stop without
+  retrying, persisting a partial identity, or claiming whether the server
+  reserved the name.
+- Realm and endpoint are present in credential-safe canonical state; the
+  passkey is retained only in private managed storage.
+- Enrollment is restricted to the foreground Online wizard; import, offline
+  New Guy, workers, lifecycle commands, dashboard, administration, and manual
+  reporting cannot invoke enrollment.
+- Automated coverage uses a feature-gated synthetic transport. Native live
+  endpoint validation remains pending a separate disposable-character safety
+  workflow.
+
 ## Planned Sequence
 
-1. Add online New Guy enrollment. Its `Sold!` action must make the
-   server-authoritative name-creation request, retain the editable draft on a
-   rejected name, and persist an online managed character only after successful
-   creation and browser-equivalent initial reporting. Creation and initial
-   reporting remain one user-visible activation flow.
+1. Add an explicitly confirmed disposable-character workflow to validate the
+   native online enrollment path against the real endpoint without retaining
+   credentials, raw responses, or signed URLs.

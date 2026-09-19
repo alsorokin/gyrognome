@@ -316,21 +316,51 @@ pub fn run() -> Result<(), CliError> {
             class,
             json,
         } => {
-            let character = match (name, race, class) {
+            let mut store = Store::open_default()?;
+            let registered = match (name, race, class) {
                 (None, None, None) => {
                     let stop = shutdown_flag()?;
-                    match newguy_wizard::run(&stop)? {
-                        Some(character) => character,
+                    #[cfg(feature = "enrollment-test-transport")]
+                    let completed = {
+                        match std::env::var("GYROGNOME_TEST_WIZARD").ok() {
+                            Some(script) => {
+                                let transport =
+                                    reporting::TestEnrollmentTransport::from_environment();
+                                let mut activate_online = |draft| {
+                                    reporting::enroll_for_test(&mut store, draft, &transport)
+                                };
+                                newguy_wizard::run_test_script(&script, &mut activate_online)?
+                            }
+                            None => {
+                                let mut activate_online =
+                                    |draft| reporting::enroll(&mut store, draft, &HttpsTransport);
+                                newguy_wizard::run(&stop, &mut activate_online)?
+                            }
+                        }
+                    };
+                    #[cfg(not(feature = "enrollment-test-transport"))]
+                    let completed = {
+                        let mut activate_online =
+                            |draft| reporting::enroll(&mut store, draft, &HttpsTransport);
+                        newguy_wizard::run(&stop, &mut activate_online)?
+                    };
+                    match completed {
+                        Some(newguy_wizard::WizardResult::Offline(character)) => {
+                            store.register(&character)?
+                        }
+                        Some(newguy_wizard::WizardResult::Online(registered)) => registered,
                         None => return Ok(()),
                     }
                 }
-                (Some(name), Some(race), Some(class)) => newguy::generate_local(
-                    &Selection { name, race, class },
-                    &crate::ruleset::BUNDLED,
-                )?,
+                (Some(name), Some(race), Some(class)) => {
+                    let character = newguy::generate_local(
+                        &Selection { name, race, class },
+                        &crate::ruleset::BUNDLED,
+                    )?;
+                    store.register(&character)?
+                }
                 _ => return Err(CliError::PartialCreationInputs),
             };
-            let registered = Store::open_default()?.register(&character)?;
             print_registration(registered, json)?;
         }
         #[cfg(feature = "conformance-bridge")]

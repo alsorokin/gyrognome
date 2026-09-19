@@ -73,11 +73,12 @@ creating or registering a character.
 
 The system SHALL provide an interactive terminal creation flow when the
 `new-guy` command is invoked without explicit creation inputs. The flow SHALL
-provide navigable Name, Race, Class, and Stats rows. The focused row SHALL
-determine the available editing actions and displayed key bindings. The flow
-SHALL let the user edit or randomly replace the name, manually select the
-initially randomized race and class, roll or unroll initial stats, confirm the
-displayed character with “Sold!”, or cancel.
+provide navigable Mode, Name, Race, Class, and Stats rows. The focused row
+SHALL determine the available editing actions and displayed key bindings. When
+Offline is selected in the Mode row, the flow SHALL let the user edit or
+randomly replace the name, manually select the initially randomized race and
+class, roll or unroll initial stats, confirm the displayed offline character
+with “Sold!”, or cancel.
 
 #### Scenario: Editing the focused name row
 
@@ -88,7 +89,7 @@ displayed character with “Sold!”, or cancel.
 
 #### Scenario: Using row-specific controls
 
-- **WHEN** the user focuses Race, Class, or Stats
+- **WHEN** the user focuses Mode, Race, Class, or Stats
 - **THEN** the wizard displays only that row's applicable controls alongside
   global Sold! and cancel controls
 - **AND** race/class selection changes and Random/Reroll actions do not
@@ -133,6 +134,12 @@ displayed character with “Sold!”, or cancel.
 - **WHEN** the user selects Sold! with an invalid provisional name
 - **THEN** the wizard displays the validation error and remains open
 - **AND** it does not register a character
+
+#### Scenario: Selecting offline creation
+
+- **WHEN** a user selects Offline in the Mode row
+- **THEN** the system opens the offline-only draft and does not perform online
+  enrollment
 
 ### Requirement: Confirmed local registration
 

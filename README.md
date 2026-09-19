@@ -9,9 +9,10 @@ its offline-only Rust compatibility core.
 - Preserves unmodified imported JSON documents for export by library consumers.
 - Implements browser-compatible Alea state continuation, form-style URL encoding,
   URL normalization, and LFSR request validators.
-- Constructs request data and provides a separately confirmed reporting path
-  for eligible browser-imported managed characters. It never creates online
-  characters or reports automatically.
+- Constructs request data, provides an explicitly confirmed reporting path for
+  eligible browser-imported managed characters, and supports foreground online
+  enrollment from the interactive New Guy wizard. It never reports
+  automatically.
 - Provides a pure deterministic simulation API plus an opt-in local runtime
   that schedules and persists explicitly registered characters. Neither layer
   mutates browser saves, renders a UI, or transports data.
@@ -65,10 +66,11 @@ reporting and must not be committed.
 ## Local managed-character runtime
 
 The local runtime imports an existing browser save into a per-user SQLite
-database. It is local-only: it makes no HTTP requests, creates no online
-characters, and never prints passkeys or unrecognized raw save fields. The
-original browser document is retained privately for a future export feature;
-the runtime stores its versioned canonical state separately.
+database. Workers and lifecycle operations are local-only: they make no HTTP
+requests, create no online characters, and never print passkeys or
+unrecognized raw save fields. The original browser document is retained
+privately for a future export feature; the runtime stores its versioned
+canonical state separately.
 
 Runtime data is stored at:
 
@@ -120,9 +122,22 @@ commands, or character administration.
 
 Do not provide a passkey, raw save contents, or a signed request URL to this
 command or to any Gyrognome diagnostic. Offline-created characters and active
-managed characters are ineligible. Native online enrollment, automatic
-reporting, queues, retries, and leaderboard polling are intentionally out of
-scope.
+managed characters are ineligible. Automatic reporting, queues, retries, and
+leaderboard polling are intentionally out of scope.
+
+### Interactive New Guy enrollment
+
+Run `gyrognome new-guy` without explicit traits to open the terminal creator.
+Its Mode row starts at Offline; select Online to make Sold! perform one
+foreground enrollment through the official endpoint. The wizard validates
+bundled enrollment evidence before creating the character, sends the required
+initial `s` report, and registers it only after both succeed. A duplicate name
+returns to the same editable draft. Any other create or report failure is
+reported as incomplete enrollment without retrying, registering a local
+character, or revealing credentials.
+
+Supplying `--name`, `--race`, and `--class` together always remains the
+offline-only scripted creation path.
 
 These commands can be exercised with a synthetic save and isolated data root:
 

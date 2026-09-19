@@ -18,8 +18,10 @@ use thiserror::Error;
 use crate::{
     dashboard::TerminalSession,
     newguy::{self, BaseStats, NewGuyError, OsRandom, RandomSource, Selection},
+    reporting::{EnrollmentOutcome, ReportingError},
     rng::{Alea, AleaState},
     ruleset::{self, Ruleset},
+    runtime::ManagedCharacter,
     state::Character,
 };
 
@@ -29,6 +31,8 @@ pub enum WizardError {
     Generation(#[from] NewGuyError),
     #[error(transparent)]
     Dashboard(#[from] crate::dashboard::DashboardError),
+    #[error(transparent)]
+    Enrollment(#[from] ReportingError),
     #[error("terminal operation failed: {0}")]
     Terminal(#[from] io::Error),
 }
@@ -42,6 +46,7 @@ enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
+    Mode,
     Name,
     Race,
     Class,
@@ -51,21 +56,50 @@ enum Focus {
 impl Focus {
     fn next(self) -> Self {
         match self {
+            Self::Mode => Self::Name,
             Self::Name => Self::Race,
             Self::Race => Self::Class,
             Self::Class => Self::Stats,
-            Self::Stats => Self::Name,
+            Self::Stats => Self::Mode,
         }
     }
 
     fn previous(self) -> Self {
         match self {
-            Self::Name => Self::Stats,
+            Self::Mode => Self::Stats,
+            Self::Name => Self::Mode,
             Self::Race => Self::Name,
             Self::Class => Self::Race,
             Self::Stats => Self::Class,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Offline,
+    Online,
+}
+
+impl Mode {
+    fn toggled(self) -> Self {
+        match self {
+            Self::Offline => Self::Online,
+            Self::Online => Self::Offline,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Offline => "Offline",
+            Self::Online => "Online (Sold! creates an online character)",
+        }
+    }
+}
+
+pub enum WizardResult {
+    Offline(Character),
+    Online(ManagedCharacter),
 }
 
 struct RollSnapshot {
@@ -86,6 +120,7 @@ struct Wizard {
     roll_seed: AleaState,
     history: Vec<RollSnapshot>,
     focus: Focus,
+    mode: Mode,
     message: Option<String>,
     random: Alea,
     ruleset: Ruleset,
@@ -109,7 +144,8 @@ impl Wizard {
             base_stats,
             roll_seed,
             history: Vec::new(),
-            focus: Focus::Name,
+            focus: Focus::Mode,
+            mode: Mode::Offline,
             message: None,
             random,
             ruleset,
@@ -143,6 +179,13 @@ impl Wizard {
 
     fn apply_focused(&mut self, key: KeyCode) -> Result<Action, WizardError> {
         match self.focus {
+            Focus::Mode => match key {
+                KeyCode::Left | KeyCode::Right | KeyCode::Char(' ') => {
+                    self.mode = self.mode.toggled();
+                    self.message = None;
+                }
+                _ => {}
+            },
             Focus::Name => match key {
                 KeyCode::Char('?') => {
                     self.selection.name = newguy::random_name(&self.ruleset, &mut self.random)?;
@@ -239,9 +282,23 @@ impl Wizard {
             }
         }
     }
+
+    fn apply_online_result(&mut self, outcome: EnrollmentOutcome) -> Option<WizardResult> {
+        match outcome {
+            EnrollmentOutcome::Registered(registered) => Some(WizardResult::Online(*registered)),
+            EnrollmentOutcome::DuplicateName => {
+                self.message =
+                    Some("That online name is already unavailable. Choose another.".to_owned());
+                None
+            }
+        }
+    }
 }
 
-pub fn run(interrupted: &AtomicBool) -> Result<Option<Character>, WizardError> {
+pub fn run(
+    interrupted: &AtomicBool,
+    activate_online: &mut impl FnMut(Character) -> Result<EnrollmentOutcome, ReportingError>,
+) -> Result<Option<WizardResult>, WizardError> {
     let mut wizard = Wizard::new(ruleset::BUNDLED, OsRandom::open()?)?;
     let mut session = TerminalSession::enter()?;
     loop {
@@ -252,10 +309,53 @@ pub fn run(interrupted: &AtomicBool) -> Result<Option<Character>, WizardError> {
         if event::poll(Duration::from_millis(100))? {
             match wizard.apply(event::read()?)? {
                 Action::Continue => {}
-                Action::Confirm => return Ok(Some(wizard.character)),
+                Action::Confirm => match wizard.mode {
+                    Mode::Offline => return Ok(Some(WizardResult::Offline(wizard.character))),
+                    Mode::Online => {
+                        if let Some(result) =
+                            wizard.apply_online_result(activate_online(wizard.character.clone())?)
+                        {
+                            return Ok(Some(result));
+                        }
+                    }
+                },
                 Action::Cancel => return Ok(None),
             }
         }
+    }
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+pub fn run_test_script(
+    script: &str,
+    activate_online: &mut impl FnMut(Character) -> Result<EnrollmentOutcome, ReportingError>,
+) -> Result<Option<WizardResult>, WizardError> {
+    if script == "cancel" {
+        return Ok(None);
+    }
+    let mut wizard = Wizard::new(ruleset::BUNDLED, OsRandom::open()?)?;
+    wizard.mode = Mode::Online;
+    if script == "invalid" {
+        wizard.selection.name = "   ".to_owned();
+        wizard.refresh()?;
+        return match wizard.confirm()? {
+            Action::Continue => Ok(None),
+            Action::Confirm | Action::Cancel => unreachable!("invalid names do not confirm"),
+        };
+    }
+    match activate_online(wizard.character.clone())? {
+        EnrollmentOutcome::Registered(registered) => Ok(Some(WizardResult::Online(*registered))),
+        EnrollmentOutcome::DuplicateName if script == "duplicate-correct" => {
+            wizard.selection.name.push('2');
+            wizard.refresh()?;
+            match activate_online(wizard.character)? {
+                EnrollmentOutcome::Registered(registered) => {
+                    Ok(Some(WizardResult::Online(*registered)))
+                }
+                EnrollmentOutcome::DuplicateName => Ok(None),
+            }
+        }
+        EnrollmentOutcome::DuplicateName => Ok(None),
     }
 }
 
@@ -276,6 +376,11 @@ fn render(frame: &mut ratatui::Frame<'_>, wizard: &Wizard) {
     let total = wizard.base_stats.into_iter().map(u64::from).sum::<u64>();
     let marker = |focus| if wizard.focus == focus { ">" } else { " " };
     let stat_lines = vec![
+        Line::from(format!(
+            "{} Mode: {}",
+            marker(Focus::Mode),
+            wizard.mode.label()
+        )),
         Line::from(format!(
             "{} Name: {}",
             marker(Focus::Name),
@@ -330,6 +435,7 @@ fn render(frame: &mut ratatui::Frame<'_>, wizard: &Wizard) {
 fn focused_controls(focus: Focus, can_unroll: bool) -> &'static str {
     match (focus, can_unroll) {
         (Focus::Name, _) => "Up/Down select row | type name | ? Random Name",
+        (Focus::Mode, _) => "Up/Down select row | Left/Right select Offline or Online",
         (Focus::Race, _) => "Up/Down select row | Left/Right select race",
         (Focus::Class, _) => "Up/Down select row | Left/Right select class",
         (Focus::Stats, true) => "Up/Down select row | r Roll | u Unroll",
@@ -391,6 +497,7 @@ mod tests {
     #[test]
     fn focused_events_keep_action_key_characters_in_names() {
         let mut wizard = Wizard::new(ruleset::BUNDLED, Numbers(1)).unwrap();
+        wizard.apply(key(KeyCode::Down)).unwrap();
         let original = wizard.selection.clone();
         wizard.apply(key(KeyCode::Char('r'))).unwrap();
         wizard.apply(key(KeyCode::Char('e'))).unwrap();
@@ -412,6 +519,7 @@ mod tests {
     #[test]
     fn rolls_and_unrolls_all_prior_stat_rolls() {
         let mut wizard = Wizard::new(ruleset::BUNDLED, Numbers(1)).unwrap();
+        wizard.apply(key(KeyCode::Down)).unwrap();
         wizard.apply(key(KeyCode::Down)).unwrap();
         wizard.apply(key(KeyCode::Down)).unwrap();
         wizard.apply(key(KeyCode::Down)).unwrap();
@@ -459,6 +567,41 @@ mod tests {
         assert_eq!(
             wizard.message.as_deref(),
             Some("character name must contain at least one non-whitespace character")
+        );
+    }
+
+    #[test]
+    fn switching_mode_retains_the_provisional_draft() {
+        let mut wizard = Wizard::new(ruleset::BUNDLED, Numbers(1)).unwrap();
+        let selection = wizard.selection.clone();
+        let stats = wizard.base_stats;
+
+        wizard.apply(key(KeyCode::Right)).unwrap();
+
+        assert_eq!(wizard.mode, Mode::Online);
+        assert_eq!(wizard.selection, selection);
+        assert_eq!(wizard.base_stats, stats);
+        assert!(wizard.mode.label().contains("Sold!"));
+    }
+
+    #[test]
+    fn duplicate_online_name_keeps_the_editable_draft_open() {
+        let mut wizard = Wizard::new(ruleset::BUNDLED, Numbers(1)).unwrap();
+        wizard.mode = Mode::Online;
+        let selection = wizard.selection.clone();
+        let stats = wizard.base_stats;
+
+        assert!(
+            wizard
+                .apply_online_result(EnrollmentOutcome::DuplicateName)
+                .is_none()
+        );
+
+        assert_eq!(wizard.selection, selection);
+        assert_eq!(wizard.base_stats, stats);
+        assert_eq!(
+            wizard.message.as_deref(),
+            Some("That online name is already unavailable. Choose another.")
         );
     }
 }

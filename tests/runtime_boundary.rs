@@ -72,6 +72,31 @@ fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
 }
 
 #[test]
+fn enrollment_activation_is_limited_to_the_interactive_new_guy_command() {
+    for source in [
+        "src/newguy.rs",
+        "src/runtime.rs",
+        "src/lifecycle.rs",
+        "src/dashboard.rs",
+        "src/save.rs",
+        "src/simulation.rs",
+        "src/conformance_bridge.rs",
+    ] {
+        let content = fs::read_to_string(source).unwrap();
+        assert!(
+            !content.contains("reporting::enroll"),
+            "{source} must not activate online enrollment"
+        );
+    }
+    let cli = fs::read_to_string("src/cli.rs").unwrap();
+    assert_eq!(
+        cli.matches("reporting::enroll").count(),
+        3,
+        "only the interactive new-guy command may select enrollment"
+    );
+}
+
+#[test]
 fn dashboard_presentation_cannot_access_raw_save_documents() {
     let dashboard = fs::read_to_string("src/dashboard.rs").unwrap();
     for forbidden in [".document", "original_document", "passkey"] {

@@ -7,6 +7,7 @@ edition = "2024"
 # Exposes a stdin/stdout-only adapter used exclusively by the Playwright
 # conformance harness. It is intentionally absent from normal CLI builds.
 conformance-bridge = []
+enrollment-test-transport = []
 
 [dependencies]
 base64 = "0.22"
