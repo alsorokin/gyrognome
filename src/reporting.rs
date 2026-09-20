@@ -290,8 +290,9 @@ pub fn submit(
 ) -> Result<ReportResult, ReportingError> {
     validate_bundled_enrollment_evidence()?;
     let target = store.reporting_target(id)?;
-    let host = target
-        .state
+    let mut state = target.state;
+    crate::simulation::update_bestspell(&mut state);
+    let host = state
         .online
         .as_ref()
         .map(|online| online.host.as_str())
@@ -302,14 +303,14 @@ pub fn submit(
     }
     let request = protocol::progress_report(
         host,
-        &target.state,
+        &state,
         'b',
         ReportFields {
-            xp_position: target.state.progress.experience.position as u64,
-            best_equipment: &target.state.bestequip,
-            best_spell: &target.state.bestspell,
-            best_stat: &target.state.beststat,
-            best_plot: &target.state.plot.bestplot,
+            xp_position: state.progress.experience.position as u64,
+            best_equipment: &state.bestequip,
+            best_spell: &state.bestspell,
+            best_stat: &state.beststat,
+            best_plot: &state.plot.bestplot,
             motto: "",
         },
         target.passkey,
@@ -706,6 +707,20 @@ mod tests {
         }
     }
 
+    struct SpecialtyTransport {
+        specialty: RefCell<Option<String>>,
+    }
+
+    impl ReportTransport for SpecialtyTransport {
+        fn deliver(&self, request: Url) -> DeliveryOutcome {
+            *self.specialty.borrow_mut() = request
+                .query_pairs()
+                .find(|(key, _)| key == "z")
+                .map(|(_, value)| value.into_owned());
+            DeliveryOutcome::Delivered
+        }
+    }
+
     fn registered_store() -> (TestDirectory, Store, CharacterId) {
         let directory = TestDirectory::new();
         let mut character = save::import_text(
@@ -738,6 +753,24 @@ mod tests {
             assert_eq!(result.outcome, expected);
             assert_eq!(result.identity.name, "Reference Hero");
         }
+    }
+
+    #[test]
+    fn manual_brag_derives_specialty_before_constructing_the_report() {
+        let (_directory, mut store, id) = registered_store();
+        let mut state = store.get(&id).unwrap().state;
+        state.bestspell = "Stale Specialty".to_owned();
+        store.replace_state(&id, &state).unwrap();
+        let transport = SpecialtyTransport {
+            specialty: RefCell::new(None),
+        };
+
+        submit(&store, &id, &transport).unwrap();
+
+        assert_eq!(
+            *transport.specialty.borrow(),
+            Some("Hastiness II".to_owned())
+        );
     }
 
     #[test]

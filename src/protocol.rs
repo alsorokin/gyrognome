@@ -262,6 +262,27 @@ mod tests {
     }
 
     #[test]
+    fn event_report_uses_canonical_specialty_for_z() {
+        let mut character = character();
+        character.bestspell = "Hastiness II".to_owned();
+        let event = ReportEvent {
+            trigger: crate::simulation::ReportTrigger::ManualBrag,
+            snapshot: crate::simulation::TransitionSnapshot { character },
+            motto: String::new(),
+        };
+
+        let report = progress_report_for_event(&event, 4242).unwrap();
+        assert_eq!(
+            report
+                .unsigned_fields
+                .iter()
+                .find(|field| field.name == "z")
+                .map(|field| field.value.as_str()),
+            Some("Hastiness II")
+        );
+    }
+
+    #[test]
     fn constructs_creation_and_guild_requests() {
         let character = character();
         assert_eq!(

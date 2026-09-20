@@ -69,6 +69,7 @@ pub struct TransitionSnapshot {
 impl TransitionSnapshot {
     fn capture(state: &Character, seed: crate::rng::AleaState) -> Self {
         let mut character = state.clone();
+        update_bestspell(&mut character);
         character.document = Value::Null;
         character.seed = seed;
         Self { character }
@@ -185,6 +186,7 @@ pub fn advance_with_trace(
             .increment(ProgressBarKind::Task, tick as f64);
         remaining -= tick;
     }
+    update_bestspell(&mut next);
     Ok(AdvancementTrace {
         state: next,
         events,
@@ -522,6 +524,21 @@ fn win_spell(state: &mut Character, ruleset: &Ruleset, rng: &mut Alea) {
             rank: "I".to_owned(),
         });
     }
+}
+
+/// Ports the browser's `HotOrNot()` specialty selection.
+pub fn update_bestspell(state: &mut Character) {
+    let mut best = None;
+    for (index, spell) in state.spells.iter().enumerate() {
+        let score = (index as u64 + 1) * to_arabic(&spell.rank);
+        if best
+            .as_ref()
+            .map_or(true, |(best_score, _)| score > *best_score)
+        {
+            best = Some((score, format!("{} {}", spell.name, spell.rank)));
+        }
+    }
+    state.bestspell = best.map_or_else(String::new, |(_, specialty)| specialty);
 }
 
 fn win_equip(state: &mut Character, ruleset: &Ruleset, rng: &mut Alea) {
@@ -1261,6 +1278,75 @@ mod tests {
         assert_eq!(after.dna.0, before.dna.0);
         assert_eq!(after.seed.0, before.seed.0);
         assert_eq!(after.inventory.len(), before.inventory.len());
+    }
+
+    #[test]
+    fn specialty_uses_official_indexed_rank_selection() {
+        let mut state = character();
+        state.spells = vec![
+            Spell {
+                name: "Sadness".to_owned(),
+                rank: "II".to_owned(),
+            },
+            Spell {
+                name: "Hastiness".to_owned(),
+                rank: "I".to_owned(),
+            },
+            Spell {
+                name: "Invisible Hands".to_owned(),
+                rank: "II".to_owned(),
+            },
+        ];
+        state.bestspell = "Stale Specialty".to_owned();
+
+        update_bestspell(&mut state);
+        assert_eq!(state.bestspell, "Invisible Hands II");
+
+        state.spells.pop();
+        update_bestspell(&mut state);
+        assert_eq!(state.bestspell, "Sadness II");
+    }
+
+    #[test]
+    fn automatic_and_explicit_report_snapshots_refresh_specialty() {
+        let mut state = character();
+        state.spells = vec![
+            Spell {
+                name: "Sadness".to_owned(),
+                rank: "II".to_owned(),
+            },
+            Spell {
+                name: "Hastiness".to_owned(),
+                rank: "II".to_owned(),
+            },
+        ];
+        state.bestspell = "Stale Specialty".to_owned();
+
+        let automatic =
+            ReportEvent::capture(ReportTrigger::LevelUp, &state, state.seed, "").unwrap();
+        assert_eq!(automatic.snapshot.character.bestspell, "Hastiness II");
+
+        let explicit = explicit_report_events(
+            &state,
+            [ExplicitReportAction::ManualBrag {
+                motto: String::new(),
+            }],
+        );
+        assert_eq!(explicit[0].snapshot.character.bestspell, "Hastiness II");
+    }
+
+    #[test]
+    fn advancement_refreshes_empty_specialty_without_spells() {
+        let mut before = character();
+        before.spells.clear();
+        before.bestspell = "Stale Specialty".to_owned();
+        let after = advance(&before, &Ruleset::default(), 250).unwrap();
+
+        assert!(after.bestspell.is_empty());
+        assert_eq!(
+            to_value(&after.spells).unwrap(),
+            to_value(&before.spells).unwrap()
+        );
     }
 
     #[test]
