@@ -1,6 +1,7 @@
 //! Credential-safe terminal dashboard for observing one managed character.
 
 use std::{
+    collections::{HashMap, HashSet},
     io::{self, Stdout},
     time::Duration,
 };
@@ -17,7 +18,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
     buffer::Buffer,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
@@ -29,7 +30,7 @@ use crate::{
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, ServiceState, SystemctlRunner},
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
     runtime::{CharacterId, CharacterIdentity, ManagedCharacter, StorageError, Store},
-    state::{Activity, Equipment, InventoryEntry, Plot, Progress, Spell},
+    state::{Activity, Attributes, Equipment, InventoryEntry, Plot, Progress, Spell},
 };
 
 const MINIMUM_WIDTH: u16 = 40;
@@ -40,6 +41,7 @@ pub struct DashboardCharacter {
     pub id: CharacterId,
     pub identity: CharacterIdentity,
     pub activity: Activity,
+    pub stats: Attributes,
     pub progress: Progress,
     pub equipment: Equipment,
     pub inventory: Vec<InventoryEntry>,
@@ -55,6 +57,7 @@ impl From<ManagedCharacter> for DashboardCharacter {
             id: character.id,
             identity: character.identity,
             activity: character.state.activity,
+            stats: character.state.stats,
             progress: character.state.progress,
             equipment: character.state.equipment,
             inventory: character.state.inventory,
@@ -408,12 +411,19 @@ pub fn run<P: DashboardProvider>(
     let mut session = TerminalSession::enter()?;
     let mut state = DashboardState {
         current: provider.refresh(&id)?,
+        updates: RecentTaskUpdates::default(),
         confirmation: None,
         panes: PaneVisibility::default(),
     };
     loop {
         session.draw_synchronized(|frame| {
-            render(frame, &state.current, state.confirmation, &state.panes)
+            render(
+                frame,
+                &state.current,
+                &state.updates,
+                state.confirmation,
+                &state.panes,
+            )
         })?;
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -430,6 +440,7 @@ pub fn run<P: DashboardProvider>(
 
 struct DashboardState {
     current: DashboardSnapshot,
+    updates: RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     panes: PaneVisibility,
 }
@@ -437,7 +448,13 @@ struct DashboardState {
 impl DashboardState {
     fn refresh<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId) {
         match provider.refresh(id) {
-            Ok(next) => self.current = next,
+            Ok(next) => {
+                if next.character.activity.tasks > self.current.character.activity.tasks {
+                    self.updates =
+                        RecentTaskUpdates::between(&self.current.character, &next.character);
+                }
+                self.current = next;
+            }
             Err(error) => {
                 self.current.message = Some(format!("Could not refresh dashboard: {error}"))
             }
@@ -549,6 +566,7 @@ impl Drop for TerminalSession {
 fn render(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
+    updates: &RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     panes: &PaneVisibility,
 ) {
@@ -563,6 +581,11 @@ fn render(
     }
 
     let full_layout = area.width >= 90;
+    let header_height = if header_uses_single_line(&snapshot.character, area.width) {
+        3
+    } else {
+        4
+    };
     let status_height = if full_layout && panes.is_collapsed(Pane::Status) {
         2
     } else {
@@ -571,17 +594,17 @@ fn render(
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(header_height),
             Constraint::Min(6),
             Constraint::Length(status_height),
             Constraint::Length(3),
         ])
         .split(area);
-    render_header(frame, snapshot, rows[0]);
+    render_header(frame, snapshot, updates, rows[0]);
     if !full_layout {
-        render_compact(frame, snapshot, rows[1]);
+        render_compact(frame, snapshot, updates, rows[1]);
     } else {
-        render_full(frame, snapshot, rows[1], panes);
+        render_full(frame, snapshot, updates, rows[1], panes);
     }
     let status = match (&snapshot.service, snapshot.runtime_owned) {
         (Some(state), Some(owned)) => format!(
@@ -615,45 +638,114 @@ fn render(
     );
 }
 
-fn render_header(frame: &mut ratatui::Frame<'_>, snapshot: &DashboardSnapshot, area: Rect) {
+fn render_header(
+    frame: &mut ratatui::Frame<'_>,
+    snapshot: &DashboardSnapshot,
+    updates: &RecentTaskUpdates,
+    area: Rect,
+) {
     let identity = &snapshot.character.identity;
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(&identity.name, Style::default().fg(Color::Cyan)),
-            Span::raw(format!(
-                " — {} {} (level {})",
-                identity.race, identity.class, identity.level
-            )),
-        ]))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Gyrognome Dashboard"),
-        ),
-        area,
-    );
+    let state = &snapshot.character;
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title("Gyrognome Dashboard");
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    frame.render_widget(block, area);
+    if header_uses_single_line(state, area.width) {
+        let stats_width = header_stats_text(&state.stats).chars().count() as u16;
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(stats_width)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(&identity.name, Style::default().fg(Color::Cyan)),
+                Span::raw(header_identity_text(identity)),
+            ])),
+            columns[0],
+        );
+        frame.render_widget(
+            Paragraph::new(header_stats_line(&state.stats, updates)).alignment(Alignment::Right),
+            columns[1],
+        );
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(&identity.name, Style::default().fg(Color::Cyan)),
+                Span::raw(header_identity_text(identity)),
+            ])),
+            rows[0],
+        );
+        frame.render_widget(
+            Paragraph::new(header_stats_line(&state.stats, updates)),
+            rows[1],
+        );
+    }
 }
 
-fn render_compact(frame: &mut ratatui::Frame<'_>, snapshot: &DashboardSnapshot, area: Rect) {
+fn header_identity_text(identity: &CharacterIdentity) -> String {
+    format!(
+        " — {} {} (level {})",
+        identity.race, identity.class, identity.level
+    )
+}
+
+fn header_uses_single_line(character: &DashboardCharacter, width: u16) -> bool {
+    let identity_width = character.identity.name.chars().count()
+        + header_identity_text(&character.identity).chars().count();
+    let stats_width = header_stats_text(&character.stats).chars().count();
+    identity_width + stats_width + 2 <= width.saturating_sub(2) as usize
+}
+
+fn header_stats_text(stats: &Attributes) -> String {
+    attribute_values(stats)
+        .into_iter()
+        .map(|(label, value)| format!("{label}:{value}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn header_stats_line(stats: &Attributes, updates: &RecentTaskUpdates) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, (label, value)) in attribute_values(stats).into_iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(styled_value(
+            format!("{label}:{value}"),
+            updates.stats.contains(label),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn render_compact(
+    frame: &mut ratatui::Frame<'_>,
+    snapshot: &DashboardSnapshot,
+    updates: &RecentTaskUpdates,
+    area: Rect,
+) {
     let state = &snapshot.character;
-    let content = format!(
-        "Activity: {}\nTasks completed: {}\n{}\n{}\nInventory: {}\nSpells: {}\nPlot: Act {} — {}\nQuests: {}",
-        activity_text(&state.activity),
-        state.activity.tasks,
-        progress_text(&state.progress),
-        equipment_text(&state.equipment),
-        list_text(&state.inventory, |item| format!(
-            "{} x{}",
-            item.name, item.quantity
-        )),
-        list_text(&state.spells, |spell| format!(
-            "{} {}",
-            spell.name, spell.rank
-        )),
-        state.plot.act,
-        state.plot.bestplot,
-        state.quests.join(", "),
-    );
+    let mut content = vec![
+        Line::from(format!("Activity: {}", activity_text(&state.activity))),
+        Line::from(format!("Tasks completed: {}", state.activity.tasks)),
+        Line::from(progress_text(&state.progress)),
+    ];
+    content.extend(equipment_lines(&state.equipment, updates));
+    content.push(inventory_line(&state.inventory, updates));
+    content.push(spells_line(&state.spells, updates));
+    content.push(Line::from(format!(
+        "Plot: Act {} — {}",
+        state.plot.act, state.plot.bestplot
+    )));
+    content.push(Line::from(format!("Quests: {}", state.quests.join(", "))));
     frame.render_widget(
         Paragraph::new(content)
             .block(Block::default().borders(Borders::ALL).title("Character"))
@@ -665,6 +757,7 @@ fn render_compact(frame: &mut ratatui::Frame<'_>, snapshot: &DashboardSnapshot, 
 fn render_full(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
+    updates: &RecentTaskUpdates,
     area: Rect,
     panes: &PaneVisibility,
 ) {
@@ -713,7 +806,7 @@ fn render_full(
         "Equipment",
         Pane::Equipment,
         panes,
-        Paragraph::new(equipment_text(&state.equipment)).wrap(Wrap { trim: true }),
+        Paragraph::new(equipment_lines(&state.equipment, updates)).wrap(Wrap { trim: true }),
     );
     render_pane(
         frame,
@@ -735,7 +828,12 @@ fn render_full(
         "Adventure",
         Pane::Adventure,
         panes,
-        Paragraph::new(adventure_lines(state)).wrap(Wrap { trim: true }),
+        Paragraph::new(adventure_lines(
+            state,
+            updates,
+            panes.is_collapsed(Pane::Journal),
+        ))
+        .wrap(Wrap { trim: true }),
     );
     render_pane(
         frame,
@@ -747,29 +845,27 @@ fn render_full(
     );
 }
 
-fn adventure_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
-    let lines = vec![
-        Line::from(format!(
-            "Inventory: {}",
-            list_text(&character.inventory, |item| format!(
-                "{} x{}",
-                item.name, item.quantity
-            ))
-        )),
-        Line::from(format!(
-            "Spells: {}",
-            list_text(&character.spells, |spell| format!(
-                "{} {}",
-                spell.name, spell.rank
-            ))
-        )),
+fn adventure_lines(
+    character: &DashboardCharacter,
+    updates: &RecentTaskUpdates,
+    show_current_quest: bool,
+) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        inventory_line(&character.inventory, updates),
+        Line::from(""),
+        spells_line(&character.spells, updates),
         Line::from(""),
         Line::from(format!(
             "Plot: Act {} — {}",
             character.plot.act, character.plot.bestplot
         )),
-        Line::from(format!("Current quest: {}", character.current_quest)),
     ];
+    if show_current_quest {
+        lines.push(Line::from(format!(
+            "Current quest: {}",
+            character.current_quest
+        )));
+    }
     lines
 }
 
@@ -953,7 +1049,59 @@ fn quest_target_text(target: &str) -> String {
     }
 }
 
-fn equipment_text(equipment: &Equipment) -> String {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RowKey {
+    name: String,
+    occurrence: usize,
+}
+
+#[derive(Debug, Default)]
+struct RecentTaskUpdates {
+    stats: HashSet<&'static str>,
+    equipment: HashSet<&'static str>,
+    inventory: HashSet<RowKey>,
+    spells: HashSet<RowKey>,
+}
+
+impl RecentTaskUpdates {
+    fn between(previous: &DashboardCharacter, current: &DashboardCharacter) -> Self {
+        let mut updates = Self::default();
+        for ((label, previous_value), (_, current_value)) in attribute_values(&previous.stats)
+            .into_iter()
+            .zip(attribute_values(&current.stats))
+        {
+            if previous_value != current_value {
+                updates.stats.insert(label);
+            }
+        }
+        for ((slot, previous_item), (_, current_item)) in equipment_slots(&previous.equipment)
+            .into_iter()
+            .zip(equipment_slots(&current.equipment))
+        {
+            if previous_item != current_item && !current_item.is_empty() {
+                updates.equipment.insert(slot);
+            }
+        }
+        updates.inventory = changed_inventory_rows(&previous.inventory, &current.inventory);
+        updates.spells = changed_spell_rows(&previous.spells, &current.spells);
+        updates
+    }
+}
+
+fn attribute_values(stats: &Attributes) -> [(&'static str, f64); 8] {
+    [
+        ("STR", stats.strength),
+        ("CON", stats.constitution),
+        ("DEX", stats.dexterity),
+        ("INT", stats.intelligence),
+        ("WIS", stats.wisdom),
+        ("CHA", stats.charisma),
+        ("HP Max", stats.hit_points_max),
+        ("MP Max", stats.mana_points_max),
+    ]
+}
+
+fn equipment_slots(equipment: &Equipment) -> [(&'static str, &str); 11] {
     [
         ("Weapon", &equipment.weapon),
         ("Shield", &equipment.shield),
@@ -967,19 +1115,147 @@ fn equipment_text(equipment: &Equipment) -> String {
         ("Greaves", &equipment.greaves),
         ("Sollerets", &equipment.sollerets),
     ]
-    .into_iter()
-    .filter(|(_, item)| !item.is_empty())
-    .map(|(slot, item)| format!("{slot}: {item}"))
-    .collect::<Vec<_>>()
-    .join("\n")
 }
 
-fn list_text<T>(items: &[T], format: impl Fn(&T) -> String) -> String {
-    if items.is_empty() {
-        "none".to_owned()
-    } else {
-        items.iter().map(format).collect::<Vec<_>>().join(", ")
+fn changed_inventory_rows(
+    previous: &[InventoryEntry],
+    current: &[InventoryEntry],
+) -> HashSet<RowKey> {
+    let mut previous_by_name: HashMap<String, Vec<u64>> = HashMap::new();
+    for item in previous {
+        previous_by_name
+            .entry(item.name.clone())
+            .or_default()
+            .push(item.quantity);
     }
+    let mut occurrences = HashMap::new();
+    current
+        .iter()
+        .filter_map(|item| {
+            let occurrence = occurrences.entry(&item.name).or_insert(0);
+            let key = RowKey {
+                name: item.name.clone(),
+                occurrence: *occurrence,
+            };
+            *occurrence += 1;
+            let values = previous_by_name.entry(item.name.clone()).or_default();
+            values
+                .iter()
+                .position(|quantity| *quantity == item.quantity)
+                .map(|index| values.remove(index))
+                .is_none()
+                .then_some(key)
+        })
+        .collect()
+}
+
+fn changed_spell_rows(previous: &[Spell], current: &[Spell]) -> HashSet<RowKey> {
+    let mut previous_by_name: HashMap<String, Vec<String>> = HashMap::new();
+    for spell in previous {
+        previous_by_name
+            .entry(spell.name.clone())
+            .or_default()
+            .push(spell.rank.clone());
+    }
+    let mut occurrences = HashMap::new();
+    current
+        .iter()
+        .filter_map(|spell| {
+            let occurrence = occurrences.entry(&spell.name).or_insert(0);
+            let key = RowKey {
+                name: spell.name.clone(),
+                occurrence: *occurrence,
+            };
+            *occurrence += 1;
+            let ranks = previous_by_name.entry(spell.name.clone()).or_default();
+            ranks
+                .iter()
+                .position(|rank| rank == &spell.rank)
+                .map(|index| ranks.remove(index))
+                .is_none()
+                .then_some(key)
+        })
+        .collect()
+}
+
+fn update_style() -> Style {
+    Style::default().fg(Color::Black).bg(Color::Cyan)
+}
+
+fn styled_value(content: String, updated: bool) -> Span<'static> {
+    if updated {
+        Span::styled(content, update_style())
+    } else {
+        Span::raw(content)
+    }
+}
+
+fn equipment_lines(equipment: &Equipment, updates: &RecentTaskUpdates) -> Vec<Line<'static>> {
+    let lines = equipment_slots(equipment)
+        .into_iter()
+        .filter(|(_, item)| !item.is_empty())
+        .map(|(slot, item)| {
+            Line::from(styled_value(
+                format!("{slot}: {item}"),
+                updates.equipment.contains(slot),
+            ))
+        })
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        vec![Line::from("Equipment: none")]
+    } else {
+        lines
+    }
+}
+
+fn inventory_line(items: &[InventoryEntry], updates: &RecentTaskUpdates) -> Line<'static> {
+    let mut spans = vec![Span::raw("Inventory: ")];
+    if items.is_empty() {
+        spans.push(Span::raw("none"));
+        return Line::from(spans);
+    }
+    let mut occurrences = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(", "));
+        }
+        let occurrence = occurrences.entry(&item.name).or_insert(0);
+        let key = RowKey {
+            name: item.name.clone(),
+            occurrence: *occurrence,
+        };
+        *occurrence += 1;
+        spans.push(styled_value(
+            format!("{} x{}", item.name, item.quantity),
+            updates.inventory.contains(&key),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn spells_line(spells: &[Spell], updates: &RecentTaskUpdates) -> Line<'static> {
+    let mut spans = vec![Span::raw("Spells: ")];
+    if spells.is_empty() {
+        spans.push(Span::raw("none"));
+        return Line::from(spans);
+    }
+    let mut occurrences = HashMap::new();
+    for (index, spell) in spells.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw(", "));
+        }
+        let occurrence = occurrences.entry(&spell.name).or_insert(0);
+        let key = RowKey {
+            name: spell.name.clone(),
+            occurrence: *occurrence,
+        };
+        *occurrence += 1;
+        spans.push(styled_value(
+            format!("{} {}", spell.name, spell.rank),
+            updates.spells.contains(&key),
+        ));
+    }
+    Line::from(spans)
 }
 
 #[cfg(test)]
@@ -1075,6 +1351,7 @@ mod tests {
                     level: character.traits.level,
                 },
                 activity: character.activity,
+                stats: character.stats,
                 progress: character.progress,
                 equipment: character.equipment,
                 inventory: character.inventory,
@@ -1093,7 +1370,7 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render(frame, &sample(), None, panes))
+            .draw(|frame| render(frame, &sample(), &RecentTaskUpdates::default(), None, panes))
             .unwrap();
         terminal
             .backend()
@@ -1160,16 +1437,23 @@ mod tests {
             assert!(complete.contains(pane.hotkey()));
         }
         assert!(complete.contains("Experience 0%"));
+        assert!(complete.contains("STR:"));
         let compact = rendered(70, 30);
         assert!(compact.contains("Character"));
         assert!(compact.contains("Inventory"));
+        assert!(compact.contains("STR:"));
         let too_small = rendered(30, 10);
         assert!(too_small.contains("Terminal is too small"));
     }
 
     #[test]
     fn equipment_omits_empty_slots() {
-        let equipment = equipment_text(&sample().character.equipment);
+        let equipment =
+            equipment_lines(&sample().character.equipment, &RecentTaskUpdates::default())
+                .into_iter()
+                .flat_map(|line| line.spans)
+                .map(|span| span.content)
+                .collect::<String>();
         assert!(equipment.contains("Weapon: Bronze Sword"));
         assert!(equipment.contains("Hauberk: Leather"));
         assert!(!equipment.contains("Helm:"));
@@ -1187,10 +1471,150 @@ mod tests {
         assert_eq!(quest_target_text(""), "none");
     }
 
+    fn has_update_style(line: Line<'static>, label: &str) -> bool {
+        let backend = TestBackend::new(120, 1);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(Paragraph::new(line), frame.area()))
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .windows(label.len())
+            .find(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == label)
+            .unwrap()
+            .iter()
+            .all(|cell| cell.fg == Color::Black && cell.bg == Color::Cyan)
+    }
+
     #[test]
-    fn adventure_shows_only_a_plain_current_quest() {
+    fn recent_task_updates_compare_current_values_by_logical_identity() {
+        let mut previous = sample().character;
+        previous.inventory = vec![
+            InventoryEntry {
+                name: "duplicate".to_owned(),
+                quantity: 1,
+            },
+            InventoryEntry {
+                name: "duplicate".to_owned(),
+                quantity: 2,
+            },
+            InventoryEntry {
+                name: "removed".to_owned(),
+                quantity: 1,
+            },
+        ];
+        previous.spells = vec![
+            Spell {
+                name: "Spark".to_owned(),
+                rank: "I".to_owned(),
+            },
+            Spell {
+                name: "Spark".to_owned(),
+                rank: "II".to_owned(),
+            },
+        ];
+        let mut current = previous.clone();
+        current.stats.strength += 1.0;
+        current.equipment.weapon = "Silver Sword".to_owned();
+        current.inventory = vec![
+            InventoryEntry {
+                name: "duplicate".to_owned(),
+                quantity: 2,
+            },
+            InventoryEntry {
+                name: "duplicate".to_owned(),
+                quantity: 1,
+            },
+            InventoryEntry {
+                name: "added".to_owned(),
+                quantity: 1,
+            },
+        ];
+        current.spells = vec![
+            Spell {
+                name: "Spark".to_owned(),
+                rank: "II".to_owned(),
+            },
+            Spell {
+                name: "Spark".to_owned(),
+                rank: "I".to_owned(),
+            },
+            Spell {
+                name: "New spell".to_owned(),
+                rank: "I".to_owned(),
+            },
+        ];
+
+        let updates = RecentTaskUpdates::between(&previous, &current);
+
+        assert!(updates.stats.contains("STR"));
+        assert!(updates.equipment.contains("Weapon"));
+        assert_eq!(
+            updates.inventory,
+            HashSet::from([RowKey {
+                name: "added".to_owned(),
+                occurrence: 0,
+            }])
+        );
+        assert_eq!(
+            updates.spells,
+            HashSet::from([RowKey {
+                name: "New spell".to_owned(),
+                occurrence: 0,
+            }])
+        );
+    }
+
+    #[test]
+    fn recently_updated_values_use_the_dashboard_selection_style() {
         let character = sample().character;
-        let lines = adventure_lines(&character);
+        let mut updates = RecentTaskUpdates::default();
+        updates.stats.insert("STR");
+        updates.equipment.insert("Weapon");
+        updates.inventory.insert(RowKey {
+            name: character.inventory[0].name.clone(),
+            occurrence: 0,
+        });
+        updates.spells.insert(RowKey {
+            name: character.spells[0].name.clone(),
+            occurrence: 0,
+        });
+
+        assert!(has_update_style(
+            header_stats_line(&character.stats, &updates),
+            &format!("STR:{}", character.stats.strength)
+        ));
+        assert!(has_update_style(
+            equipment_lines(&character.equipment, &updates).remove(0),
+            &format!("Weapon: {}", character.equipment.weapon)
+        ));
+        assert!(has_update_style(
+            inventory_line(&character.inventory, &updates),
+            &format!(
+                "{} x{}",
+                character.inventory[0].name, character.inventory[0].quantity
+            )
+        ));
+        assert!(has_update_style(
+            spells_line(&character.spells, &updates),
+            &format!("{} {}", character.spells[0].name, character.spells[0].rank)
+        ));
+    }
+
+    #[test]
+    fn adventure_shows_current_quest_only_when_journal_is_collapsed() {
+        let character = sample().character;
+        let expanded_journal = adventure_lines(&character, &RecentTaskUpdates::default(), false);
+        assert!(
+            !expanded_journal
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content == "Current quest: Fetch me an anvil")
+        );
+
+        let lines = adventure_lines(&character, &RecentTaskUpdates::default(), true);
         let current = lines
             .iter()
             .flat_map(|line| line.spans.iter())
@@ -1203,6 +1627,58 @@ mod tests {
                 .flat_map(|line| line.spans.iter())
                 .any(|span| span.content == "Quests:")
         );
+        assert!(
+            !lines
+                .iter()
+                .flat_map(|line| line.spans.iter())
+                .any(|span| span.content.starts_with("STR:"))
+        );
+        assert!(lines[1].spans.is_empty());
+        assert!(
+            lines[2]
+                .spans
+                .iter()
+                .any(|span| span.content.starts_with("Spells:"))
+        );
+    }
+
+    fn text_position(
+        content: &[ratatui::buffer::Cell],
+        width: usize,
+        text: &str,
+    ) -> (usize, usize) {
+        let index = content
+            .windows(text.len())
+            .position(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == text)
+            .unwrap();
+        (index % width, index / width)
+    }
+
+    #[test]
+    fn header_right_aligns_stats_or_moves_them_to_a_second_row() {
+        let snapshot = sample();
+        let updates = RecentTaskUpdates::default();
+
+        let wide_backend = TestBackend::new(120, 40);
+        let mut wide_terminal = Terminal::new(wide_backend).unwrap();
+        wide_terminal
+            .draw(|frame| render(frame, &snapshot, &updates, None, &PaneVisibility::default()))
+            .unwrap();
+        let wide_content = wide_terminal.backend().buffer().content();
+        let identity = text_position(wide_content, 120, &snapshot.character.identity.name);
+        let stats = text_position(wide_content, 120, "STR:");
+        assert_eq!(identity.1, stats.1);
+        assert!(identity.0 < stats.0);
+
+        let narrow_backend = TestBackend::new(80, 30);
+        let mut narrow_terminal = Terminal::new(narrow_backend).unwrap();
+        narrow_terminal
+            .draw(|frame| render(frame, &snapshot, &updates, None, &PaneVisibility::default()))
+            .unwrap();
+        let narrow_content = narrow_terminal.backend().buffer().content();
+        let identity = text_position(narrow_content, 80, &snapshot.character.identity.name);
+        let stats = text_position(narrow_content, 80, "STR:");
+        assert_eq!(stats.1, identity.1 + 1);
     }
 
     #[test]
@@ -1238,7 +1714,15 @@ mod tests {
         let mut snapshot = sample();
         snapshot.character.progress.experience.percent = 100;
         terminal
-            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    &RecentTaskUpdates::default(),
+                    None,
+                    &PaneVisibility::default(),
+                )
+            })
             .unwrap();
 
         let label = "Experience 100%";
@@ -1255,7 +1739,15 @@ mod tests {
 
         snapshot.character.progress.experience.percent = 0;
         terminal
-            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    &RecentTaskUpdates::default(),
+                    None,
+                    &PaneVisibility::default(),
+                )
+            })
             .unwrap();
         let label = "Experience 0%";
         let label_cells = terminal
@@ -1270,7 +1762,15 @@ mod tests {
 
         snapshot.character.progress.experience.percent = 50;
         terminal
-            .draw(|frame| render(frame, &snapshot, None, &PaneVisibility::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    &RecentTaskUpdates::default(),
+                    None,
+                    &PaneVisibility::default(),
+                )
+            })
             .unwrap();
         let label = "Experience 50%";
         let label_cells = terminal
@@ -1434,6 +1934,7 @@ mod tests {
         };
         let mut state = DashboardState {
             current: first,
+            updates: RecentTaskUpdates::default(),
             confirmation: None,
             panes: PaneVisibility::default(),
         };
@@ -1454,6 +1955,68 @@ mod tests {
         assert_eq!(
             state.current.message.as_deref(),
             Some("Requested start successfully.")
+        );
+    }
+
+    #[test]
+    fn task_completion_replaces_and_other_refreshes_retain_update_indicators() {
+        let id = CharacterId::new();
+        let first = sample();
+        let mut completed = first.clone();
+        completed.character.activity.tasks += 1;
+        completed.character.stats.strength += 1.0;
+        completed.character.inventory[0].quantity += 1;
+        completed.character.spells[0].rank = "III".to_owned();
+        completed.character.equipment.weapon = "Silver Sword".to_owned();
+        let mut unchanged_task_count = completed.clone();
+        unchanged_task_count.character.progress.task.percent = 50;
+        let mut next_completion = unchanged_task_count.clone();
+        next_completion.character.activity.tasks += 1;
+        let provider = FakeProvider {
+            snapshots: std::cell::RefCell::new(vec![
+                Ok(completed.clone()),
+                Ok(unchanged_task_count),
+                Ok(next_completion),
+                Err(DashboardError::NoManagedCharacters),
+            ]),
+            actions: std::cell::RefCell::new(Vec::new()),
+            action_results: std::cell::RefCell::new(Vec::new()),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
+        };
+        let mut state = DashboardState {
+            current: first,
+            updates: RecentTaskUpdates::default(),
+            confirmation: None,
+            panes: PaneVisibility::default(),
+        };
+
+        state.refresh(&provider, &id);
+        assert!(state.updates.stats.contains("STR"));
+        assert!(state.updates.equipment.contains("Weapon"));
+        assert_eq!(state.updates.inventory.len(), 1);
+        assert_eq!(state.updates.spells.len(), 1);
+
+        state.refresh(&provider, &id);
+        assert!(state.updates.stats.contains("STR"));
+        assert!(state.updates.equipment.contains("Weapon"));
+        assert_eq!(state.updates.inventory.len(), 1);
+        assert_eq!(state.updates.spells.len(), 1);
+
+        state.refresh(&provider, &id);
+        assert!(state.updates.stats.is_empty());
+        assert!(state.updates.equipment.is_empty());
+        assert!(state.updates.inventory.is_empty());
+        assert!(state.updates.spells.is_empty());
+
+        state.refresh(&provider, &id);
+        assert!(state.updates.stats.is_empty());
+        assert!(
+            state
+                .current
+                .message
+                .unwrap()
+                .contains("no managed characters")
         );
     }
 
@@ -1481,6 +2044,7 @@ mod tests {
             };
             let mut state = DashboardState {
                 current: first.clone(),
+                updates: RecentTaskUpdates::default(),
                 confirmation: None,
                 panes: PaneVisibility::default(),
             };
@@ -1512,6 +2076,7 @@ mod tests {
         };
         let mut state = DashboardState {
             current: snapshot.clone(),
+            updates: RecentTaskUpdates::default(),
             confirmation: Some(LifecycleAction::Start),
             panes: PaneVisibility::default(),
         };
