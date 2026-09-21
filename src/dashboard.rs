@@ -3,7 +3,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{self, Stdout},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -35,6 +35,8 @@ use crate::{
 
 const MINIMUM_WIDTH: u16 = 40;
 const MINIMUM_HEIGHT: u16 = 12;
+const MINIMUM_REDRAW_SPACING: Duration = Duration::from_millis(25);
+const SETTLING_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 pub struct DashboardCharacter {
@@ -96,6 +98,7 @@ impl LifecycleAction {
 
 pub trait DashboardProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError>;
+    fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError>;
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError>;
     fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError>;
 }
@@ -115,6 +118,10 @@ impl LocalProvider {
 impl DashboardProvider for LocalProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError> {
         collect_snapshot(&self.store, SystemctlRunner, id)
+    }
+
+    fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
+        Ok(self.store.get(id)?.into())
     }
 
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError> {
@@ -160,6 +167,95 @@ fn snapshot(
             message: Some(format!("Could not refresh service status: {error}")),
         },
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskIdentity {
+    completed_tasks: u64,
+    duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TaskAnchor {
+    position_ms: f64,
+    duration_ms: u64,
+    identity: TaskIdentity,
+    observed_at: Instant,
+}
+
+impl TaskAnchor {
+    fn from_snapshot(snapshot: &DashboardSnapshot, observed_at: Instant) -> Self {
+        Self::from_character(&snapshot.character, observed_at)
+    }
+
+    fn from_character(character: &DashboardCharacter, observed_at: Instant) -> Self {
+        Self {
+            position_ms: character.progress.task.position,
+            duration_ms: character.progress.task.max,
+            identity: TaskIdentity {
+                completed_tasks: character.activity.tasks,
+                duration_ms: character.progress.task.max,
+            },
+            observed_at,
+        }
+    }
+}
+
+fn predicted_task_position(anchor: TaskAnchor, elapsed: Duration) -> f64 {
+    if anchor.duration_ms == 0 {
+        return 0.0;
+    }
+    (anchor.position_ms + elapsed.as_millis() as f64).min(anchor.duration_ms as f64)
+}
+
+fn task_percent(position_ms: f64, duration_ms: u64) -> u64 {
+    if duration_ms == 0 {
+        100
+    } else {
+        ((100.0 * position_ms.clamp(0.0, duration_ms as f64)) / duration_ms as f64).floor() as u64
+    }
+}
+
+fn predicted_task_percent(anchor: TaskAnchor, elapsed: Duration) -> u64 {
+    task_percent(predicted_task_position(anchor, elapsed), anchor.duration_ms)
+}
+
+fn next_task_percent_boundary(anchor: TaskAnchor, elapsed: Duration) -> Option<Duration> {
+    if anchor.duration_ms == 0 {
+        return None;
+    }
+    let position = predicted_task_position(anchor, elapsed);
+    if position >= anchor.duration_ms as f64 {
+        return None;
+    }
+    let percent = task_percent(position, anchor.duration_ms);
+    let target_position =
+        ((u128::from(percent + 1) * u128::from(anchor.duration_ms)).div_ceil(100)) as f64;
+    Some(Duration::from_millis(
+        (target_position - position).max(1.0).ceil() as u64,
+    ))
+}
+
+fn next_redraw_boundary(anchor: TaskAnchor, elapsed: Duration) -> Option<Duration> {
+    next_task_percent_boundary(anchor, elapsed).map(|deadline| deadline.max(MINIMUM_REDRAW_SPACING))
+}
+
+fn select_poll_timeout(
+    next_percent_boundary: Option<Duration>,
+    next_combined_refresh: Duration,
+    next_settling_read: Option<Duration>,
+    refresh_interval: Duration,
+) -> Duration {
+    [
+        next_percent_boundary,
+        Some(next_combined_refresh),
+        next_settling_read,
+        Some(refresh_interval),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(refresh_interval)
 }
 
 #[derive(Debug, Error)]
@@ -409,17 +505,16 @@ pub fn run<P: DashboardProvider>(
     interrupted: &std::sync::atomic::AtomicBool,
 ) -> Result<(), DashboardError> {
     let mut session = TerminalSession::enter()?;
-    let mut state = DashboardState {
-        current: provider.refresh(&id)?,
-        updates: RecentTaskUpdates::default(),
-        confirmation: None,
-        panes: PaneVisibility::default(),
-    };
+    let observed_at = Instant::now();
+    let mut state = DashboardState::new(provider.refresh(&id)?, observed_at, refresh_interval);
     loop {
+        let now = Instant::now();
+        let predicted_task_percent = state.displayed_task_percent(now);
         session.draw_synchronized(|frame| {
             render(
                 frame,
                 &state.current,
+                predicted_task_percent,
                 &state.updates,
                 state.confirmation,
                 &state.panes,
@@ -428,11 +523,11 @@ pub fn run<P: DashboardProvider>(
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
-        if !event::poll(refresh_interval)? {
-            state.refresh(provider, &id);
+        if !event::poll(state.poll_timeout(Instant::now()))? {
+            state.handle_deadline(provider, &id, Instant::now());
             continue;
         }
-        if state.apply(provider, &id, command(event::read()?)) {
+        if state.apply(provider, &id, command(event::read()?), Instant::now()) {
             return Ok(());
         }
     }
@@ -443,21 +538,141 @@ struct DashboardState {
     updates: RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     panes: PaneVisibility,
+    task_anchor: TaskAnchor,
+    next_combined_refresh: Instant,
+    refresh_interval: Duration,
 }
 
 impl DashboardState {
-    fn refresh<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId) {
+    fn new(current: DashboardSnapshot, now: Instant, refresh_interval: Duration) -> Self {
+        let task_anchor = TaskAnchor::from_snapshot(&current, now);
+        Self {
+            current,
+            updates: RecentTaskUpdates::default(),
+            confirmation: None,
+            panes: PaneVisibility::default(),
+            task_anchor,
+            next_combined_refresh: now.checked_add(refresh_interval).unwrap_or(now),
+            refresh_interval,
+        }
+    }
+
+    fn displayed_task_position(&self, now: Instant) -> f64 {
+        if self.current.runtime_owned == Some(true) {
+            predicted_task_position(
+                self.task_anchor,
+                now.saturating_duration_since(self.task_anchor.observed_at),
+            )
+        } else {
+            self.current.character.progress.task.position
+        }
+    }
+
+    fn displayed_task_percent(&self, now: Instant) -> u64 {
+        if self.current.runtime_owned == Some(true) {
+            predicted_task_percent(
+                self.task_anchor,
+                now.saturating_duration_since(self.task_anchor.observed_at),
+            )
+        } else {
+            self.current.character.progress.task.percent
+        }
+    }
+
+    fn replace_character(&mut self, character: DashboardCharacter, now: Instant) {
+        let mut next_anchor = TaskAnchor::from_character(&character, now);
+        if next_anchor.identity == self.task_anchor.identity
+            && self.current.runtime_owned == Some(true)
+        {
+            next_anchor.position_ms = next_anchor
+                .position_ms
+                .max(self.displayed_task_position(now));
+        }
+        if character.activity.tasks > self.current.character.activity.tasks {
+            self.updates = RecentTaskUpdates::between(&self.current.character, &character);
+        }
+        self.current.character = character;
+        self.task_anchor = next_anchor;
+    }
+
+    fn refresh<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
         match provider.refresh(id) {
             Ok(next) => {
-                if next.character.activity.tasks > self.current.character.activity.tasks {
-                    self.updates =
-                        RecentTaskUpdates::between(&self.current.character, &next.character);
-                }
-                self.current = next;
+                let DashboardSnapshot {
+                    character,
+                    service,
+                    runtime_owned,
+                    message,
+                } = next;
+                self.replace_character(character, now);
+                self.current.service = service;
+                self.current.runtime_owned = runtime_owned;
+                self.current.message = message;
             }
             Err(error) => {
                 self.current.message = Some(format!("Could not refresh dashboard: {error}"))
             }
+        }
+        self.next_combined_refresh = now.checked_add(self.refresh_interval).unwrap_or(now);
+    }
+
+    fn read_state<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
+        match provider.read_state(id) {
+            Ok(character) => {
+                self.replace_character(character, now);
+                if self.current.message.as_deref().is_some_and(|message| {
+                    message.starts_with("Could not refresh character state:")
+                }) {
+                    self.current.message = None;
+                }
+            }
+            Err(error) => {
+                let displayed = self.displayed_task_position(now);
+                self.current.message = Some(format!("Could not refresh character state: {error}"));
+                self.task_anchor.observed_at = now;
+                self.task_anchor.position_ms = displayed;
+            }
+        }
+    }
+
+    fn settling_deadline(&self) -> Option<Instant> {
+        if self.current.runtime_owned != Some(true) {
+            return None;
+        }
+        let remaining_ms = (self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
+            .max(0.0)
+            .ceil() as u64;
+        self.task_anchor
+            .observed_at
+            .checked_add(Duration::from_millis(remaining_ms))
+            .and_then(|saturation| saturation.checked_add(SETTLING_INTERVAL))
+    }
+
+    fn poll_timeout(&self, now: Instant) -> Duration {
+        let elapsed = now.saturating_duration_since(self.task_anchor.observed_at);
+        let boundary = (self.current.runtime_owned == Some(true))
+            .then(|| next_redraw_boundary(self.task_anchor, elapsed))
+            .flatten();
+        let refresh = self.next_combined_refresh.saturating_duration_since(now);
+        let settling = self
+            .settling_deadline()
+            .map(|deadline| deadline.saturating_duration_since(now));
+        select_poll_timeout(boundary, refresh, settling, self.refresh_interval)
+    }
+
+    fn handle_deadline<P: DashboardProvider>(
+        &mut self,
+        provider: &P,
+        id: &CharacterId,
+        now: Instant,
+    ) {
+        if now >= self.next_combined_refresh {
+            self.refresh(provider, id, now);
+        } else if self
+            .settling_deadline()
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.read_state(provider, id, now);
         }
     }
 
@@ -466,11 +681,12 @@ impl DashboardState {
         provider: &P,
         id: &CharacterId,
         command: Command,
+        now: Instant,
     ) -> bool {
         match command {
             Command::Quit => true,
             Command::Refresh => {
-                self.refresh(provider, id);
+                self.refresh(provider, id, now);
                 false
             }
             Command::Brag => {
@@ -484,7 +700,7 @@ impl DashboardState {
                     }
                     Err(error) => format!("Could not submit leaderboard report: {error}"),
                 };
-                self.refresh(provider, id);
+                self.refresh(provider, id, now);
                 self.current.message = Some(message);
                 false
             }
@@ -504,7 +720,7 @@ impl DashboardState {
                 if let Some(action) = self.confirmation.take() {
                     match provider.lifecycle(action, id) {
                         Ok(()) => {
-                            self.refresh(provider, id);
+                            self.refresh(provider, id, now);
                             self.current.message =
                                 Some(format!("Requested {} successfully.", action.label()));
                         }
@@ -566,6 +782,7 @@ impl Drop for TerminalSession {
 fn render(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
+    task_percent: u64,
     updates: &RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     panes: &PaneVisibility,
@@ -602,9 +819,9 @@ fn render(
         .split(area);
     render_header(frame, snapshot, updates, rows[0]);
     if !full_layout {
-        render_compact(frame, snapshot, updates, rows[1]);
+        render_compact(frame, snapshot, task_percent, updates, rows[1]);
     } else {
-        render_full(frame, snapshot, updates, rows[1], panes);
+        render_full(frame, snapshot, task_percent, updates, rows[1], panes);
     }
     let status = match (&snapshot.service, snapshot.runtime_owned) {
         (Some(state), Some(owned)) => format!(
@@ -729,6 +946,7 @@ fn header_stats_line(stats: &Attributes, updates: &RecentTaskUpdates) -> Line<'s
 fn render_compact(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
+    task_percent: u64,
     updates: &RecentTaskUpdates,
     area: Rect,
 ) {
@@ -736,7 +954,7 @@ fn render_compact(
     let mut content = vec![
         Line::from(format!("Activity: {}", activity_text(&state.activity))),
         Line::from(format!("Tasks completed: {}", state.activity.tasks)),
-        Line::from(progress_text(&state.progress)),
+        Line::from(progress_text(&state.progress, task_percent)),
     ];
     content.extend(equipment_lines(&state.equipment, updates));
     content.push(inventory_line(&state.inventory, updates));
@@ -757,6 +975,7 @@ fn render_compact(
 fn render_full(
     frame: &mut ratatui::Frame<'_>,
     snapshot: &DashboardSnapshot,
+    task_percent: u64,
     updates: &RecentTaskUpdates,
     area: Rect,
     panes: &PaneVisibility,
@@ -798,7 +1017,13 @@ fn render_full(
     if panes.is_collapsed(Pane::Progress) {
         frame.render_widget(pane_block("Progress", Pane::Progress), left[1]);
     } else {
-        render_progress(frame, &state.progress, left[1], Pane::Progress);
+        render_progress(
+            frame,
+            &state.progress,
+            task_percent,
+            left[1],
+            Pane::Progress,
+        );
     }
     render_pane(
         frame,
@@ -948,13 +1173,19 @@ fn render_pane(
     }
 }
 
-fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Rect, pane: Pane) {
+fn render_progress(
+    frame: &mut ratatui::Frame<'_>,
+    progress: &Progress,
+    task_percent: u64,
+    area: Rect,
+    pane: Pane,
+) {
     let bars = [
-        ("Experience", &progress.experience),
-        ("Encumbrance", &progress.encumbrance),
-        ("Plot", &progress.plot),
-        ("Quest", &progress.quest),
-        ("Task", &progress.task),
+        ("Experience", progress.experience.percent),
+        ("Encumbrance", progress.encumbrance.percent),
+        ("Plot", progress.plot.percent),
+        ("Quest", progress.quest.percent),
+        ("Task", task_percent),
     ];
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -964,12 +1195,12 @@ fn render_progress(frame: &mut ratatui::Frame<'_>, progress: &Progress, area: Re
             vertical: 1,
         }));
     frame.render_widget(pane_block("Progress", pane), area);
-    for ((label, bar), row) in bars.into_iter().zip(rows.iter().copied()) {
-        let label = format!("{label} {}%", bar.percent);
+    for ((label, percent), row) in bars.into_iter().zip(rows.iter().copied()) {
+        let label = format!("{label} {percent}%");
         frame.render_widget(
             ProgressGauge {
                 label: &label,
-                percent: bar.percent.min(100),
+                percent: percent.min(100),
             },
             row,
         );
@@ -1016,14 +1247,14 @@ impl Widget for ProgressGauge<'_> {
     }
 }
 
-fn progress_text(progress: &Progress) -> String {
+fn progress_text(progress: &Progress, task_percent: u64) -> String {
     format!(
         "XP {}% | Encumbrance {}% | Plot {}% | Quest {}% | Task {}%",
         progress.experience.percent,
         progress.encumbrance.percent,
         progress.plot.percent,
         progress.quest.percent,
-        progress.task.percent
+        task_percent
     )
 }
 
@@ -1278,6 +1509,9 @@ mod tests {
 
     struct FakeProvider {
         snapshots: std::cell::RefCell<Vec<Result<DashboardSnapshot, DashboardError>>>,
+        state_snapshots: std::cell::RefCell<Vec<Result<DashboardCharacter, DashboardError>>>,
+        refreshes: std::cell::Cell<usize>,
+        state_reads: std::cell::Cell<usize>,
         actions: std::cell::RefCell<Vec<LifecycleAction>>,
         action_results: std::cell::RefCell<Vec<Result<(), DashboardError>>>,
         brags: std::cell::RefCell<Vec<CharacterId>>,
@@ -1318,7 +1552,13 @@ mod tests {
 
     impl DashboardProvider for FakeProvider {
         fn refresh(&self, _id: &CharacterId) -> Result<DashboardSnapshot, DashboardError> {
+            self.refreshes.set(self.refreshes.get() + 1);
             self.snapshots.borrow_mut().remove(0)
+        }
+
+        fn read_state(&self, _id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
+            self.state_reads.set(self.state_reads.get() + 1);
+            self.state_snapshots.borrow_mut().remove(0)
         }
 
         fn lifecycle(
@@ -1366,11 +1606,48 @@ mod tests {
         }
     }
 
+    fn fake_provider(
+        snapshots: Vec<Result<DashboardSnapshot, DashboardError>>,
+        state_snapshots: Vec<Result<DashboardCharacter, DashboardError>>,
+    ) -> FakeProvider {
+        FakeProvider {
+            snapshots: std::cell::RefCell::new(snapshots),
+            state_snapshots: std::cell::RefCell::new(state_snapshots),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
+            actions: std::cell::RefCell::new(Vec::new()),
+            action_results: std::cell::RefCell::new(Vec::new()),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    fn active_snapshot(position_ms: f64, duration_ms: u64) -> DashboardSnapshot {
+        let mut snapshot = sample();
+        snapshot.runtime_owned = Some(true);
+        snapshot.service = Some(ServiceState::Active);
+        snapshot.character.progress.task.position = position_ms;
+        snapshot.character.progress.task.max = duration_ms;
+        snapshot.character.progress.task.percent = task_percent(position_ms, duration_ms);
+        snapshot
+    }
+
     fn rendered_with_panes(width: u16, height: u16, panes: &PaneVisibility) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
+        let snapshot = sample();
+        let task_percent = snapshot.character.progress.task.percent;
         terminal
-            .draw(|frame| render(frame, &sample(), &RecentTaskUpdates::default(), None, panes))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    task_percent,
+                    &RecentTaskUpdates::default(),
+                    None,
+                    panes,
+                )
+            })
             .unwrap();
         terminal
             .backend()
@@ -1383,6 +1660,138 @@ mod tests {
 
     fn rendered(width: u16, height: u16) -> String {
         rendered_with_panes(width, height, &PaneVisibility::default())
+    }
+
+    #[test]
+    fn task_anchor_is_created_from_an_observed_snapshot() {
+        let snapshot = active_snapshot(250.0, 1_000);
+        let observed_at = Instant::now();
+
+        let anchor = TaskAnchor::from_snapshot(&snapshot, observed_at);
+
+        assert_eq!(anchor.position_ms, 250.0);
+        assert_eq!(anchor.duration_ms, 1_000);
+        assert_eq!(
+            anchor.identity.completed_tasks,
+            snapshot.character.activity.tasks
+        );
+        assert_eq!(anchor.identity.duration_ms, 1_000);
+        assert_eq!(anchor.observed_at, observed_at);
+    }
+
+    #[test]
+    fn task_prediction_clamps_and_uses_browser_compatible_percentages() {
+        let now = Instant::now();
+        let snapshot = active_snapshot(250.0, 1_000);
+        let anchor = TaskAnchor::from_snapshot(&snapshot, now);
+
+        assert_eq!(predicted_task_position(anchor, Duration::ZERO), 250.0);
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_millis(250)),
+            500.0
+        );
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_millis(750)),
+            1_000.0
+        );
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(2)),
+            1_000.0
+        );
+        assert_eq!(
+            predicted_task_percent(anchor, Duration::ZERO),
+            snapshot.character.progress.task.percent
+        );
+        assert_eq!(
+            predicted_task_percent(anchor, Duration::from_millis(750)),
+            100
+        );
+        assert_eq!(predicted_task_percent(anchor, Duration::from_secs(2)), 100);
+
+        let zero = TaskAnchor {
+            position_ms: 0.0,
+            duration_ms: 0,
+            identity: TaskIdentity {
+                completed_tasks: 0,
+                duration_ms: 0,
+            },
+            observed_at: now,
+        };
+        assert_eq!(predicted_task_position(zero, Duration::ZERO), 0.0);
+        assert_eq!(predicted_task_percent(zero, Duration::ZERO), 100);
+    }
+
+    #[test]
+    fn percent_boundary_deadlines_cover_long_short_final_and_saturated_tasks() {
+        let now = Instant::now();
+        let long = TaskAnchor::from_snapshot(&active_snapshot(5_000.0, 20_000), now);
+        assert_eq!(
+            next_task_percent_boundary(long, Duration::ZERO),
+            Some(Duration::from_millis(200))
+        );
+        assert_eq!(
+            next_redraw_boundary(long, Duration::ZERO),
+            Some(Duration::from_millis(200))
+        );
+
+        let short = TaskAnchor::from_snapshot(&active_snapshot(0.0, 1_000), now);
+        assert_eq!(
+            next_task_percent_boundary(short, Duration::ZERO),
+            Some(Duration::from_millis(10))
+        );
+        assert_eq!(
+            next_redraw_boundary(short, Duration::ZERO),
+            Some(MINIMUM_REDRAW_SPACING)
+        );
+
+        let final_step = TaskAnchor::from_snapshot(&active_snapshot(990.0, 1_000), now);
+        assert_eq!(
+            next_task_percent_boundary(final_step, Duration::ZERO),
+            Some(Duration::from_millis(10))
+        );
+        assert_eq!(
+            next_task_percent_boundary(final_step, Duration::from_millis(10)),
+            None
+        );
+
+        let zero = TaskAnchor::from_snapshot(&active_snapshot(0.0, 0), now);
+        assert_eq!(next_task_percent_boundary(zero, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn poll_timeout_uses_the_earliest_bounded_deadline() {
+        let cap = Duration::from_secs(1);
+        assert_eq!(
+            select_poll_timeout(
+                Some(Duration::from_millis(20)),
+                Duration::from_millis(500),
+                Some(Duration::from_millis(700)),
+                cap,
+            ),
+            Duration::from_millis(20)
+        );
+        assert_eq!(
+            select_poll_timeout(
+                Some(Duration::from_millis(800)),
+                Duration::from_millis(300),
+                Some(Duration::from_millis(700)),
+                cap,
+            ),
+            Duration::from_millis(300)
+        );
+        assert_eq!(
+            select_poll_timeout(
+                None,
+                Duration::from_millis(800),
+                Some(Duration::from_millis(400)),
+                cap,
+            ),
+            Duration::from_millis(400)
+        );
+        assert_eq!(
+            select_poll_timeout(None, Duration::from_secs(2), None, cap),
+            cap
+        );
     }
 
     #[test]
@@ -1444,6 +1853,44 @@ mod tests {
         assert!(compact.contains("STR:"));
         let too_small = rendered(30, 10);
         assert!(too_small.contains("Terminal is too small"));
+    }
+
+    #[test]
+    fn renders_predicted_task_percent_without_mutating_the_snapshot() {
+        let snapshot = active_snapshot(250.0, 1_000);
+        let persisted_percent = snapshot.character.progress.task.percent;
+
+        for (width, expected_other_progress) in [
+            (120, "Experience 0%"),
+            (70, "XP 0% | Encumbrance 8% | Plot 0% | Quest 4%"),
+        ] {
+            let backend = TestBackend::new(width, 40);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(
+                        frame,
+                        &snapshot,
+                        75,
+                        &RecentTaskUpdates::default(),
+                        None,
+                        &PaneVisibility::default(),
+                    )
+                })
+                .unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+
+            assert!(rendered.contains("Task 75%"));
+            assert!(rendered.contains(expected_other_progress));
+        }
+
+        assert_eq!(snapshot.character.progress.task.percent, persisted_percent);
     }
 
     #[test]
@@ -1662,7 +2109,16 @@ mod tests {
         let wide_backend = TestBackend::new(120, 40);
         let mut wide_terminal = Terminal::new(wide_backend).unwrap();
         wide_terminal
-            .draw(|frame| render(frame, &snapshot, &updates, None, &PaneVisibility::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    snapshot.character.progress.task.percent,
+                    &updates,
+                    None,
+                    &PaneVisibility::default(),
+                )
+            })
             .unwrap();
         let wide_content = wide_terminal.backend().buffer().content();
         let identity = text_position(wide_content, 120, &snapshot.character.identity.name);
@@ -1673,7 +2129,16 @@ mod tests {
         let narrow_backend = TestBackend::new(80, 30);
         let mut narrow_terminal = Terminal::new(narrow_backend).unwrap();
         narrow_terminal
-            .draw(|frame| render(frame, &snapshot, &updates, None, &PaneVisibility::default()))
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    snapshot.character.progress.task.percent,
+                    &updates,
+                    None,
+                    &PaneVisibility::default(),
+                )
+            })
             .unwrap();
         let narrow_content = narrow_terminal.backend().buffer().content();
         let identity = text_position(narrow_content, 80, &snapshot.character.identity.name);
@@ -1718,6 +2183,7 @@ mod tests {
                 render(
                     frame,
                     &snapshot,
+                    snapshot.character.progress.task.percent,
                     &RecentTaskUpdates::default(),
                     None,
                     &PaneVisibility::default(),
@@ -1743,6 +2209,7 @@ mod tests {
                 render(
                     frame,
                     &snapshot,
+                    snapshot.character.progress.task.percent,
                     &RecentTaskUpdates::default(),
                     None,
                     &PaneVisibility::default(),
@@ -1766,6 +2233,7 @@ mod tests {
                 render(
                     frame,
                     &snapshot,
+                    snapshot.character.progress.task.percent,
                     &RecentTaskUpdates::default(),
                     None,
                     &PaneVisibility::default(),
@@ -1907,6 +2375,9 @@ mod tests {
         let snapshot = sample();
         let provider = FakeProvider {
             snapshots: std::cell::RefCell::new(vec![Ok(snapshot)]),
+            state_snapshots: std::cell::RefCell::new(Vec::new()),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(Vec::new()),
             brags: std::cell::RefCell::new(Vec::new()),
@@ -1927,35 +2398,197 @@ mod tests {
         second.character.activity.task = "new persisted task".to_owned();
         let provider = FakeProvider {
             snapshots: std::cell::RefCell::new(vec![Ok(second.clone()), Ok(second.clone())]),
+            state_snapshots: std::cell::RefCell::new(Vec::new()),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(vec![Ok(())]),
             brags: std::cell::RefCell::new(Vec::new()),
             brag_results: std::cell::RefCell::new(Vec::new()),
         };
-        let mut state = DashboardState {
-            current: first,
-            updates: RecentTaskUpdates::default(),
-            confirmation: None,
-            panes: PaneVisibility::default(),
-        };
-        assert!(!state.apply(&provider, &id, Command::Refresh));
+        let now = Instant::now();
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+        assert!(!state.apply(&provider, &id, Command::Refresh, now));
         assert_eq!(state.current.character.activity.task, "new persisted task");
         assert!(provider.actions.borrow().is_empty());
+        assert_eq!(provider.refreshes.get(), 1);
+        assert_eq!(provider.state_reads.get(), 0);
 
-        assert!(!state.apply(&provider, &id, Command::Confirm(LifecycleAction::Stop)));
-        assert!(!state.apply(&provider, &id, Command::Cancel));
+        assert!(!state.apply(&provider, &id, Command::Confirm(LifecycleAction::Stop), now));
+        assert!(!state.apply(&provider, &id, Command::Cancel, now));
         assert!(provider.actions.borrow().is_empty());
 
-        assert!(!state.apply(&provider, &id, Command::TogglePane(Pane::Journal)));
+        assert!(!state.apply(&provider, &id, Command::TogglePane(Pane::Journal), now));
         assert!(state.panes.is_collapsed(Pane::Journal));
 
         state.confirmation = Some(LifecycleAction::Start);
-        assert!(!state.apply(&provider, &id, Command::ConfirmAction));
+        assert!(!state.apply(&provider, &id, Command::ConfirmAction, now));
         assert_eq!(*provider.actions.borrow(), [LifecycleAction::Start]);
         assert_eq!(
             state.current.message.as_deref(),
             Some("Requested start successfully.")
         );
+    }
+
+    #[test]
+    fn state_only_reads_preserve_service_status_and_last_good_character() {
+        let id = CharacterId::new();
+        let mut first = active_snapshot(100.0, 1_000);
+        first.message = Some("service warning".to_owned());
+        let mut second = first.character.clone();
+        second.activity.task = "new persisted task".to_owned();
+        second.activity.kill.clear();
+        second.progress.task.position = 300.0;
+        second.progress.task.percent = 30;
+        let provider = fake_provider(
+            Vec::new(),
+            vec![Ok(second), Err(DashboardError::NoManagedCharacters)],
+        );
+        let now = Instant::now();
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+
+        state.read_state(&provider, &id, now);
+        assert_eq!(state.current.character.activity.task, "new persisted task");
+        assert_eq!(state.current.service, Some(ServiceState::Active));
+        assert_eq!(state.current.runtime_owned, Some(true));
+        assert_eq!(state.current.message.as_deref(), Some("service warning"));
+        assert_eq!(provider.state_reads.get(), 1);
+        assert_eq!(provider.refreshes.get(), 0);
+
+        let last_good_task = state.current.character.activity.task.clone();
+        state.read_state(&provider, &id, now);
+        assert_eq!(state.current.character.activity.task, last_good_task);
+        assert!(
+            state
+                .current
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("Could not refresh character state")
+        );
+        assert_eq!(provider.refreshes.get(), 0);
+
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &state.current,
+                    state.displayed_task_percent(now),
+                    &state.updates,
+                    None,
+                    &state.panes,
+                )
+            })
+            .unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("new persisted task"));
+    }
+
+    #[test]
+    fn prediction_and_settling_reads_follow_ownership_and_task_boundaries() {
+        let id = CharacterId::new();
+        let first = active_snapshot(900.0, 1_000);
+        let mut same_task = first.character.clone();
+        same_task.progress.task.position = 950.0;
+        same_task.progress.task.percent = 95;
+        let mut next_task = same_task.clone();
+        next_task.activity.tasks += 1;
+        next_task.activity.task = "next persisted task".to_owned();
+        next_task.progress.task.position = 25.0;
+        next_task.progress.task.max = 1_000;
+        next_task.progress.task.percent = 2;
+        let provider = fake_provider(Vec::new(), vec![Ok(same_task), Ok(next_task.clone())]);
+        let start = Instant::now();
+        let mut state = DashboardState::new(first, start, Duration::from_secs(1));
+
+        assert_eq!(
+            state.displayed_task_percent(start + Duration::from_millis(50)),
+            95
+        );
+        assert_eq!(
+            state.displayed_task_percent(start + Duration::from_millis(100)),
+            100
+        );
+        state.handle_deadline(&provider, &id, start + Duration::from_millis(100));
+        assert_eq!(provider.state_reads.get(), 0);
+        state.handle_deadline(&provider, &id, start + Duration::from_millis(199));
+        assert_eq!(provider.state_reads.get(), 0);
+        assert_eq!(
+            state.displayed_task_percent(start + Duration::from_millis(199)),
+            100
+        );
+
+        state.handle_deadline(&provider, &id, start + Duration::from_millis(200));
+        assert_eq!(provider.state_reads.get(), 1);
+        assert_eq!(
+            state.displayed_task_percent(start + Duration::from_millis(250)),
+            100
+        );
+        state.handle_deadline(&provider, &id, start + Duration::from_millis(299));
+        assert_eq!(provider.state_reads.get(), 1);
+        state.handle_deadline(&provider, &id, start + Duration::from_millis(300));
+        assert_eq!(provider.state_reads.get(), 2);
+        assert_eq!(
+            state.current.character.activity.task,
+            next_task.activity.task
+        );
+        assert_eq!(
+            state.displayed_task_percent(start + Duration::from_millis(300)),
+            2
+        );
+        assert_eq!(provider.refreshes.get(), 0);
+    }
+
+    #[test]
+    fn inactive_runtime_uses_persisted_progress_and_never_settles() {
+        let id = CharacterId::new();
+        for ownership in [Some(false), None] {
+            let mut snapshot = active_snapshot(250.0, 1_000);
+            snapshot.runtime_owned = ownership;
+            let provider = fake_provider(Vec::new(), Vec::new());
+            let start = Instant::now();
+            let mut state = DashboardState::new(snapshot, start, Duration::from_secs(1));
+
+            assert_eq!(
+                state.displayed_task_percent(start + Duration::from_secs(10)),
+                25
+            );
+            assert_eq!(state.settling_deadline(), None);
+            state.handle_deadline(&provider, &id, start + Duration::from_millis(500));
+            assert_eq!(provider.state_reads.get(), 0);
+        }
+    }
+
+    #[test]
+    fn reanchoring_never_rewinds_within_a_task_and_resets_for_a_new_task() {
+        let id = CharacterId::new();
+        let first = active_snapshot(100.0, 1_000);
+        let mut lower = first.character.clone();
+        lower.progress.task.position = 150.0;
+        lower.progress.task.percent = 15;
+        let mut next = lower.clone();
+        next.activity.tasks += 1;
+        next.progress.task.position = 20.0;
+        next.progress.task.percent = 2;
+        let provider = fake_provider(Vec::new(), vec![Ok(lower), Ok(next)]);
+        let start = Instant::now();
+        let mut state = DashboardState::new(first, start, Duration::from_secs(1));
+
+        let reanchor = start + Duration::from_millis(100);
+        assert_eq!(state.displayed_task_percent(reanchor), 20);
+        state.read_state(&provider, &id, reanchor);
+        assert_eq!(state.displayed_task_percent(reanchor), 20);
+
+        state.read_state(&provider, &id, reanchor);
+        assert_eq!(state.displayed_task_percent(reanchor), 2);
     }
 
     #[test]
@@ -1979,37 +2612,36 @@ mod tests {
                 Ok(next_completion),
                 Err(DashboardError::NoManagedCharacters),
             ]),
+            state_snapshots: std::cell::RefCell::new(Vec::new()),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(Vec::new()),
             brags: std::cell::RefCell::new(Vec::new()),
             brag_results: std::cell::RefCell::new(Vec::new()),
         };
-        let mut state = DashboardState {
-            current: first,
-            updates: RecentTaskUpdates::default(),
-            confirmation: None,
-            panes: PaneVisibility::default(),
-        };
+        let now = Instant::now();
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
 
-        state.refresh(&provider, &id);
+        state.refresh(&provider, &id, now);
         assert!(state.updates.stats.contains("STR"));
         assert!(state.updates.equipment.contains("Weapon"));
         assert_eq!(state.updates.inventory.len(), 1);
         assert_eq!(state.updates.spells.len(), 1);
 
-        state.refresh(&provider, &id);
+        state.refresh(&provider, &id, now);
         assert!(state.updates.stats.contains("STR"));
         assert!(state.updates.equipment.contains("Weapon"));
         assert_eq!(state.updates.inventory.len(), 1);
         assert_eq!(state.updates.spells.len(), 1);
 
-        state.refresh(&provider, &id);
+        state.refresh(&provider, &id, now);
         assert!(state.updates.stats.is_empty());
         assert!(state.updates.equipment.is_empty());
         assert!(state.updates.inventory.is_empty());
         assert!(state.updates.spells.is_empty());
 
-        state.refresh(&provider, &id);
+        state.refresh(&provider, &id, now);
         assert!(state.updates.stats.is_empty());
         assert!(
             state
@@ -2037,19 +2669,18 @@ mod tests {
         ] {
             let provider = FakeProvider {
                 snapshots: std::cell::RefCell::new(vec![Ok(sample())]),
+                state_snapshots: std::cell::RefCell::new(Vec::new()),
+                refreshes: std::cell::Cell::new(0),
+                state_reads: std::cell::Cell::new(0),
                 actions: std::cell::RefCell::new(Vec::new()),
                 action_results: std::cell::RefCell::new(Vec::new()),
                 brags: std::cell::RefCell::new(Vec::new()),
                 brag_results: std::cell::RefCell::new(vec![Ok(outcome)]),
             };
-            let mut state = DashboardState {
-                current: first.clone(),
-                updates: RecentTaskUpdates::default(),
-                confirmation: None,
-                panes: PaneVisibility::default(),
-            };
+            let now = Instant::now();
+            let mut state = DashboardState::new(first.clone(), now, Duration::from_secs(1));
 
-            assert!(!state.apply(&provider, &id, Command::Brag));
+            assert!(!state.apply(&provider, &id, Command::Brag, now));
             assert_eq!(
                 provider.brags.borrow().as_slice(),
                 std::slice::from_ref(&id)
@@ -2067,6 +2698,9 @@ mod tests {
         let snapshot = sample();
         let provider = FakeProvider {
             snapshots: std::cell::RefCell::new(Vec::new()),
+            state_snapshots: std::cell::RefCell::new(Vec::new()),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
             actions: std::cell::RefCell::new(Vec::new()),
             action_results: std::cell::RefCell::new(vec![Err(DashboardError::Lifecycle(
                 LifecycleError::ManagerUnavailable("no user manager".to_owned()),
@@ -2074,13 +2708,10 @@ mod tests {
             brags: std::cell::RefCell::new(Vec::new()),
             brag_results: std::cell::RefCell::new(Vec::new()),
         };
-        let mut state = DashboardState {
-            current: snapshot.clone(),
-            updates: RecentTaskUpdates::default(),
-            confirmation: Some(LifecycleAction::Start),
-            panes: PaneVisibility::default(),
-        };
-        state.apply(&provider, &id, Command::ConfirmAction);
+        let now = Instant::now();
+        let mut state = DashboardState::new(snapshot.clone(), now, Duration::from_secs(1));
+        state.confirmation = Some(LifecycleAction::Start);
+        state.apply(&provider, &id, Command::ConfirmAction, now);
         assert_eq!(
             state.current.character.identity.name,
             snapshot.character.identity.name
@@ -2163,6 +2794,12 @@ mod tests {
         .unwrap();
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&character).unwrap();
+        let local = LocalProvider {
+            store: Store::open_at(&directory.0).unwrap(),
+        };
+        let state_only = local.read_state(&registered.id).unwrap();
+        assert_eq!(state_only.identity.name, "Reference Hero");
+
         let active = collect_snapshot(
             &store,
             FakeRunner {

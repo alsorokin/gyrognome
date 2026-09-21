@@ -580,6 +580,15 @@ pub fn select_worker_elapsed(previous: Instant, current: Instant, interval: Dura
         .min(interval)
 }
 
+/// Returns the tick-aligned simulated duration until the active task completes.
+pub fn aligned_task_completion_duration(state: &Character) -> Duration {
+    let remaining_ms = (state.progress.task.max as f64 - state.progress.task.position)
+        .max(0.0)
+        .ceil() as u64;
+    let ticks = remaining_ms.max(1).div_ceil(crate::simulation::MAX_TICK_MS);
+    Duration::from_millis(ticks.saturating_mul(crate::simulation::MAX_TICK_MS))
+}
+
 /// Owns one managed character and advances it only while this process is active.
 pub struct Worker {
     store: Store,
@@ -647,12 +656,14 @@ impl Worker {
             return Err(WorkerError::ZeroInterval);
         }
         while !stop.load(Ordering::Relaxed) {
-            thread::sleep(interval);
+            let state = self.store.get(&self.id)?.state;
+            let scheduled = aligned_task_completion_duration(&state).min(interval);
+            thread::sleep(scheduled);
             if stop.load(Ordering::Relaxed) {
                 break;
             }
             let now = Instant::now();
-            let elapsed = select_worker_elapsed(self.last_tick, now, interval);
+            let elapsed = select_worker_elapsed(self.last_tick, now, scheduled);
             self.last_tick = now;
             self.advance_elapsed(elapsed)?;
         }
@@ -1030,6 +1041,107 @@ mod tests {
             select_worker_elapsed(previous, previous, interval),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn task_completion_duration_is_tick_aligned_and_never_zero() {
+        let mut state = fixture_character();
+        state.progress.task.max = 1_000;
+
+        for (position, expected) in [(800.0, 200), (801.0, 200), (1_000.0, 100), (1_100.0, 100)] {
+            state.progress.task.position = position;
+            let duration = aligned_task_completion_duration(&state);
+            assert_eq!(duration, Duration::from_millis(expected));
+            assert_eq!(
+                duration.as_millis() % u128::from(crate::simulation::MAX_TICK_MS),
+                0
+            );
+            assert!(duration >= Duration::from_millis(crate::simulation::MAX_TICK_MS));
+        }
+
+        state.progress.task.max = 0;
+        state.progress.task.position = 0.0;
+        assert_eq!(
+            aligned_task_completion_duration(&state),
+            Duration::from_millis(crate::simulation::MAX_TICK_MS)
+        );
+    }
+
+    #[test]
+    fn aligned_wakes_land_on_and_persist_the_task_boundary() {
+        let directory = TestDirectory::new("aligned-boundary");
+        let mut initial = fixture_character();
+        initial.progress.task.max = 450;
+        initial.progress.task.position = 0.0;
+        initial.progress.task.percent = 0;
+        let initial_tasks = initial.activity.tasks;
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&initial).unwrap();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        let interval = Duration::from_millis(200);
+
+        for expected in [200.0, 400.0] {
+            let state = worker.store.get(&registered.id).unwrap().state;
+            let scheduled = aligned_task_completion_duration(&state).min(interval);
+            worker.advance_elapsed(scheduled).unwrap();
+            assert_eq!(
+                worker
+                    .store
+                    .get(&registered.id)
+                    .unwrap()
+                    .state
+                    .progress
+                    .task
+                    .position,
+                expected
+            );
+        }
+
+        let state = worker.store.get(&registered.id).unwrap().state;
+        let boundary = aligned_task_completion_duration(&state).min(interval);
+        assert_eq!(boundary, Duration::from_millis(100));
+        worker.advance_elapsed(boundary).unwrap();
+
+        let persisted = worker.store.get(&registered.id).unwrap().state;
+        assert_eq!(persisted.activity.tasks, initial_tasks + 1);
+        assert_ne!(persisted.activity.task, initial.activity.task);
+        assert!(persisted.progress.task.position < persisted.progress.task.max as f64);
+    }
+
+    #[test]
+    fn aligned_and_fixed_interval_sequences_produce_identical_state() {
+        let initial = fixture_character();
+        let total = Duration::from_millis(3_000);
+        let interval = Duration::from_millis(1_000);
+
+        let fixed = crate::simulation::advance(
+            &initial,
+            &crate::ruleset::BUNDLED,
+            total.as_millis() as u64,
+        )
+        .unwrap();
+
+        let mut aligned = initial.clone();
+        let mut remaining = total;
+        while !remaining.is_zero() {
+            let elapsed = aligned_task_completion_duration(&aligned)
+                .min(interval)
+                .min(remaining);
+            aligned = crate::simulation::advance(
+                &aligned,
+                &crate::ruleset::BUNDLED,
+                elapsed.as_millis() as u64,
+            )
+            .unwrap();
+            remaining -= elapsed;
+        }
+
+        assert_eq!(
+            serde_json::to_value(&aligned).unwrap(),
+            serde_json::to_value(&fixed).unwrap()
+        );
+        assert_eq!(aligned.seed, fixed.seed);
     }
 
     #[test]

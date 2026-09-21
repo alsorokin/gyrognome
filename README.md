@@ -156,12 +156,14 @@ stops cleanly on `SIGINT` or `SIGTERM`.
 gyrognome worker <character-id> --interval-ms 1000
 ```
 
-Only intervals spent in an active worker are advanced. Starting a worker later
-does **not** apply downtime as catch-up progression. Each callback contributes
-at most one configured interval; scheduler delay and suspension time beyond
-that interval are discarded, not carried into a later callback. A second worker
-for the same character exits with an "already running" error; the advisory lock
-is released automatically when its owner exits or crashes.
+Only time spent in an active worker is advanced. Starting a worker later does
+**not** apply downtime as catch-up progression. The worker wakes at the earlier
+of its configured interval and the current task's completion, so
+`--interval-ms` (1000 by default) remains an upper bound on how long it sleeps
+and how much time one update contributes. Scheduler delay and suspension time
+beyond that bound are discarded, not carried into a later callback. A second
+worker for the same character exits with an "already running" error; the
+advisory lock is released automatically when its owner exits or crashes.
 
 ### systemd user-service lifecycle
 
@@ -209,11 +211,15 @@ gyrognome dashboard <character-id>
 ```
 
 The dashboard reads the persisted canonical state and `systemctl --user`
-status every second by default; change that bounded interval with
-`--refresh-ms` (100 through 60000). It never advances simulation, acquires
-the worker lock, or writes state. It displays only the credential-safe
-canonical fields, never browser passkeys, the retained original save, or
-unrecognized source fields.
+status every second by default; change that interval with `--refresh-ms`
+(100 through 60000). While a local runtime owns the character, the Task bar
+moves between reads using a display-only prediction and promptly re-reads
+persisted state after the task finishes. Prediction is confined to the Task
+bar; all other progress, activity, rewards, and statistics change only when
+persisted state is read. The dashboard never advances simulation, acquires the
+worker lock, or writes state. It displays only the credential-safe canonical
+fields, never browser passkeys, the retained original save, or unrecognized
+source fields.
 
 Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
 manual Brag report, `s` to start, `x` to stop, or `c` to recover the selected

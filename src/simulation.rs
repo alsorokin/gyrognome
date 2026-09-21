@@ -27,7 +27,7 @@ pub enum SimulationError {
 /// The largest single browser-compatible timer tick, in milliseconds. The
 /// browser client's `Timer1Timer` caps each real-clock increment to 100 ms
 /// before applying it to the active task's progress bar.
-const MAX_TICK_MS: u64 = 100;
+pub(crate) const MAX_TICK_MS: u64 = 100;
 
 /// The browser call site that emits a leaderboard progress report.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
