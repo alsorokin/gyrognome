@@ -6,6 +6,631 @@
     "revision": "6",
     "content_sha256": "63926cda54b232c5e5be4e97123710ee4ab2dbd1faa213b21ddc01dab54a1ce0"
   },
+  "scenarios": [
+    {
+      "id": "initial-load",
+      "title": "initial load",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 0,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "s",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "s",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "s"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      },
+      "enrollment": {
+        "outcome": "success",
+        "creation": {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "create",
+          "fields": [
+            "cmd",
+            "name",
+            "realm",
+            "rev"
+          ]
+        },
+        "initialReport": {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "s",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        },
+        "order": "create-before-initial-report",
+        "pass": true
+      }
+    },
+    {
+      "id": "pause",
+      "title": "pause",
+      "pass": true,
+      "browserGapMs": 1800000,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "restart",
+      "title": "restart",
+      "pass": true,
+      "browserGapMs": 1800000,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "delayed-callback",
+      "title": "delayed callback",
+      "pass": true,
+      "browserGapMs": 10000,
+      "bridgeAdvancementMs": [
+        100
+      ],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "task-completion",
+      "title": "task completion",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        9451
+      ],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [],
+      "observed": [],
+      "bridge": {
+        "eventTriggers": []
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "level-up",
+      "title": "level-up",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        1000
+      ],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 42,
+        "task": "kill|Goblin|1|ear",
+        "bestPlot": "Act I"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "l",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "l",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "l"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "act-completion",
+      "title": "act completion",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [
+        1000
+      ],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 2,
+        "elapsed": 42,
+        "task": "",
+        "bestPlot": "Act I"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "a",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "a",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "a"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "manual-brag",
+      "title": "manual bragging",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "b",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "b",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "b"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    },
+    {
+      "id": "motto-change",
+      "title": "motto change",
+      "pass": true,
+      "browserGapMs": 0,
+      "bridgeAdvancementMs": [],
+      "snapshot": {
+        "name": "Conformance-8e62e3ab",
+        "level": 1,
+        "elapsed": 2,
+        "task": "",
+        "bestPlot": "Prologue"
+      },
+      "expected": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "m",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "observed": [
+        {
+          "endpoint": "https://progressquest.com/alpaquil.php",
+          "method": "GET",
+          "operation": "b",
+          "trigger": "m",
+          "fields": [
+            "cmd",
+            "t",
+            "n",
+            "r",
+            "c",
+            "l",
+            "x",
+            "i",
+            "z",
+            "k",
+            "a",
+            "h",
+            "rev",
+            "m"
+          ]
+        }
+      ],
+      "bridge": {
+        "eventTriggers": [
+          "m"
+        ]
+      },
+      "differences": [],
+      "classification": {
+        "classification": "normal",
+        "attempts": [
+          "normal"
+        ]
+      }
+    }
+  ],
+  "guild": {
+    "normalization": "guild-designations-sha256/v1",
+    "nonEmpty": {
+      "request": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "guild",
+        "fields": [
+          "cmd",
+          "n",
+          "r",
+          "c",
+          "l",
+          "h",
+          "rev",
+          "guild"
+        ]
+      },
+      "outcome": {
+        "category": "accepted",
+        "fingerprint": "b963184c0954fb83fc5058d901b42803c543445037e115cee60bff1f625f18d3"
+      },
+      "browser": {
+        "alerted": true,
+        "navigated": false,
+        "guildEmpty": false
+      },
+      "serverVerified": true,
+      "pass": true
+    },
+    "invalid": {
+      "request": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "guild",
+        "fields": [
+          "cmd",
+          "n",
+          "r",
+          "c",
+          "l",
+          "h",
+          "rev",
+          "guild"
+        ]
+      },
+      "outcome": {
+        "category": "rejected",
+        "fingerprint": "003d50b9fe699cd7df57b6de663acfe65a1de3dee612ce9a86652d5f0ce36390"
+      },
+      "browser": {
+        "alerted": true,
+        "navigated": false,
+        "guildEmpty": false
+      },
+      "serverVerified": true,
+      "pass": true
+    },
+    "empty": {
+      "request": {
+        "endpoint": "https://progressquest.com/alpaquil.php",
+        "method": "GET",
+        "operation": "guild",
+        "fields": [
+          "cmd",
+          "n",
+          "r",
+          "c",
+          "l",
+          "h",
+          "rev",
+          "guild"
+        ]
+      },
+      "outcome": {
+        "category": "accepted",
+        "fingerprint": "8dd3a69a69f617062731571d8dace6974aecd303eb4320af84d2308fd75d4667"
+      },
+      "browser": {
+        "alerted": true,
+        "navigated": false,
+        "guildEmpty": true
+      },
+      "serverVerified": true,
+      "pass": true
+    },
+    "order": "non-empty-before-invalid-before-empty",
+    "cancellation": {
+      "requestAttempts": 0,
+      "pass": true
+    },
+    "cleanup": {
+      "browserGuildEmpty": true,
+      "pass": true
+    },
+    "classification": {
+      "classification": "normal",
+      "attempts": [
+        "normal"
+      ]
+    },
+    "pass": true
+  },
   "enrollment": {
     "successfulCreation": {
       "outcome": "success",
@@ -13,14 +638,34 @@
         "endpoint": "https://progressquest.com/alpaquil.php",
         "method": "GET",
         "operation": "create",
-        "fields": ["cmd", "name", "realm", "rev"]
+        "fields": [
+          "cmd",
+          "name",
+          "realm",
+          "rev"
+        ]
       },
       "initialReport": {
         "endpoint": "https://progressquest.com/alpaquil.php",
         "method": "GET",
         "operation": "b",
         "trigger": "s",
-        "fields": ["cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "m"]
+        "fields": [
+          "cmd",
+          "t",
+          "n",
+          "r",
+          "c",
+          "l",
+          "x",
+          "i",
+          "z",
+          "k",
+          "a",
+          "h",
+          "rev",
+          "m"
+        ]
       },
       "order": "create-before-initial-report",
       "pass": true
@@ -32,7 +677,12 @@
         "endpoint": "https://progressquest.com/alpaquil.php",
         "method": "GET",
         "operation": "create",
-        "fields": ["cmd", "name", "realm", "rev"]
+        "fields": [
+          "cmd",
+          "name",
+          "realm",
+          "rev"
+        ]
       },
       "creationAttempts": 1,
       "initialReportAttempts": 0,
@@ -41,14 +691,19 @@
     },
     "interruptedEnrollment": {
       "outcome": "unconfirmed",
-      "browserView": "unknown",
+      "browserView": "no-online-game",
       "interception": "aborted-before-usable-response",
       "creations": [
         {
           "endpoint": "https://progressquest.com/alpaquil.php",
           "method": "GET",
           "operation": "create",
-          "fields": ["cmd", "name", "realm", "rev"]
+          "fields": [
+            "cmd",
+            "name",
+            "realm",
+            "rev"
+          ]
         }
       ],
       "creationAttempts": 1,
