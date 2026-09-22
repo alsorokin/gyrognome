@@ -4,6 +4,7 @@ pub mod cli;
 pub mod conformance_bridge;
 pub mod dashboard;
 pub mod fixtures;
+pub mod guild;
 pub mod lifecycle;
 pub mod newguy;
 pub mod newguy_wizard;

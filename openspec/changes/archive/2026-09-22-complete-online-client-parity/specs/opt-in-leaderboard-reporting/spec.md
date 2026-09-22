@@ -52,9 +52,11 @@ requested operation, and categorized outcome; it SHALL NOT print, persist in
 diagnostics, or include in errors the passkey, complete signed URL, raw save
 document, raw response body, or browser profile data. A successful HTTP
 response for a report SHALL be reported only as delivered and SHALL NOT be
-treated as proof of server-side leaderboard classification. Guild responses
-SHALL be interpreted only according to the sanitized browser-derived
-conformance evidence.
+treated as proof of server-side leaderboard classification. Guild responses SHALL be read only to a fixed maximum size, normalized by
+removing the prior and submitted guild designations, and interpreted only by
+matching credential-safe response fingerprints from the sanitized
+browser-derived conformance evidence. Raw response bodies and normalized text
+SHALL remain internal and SHALL NOT be logged, returned, or persisted.
 
 #### Scenario: Delivering an eligible report
 
@@ -69,6 +71,13 @@ conformance evidence.
   browser-derived accepted, rejected, or indeterminate form
 - **THEN** the system exposes only the corresponding safe outcome category and
   never exposes the raw response
+
+#### Scenario: Guild response fingerprint is unknown
+
+- **WHEN** a bounded guild response does not match a validated accepted or
+  rejected normalized fingerprint
+- **THEN** the system reports an indeterminate outcome and does not expose or
+  persist the response body or normalized text
 
 #### Scenario: Handling delivery failure
 

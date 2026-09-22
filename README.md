@@ -12,6 +12,8 @@ core and opt-in online leaderboard reporting for eligible managed characters.
 - Constructs request data, provides manual reporting and persisted online
   worker event reporting for eligible browser-imported managed characters, and
   supports foreground online enrollment from the interactive New Guy wizard.
+- Persists motto and guild metadata independently of simulation progress, with
+  explicit CLI and dashboard editing available while a worker is active.
 - Provides a pure deterministic simulation API plus an opt-in local runtime
   that schedules and persists explicitly registered characters. Neither layer
   mutates browser saves, renders a UI, or transports data.
@@ -50,9 +52,9 @@ cargo run -- inspect /path/to/character.pqw
 ```
 
 The default output is a read-only character sheet containing traits, attributes,
-activity, progress, equipment, inventory, spells, plots, quests, and online realm
-metadata. For deterministic comparisons, request the same credential-free
-canonical state as JSON:
+activity, progress, equipment, inventory, spells, plots, quests, online realm
+metadata, and the credential-safe motto and guild profile. For deterministic
+comparisons, request the same credential-free canonical state as JSON:
 
 ```sh
 cargo run -- inspect /path/to/character.pqw --json
@@ -70,7 +72,11 @@ each persisted level-up or act-completion event; offline workers never report.
 Workers do not create online characters and never print passkeys or
 unrecognized raw save fields. The original browser document is retained
 privately for a future export feature; the runtime stores its versioned
-canonical state separately.
+canonical state separately. Schema version 2 stores motto and guild in separate
+non-null columns, migrating optional values from older retained documents.
+Missing or invalid legacy profile values default to empty during migration;
+new imports reject invalid present fields. Worker writes cannot overwrite
+profile edits.
 
 Runtime data is stored at:
 
@@ -78,7 +84,9 @@ Runtime data is stored at:
 - otherwise `~/.local/share/gyrognome/`.
 
 That directory contains `characters.sqlite3` and per-character advisory lock
-files. Back up the directory to retain managed state. Do not copy it to
+files. A separate per-character online-action lock orders profile actions,
+manual brags, and worker reports without transferring worker ownership.
+Back up the directory to retain managed state. Do not copy it to
 untrusted locations because the database includes the original browser
 documents.
 
@@ -107,7 +115,7 @@ An imported browser character may submit exactly one manual-brag report only
 when it has an existing browser-issued online credential, no local worker owns
 it, its endpoint is the official Progress Quest leaderboard, and the bundled
 credential-free enrollment-conformance evidence is complete and passing. The
-command builds its report from the current persisted canonical state:
+command builds its report from the current persisted canonical state and motto:
 
 ```sh
 gyrognome report <character-id>
@@ -123,8 +131,37 @@ lifecycle commands, and character administration never report.
 
 Do not provide a passkey, raw save contents, or a signed request URL to this
 command or to any Gyrognome diagnostic. Offline-created characters and active
-managed characters are ineligible. Delivery queues, retries, and leaderboard
-polling are intentionally out of scope.
+managed characters are ineligible for manual bragging. Delivery queues, retries,
+and leaderboard polling are intentionally out of scope.
+
+### Motto and guild actions
+
+Eligible online characters can update their profile without stopping a worker:
+
+```sh
+gyrognome motto <character-id> "Onward!"
+gyrognome motto <character-id> --clear
+gyrognome guild <character-id> "Existing guild designation"
+gyrognome guild <character-id> ""
+```
+
+Each explicit command submits exactly one action without another confirmation.
+Motto text and `--clear` are mutually exclusive; an explicitly empty motto also
+clears it. An empty guild designation leaves the current guild; there is no
+separate leave command. Printable non-control Unicode is accepted. Controls,
+offline characters, invalid credentials, unofficial endpoints, and invalid
+conformance evidence are rejected before delivery.
+
+A motto is saved before its one `t=m` report and retained even if delivery
+fails or the endpoint rejects it. Later manual and worker reports use the saved
+value. Delivery alone does not prove server acceptance.
+
+A guild is saved only after a response matches the verified, operation-specific
+acceptance fingerprint. The transport disables redirects, bounds the response
+to 16 KiB and the request to 30 seconds, and never exposes response text.
+Rejected, unknown, oversized, unsuccessful, or undeliverable responses preserve
+the previous guild. Output is limited to accepted, rejected, or indeterminate
+categories; there are no automatic retries or production membership lookups.
 
 ### Interactive New Guy enrollment
 
@@ -217,13 +254,15 @@ moves between reads using a display-only prediction and promptly re-reads
 persisted state after the task finishes. Prediction is confined to the Task
 bar; all other progress, activity, rewards, and statistics change only when
 persisted state is read. The dashboard never advances simulation, acquires the
-worker lock, or writes state. It displays only the credential-safe canonical
-fields, never browser passkeys, the retained original save, or unrecognized
-source fields.
+worker lock, or writes canonical simulation state. Explicit profile actions
+write only profile metadata. It displays only credential-safe canonical fields
+and profile values, never browser passkeys, the retained original save, raw
+endpoint responses, or unrecognized source fields.
 
 Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
-manual Brag report, `s` to start, `x` to stop, or `c` to recover the selected
-service. Brag has no confirmation overlay and shows only delivered,
+manual Brag report, `m` to edit the motto, `g` to edit the guild, `s` to start,
+`x` to stop, or `c` to recover the selected service. Brag has no confirmation
+overlay and shows only delivered,
 endpoint-rejected, or delivery-failed outcomes. Start, stop, and recover
 require `Enter` confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit
 through the same terminal-restoration path. The same logged-in-user systemd
@@ -233,6 +272,23 @@ preserves the last successfully displayed character state and shows the
 actionable error. The selection flow accepts Up/Down or `j`/`k`, `Enter` to
 open a character, and `Esc` or `q` to cancel. It reports an error without entering a dashboard when
 no characters are registered.
+
+Profile editors start with the persisted value, accept printable Unicode and
+Backspace, submit with Enter, and cancel with Escape without sending a request.
+While editing, action keys such as `q`, `b`, or `s` insert text instead of
+triggering actions. Empty input clears the motto or leaves the guild. After
+submission the dashboard refreshes persisted profile values and shows the
+same safe outcome categories as the CLI.
+
+In the full layout, F1 through F7 toggle Activity, Progress, Equipment, Details,
+Status, Adventure, and Journal. Expanded Activity has four total rows,
+Progress seven, and Equipment at most thirteen (eleven content rows). Expanded
+Details fills the remaining vertical space, with a six-row minimum when space
+permits; collapsing it retains only its two border rows. Details shows the
+identifier and compact elapsed time (for example,
+`1d 1h 1m 1s` or `0s`), with Motto and Guild independently shown only when
+nonempty; it no longer shows Quest target. Narrow terminals retain the compact
+character view and display profile-editor shortcuts in the footer.
 
 ## Reference fixtures
 
@@ -248,8 +304,9 @@ The leaderboard can classify a character as a cheater separately from state
 equivalence, so Gyrognome gates any general leaderboard-reporting feature
 behind explicit, disposable, opt-in evidence that its report traces match the
 browser's and that the browser-created disposable character is never
-classified as a cheater. This is not a product feature; a normal Gyrognome
-build never talks to the leaderboard.
+classified as a cheater. The experiment is development-only; normal builds use
+the sanitized bundled evidence to gate the explicit online features and
+eligible online worker reports described above.
 
 `scripts/leaderboard-conformance.mjs` is a Playwright harness that:
 
@@ -291,6 +348,15 @@ build never talks to the leaderboard.
   creation response before it is usable, records the browser's retry count,
   and labels that result `unconfirmed`; it never claims whether the server
   reserved that interrupted name.
+- With `--guild-designation`, resolves an existing guild's canonical public
+  identifier before creating a character, then exercises joining, a deliberately
+  invalid designation, and leaving. Public server membership verifies acceptance
+  or rejection; the browser's locally assigned guild is not sufficient evidence.
+  Cleanup always attempts leaving and must verify empty membership and normal
+  leaderboard classification.
+- Normalizes exact prior/submitted designations in ephemeral response text
+  using `guild-designations-sha256/v1`, storing only SHA-256 fingerprints and
+  safe outcome categories. Neither raw nor normalized response text is retained.
 - Writes only credential-free evidence (`--evidence <path>`, and always to
   stdout): per-scenario pass/fail, redacted `cmd=create` and `cmd=b`
   descriptors (endpoint, method, operation, trigger, and unsigned field
@@ -299,23 +365,37 @@ build never talks to the leaderboard.
   creation, duplicate-name rejection, create-before-initial-report ordering,
   and an interrupted enrollment observation. Errors, logs, and evidence reject
   passkeys, response bodies, raw saves, browser profiles, the retained
-  original document, and complete signed leaderboard URLs.
+  original document, and complete signed leaderboard URLs. The guild gate also
+  requires distinct accepted-join, rejected-invalid, and accepted-leave
+  fingerprints, cancellation, server verification, successful cleanup, and all
+  nine passing report scenarios.
 
 Run the credential-free, no-network-report dry run with:
 
 ```sh
-node scripts/leaderboard-conformance.mjs --confirm-disposable --evidence /path/to/evidence.json
+node scripts/leaderboard-conformance.mjs --confirm-disposable --guild-designation "Existing test guild" --evidence /path/to/evidence.json
 ```
 
 Run the full, real-network experiment (creates one disposable character and
 submits its reports to the live leaderboard) with:
 
 ```sh
-node scripts/leaderboard-conformance.mjs --confirm-disposable --submit --confirm-live-submission --evidence /path/to/evidence.json
+node scripts/leaderboard-conformance.mjs --confirm-disposable --submit --confirm-live-submission --guild-designation "Existing test guild" --evidence /path/to/evidence.json
 ```
 
 Neither invocation accepts a real character's identity, its saved document, or
 its passkey; the procedure never asks an operator to use a managed character
-or to publish its passkey. General leaderboard reporting remains unimplemented
-and unsupported until this gate's evidence records every required scenario as
-conformant and classified normal.
+or to publish its passkey. Only sanitized passing evidence belongs in
+`tests/fixtures/enrollment-conformance-evidence.json`; do not substitute
+synthetic acceptance fingerprints for actual disposable observations.
+
+Run automated checks without live submissions:
+
+```sh
+cargo test
+cargo test --features enrollment-test-transport --test profile_actions
+npm test
+```
+
+`enrollment-test-transport` is test-only: its CLI profile actions use categorized
+fake outcomes, never live requests. Do not enable it in an installed client.

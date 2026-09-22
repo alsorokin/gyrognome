@@ -41,6 +41,7 @@ export const DEFAULT_CLOCK_START_MS = 1_789_462_800_000;
 export const DEFAULT_PAUSE_GAP_MS = 30 * 60 * 1000;
 export const DEFAULT_DELAYED_CALLBACK_GAP_MS = 10_000;
 export const MOTTO_CHANGE_TEXT = 'Deterministic conformance motto';
+export const MAX_GUILD_RESPONSE_BYTES = 16 * 1024;
 // Documented polling bounds (task 3.4): a real leaderboard classification may
 // lag behind a just-submitted report, so each scenario is re-checked on this
 // cadence until it resolves or the bound is reached. A result that never
@@ -136,6 +137,7 @@ export function parseOptions(argv) {
   let submit = false;
   let confirmLiveSubmission = false;
   let evidence;
+  let guildDesignation;
 
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
@@ -151,6 +153,9 @@ export function parseOptions(argv) {
     } else if (option === '--evidence') {
       evidence = argv[++index];
       if (!evidence) throw new Error('--evidence requires a path');
+    } else if (option === '--guild-designation') {
+      guildDesignation = argv[++index];
+      if (!guildDesignation) throw new Error('--guild-designation requires a non-empty value');
     } else if (option === '--help') {
       return { help: true };
     } else {
@@ -167,10 +172,16 @@ export function parseOptions(argv) {
   if (submit && !confirmLiveSubmission) {
     throw new Error('--submit requires --confirm-live-submission');
   }
+  if (submit && !guildDesignation) {
+    throw new Error('--submit requires --guild-designation');
+  }
+  if (guildDesignation?.split('').some((character) => /\p{Cc}/u.test(character))) {
+    throw new Error('--guild-designation contains a control character');
+  }
   if (evidence?.toLowerCase().endsWith('.pqw')) {
     throw new Error('evidence path must not be a player save');
   }
-  return { confirmed, submit, confirmLiveSubmission, evidence };
+  return { confirmed, submit, confirmLiveSubmission, evidence, guildDesignation };
 }
 
 export function isAllowedOfficialRequest(rawUrl) {
@@ -183,7 +194,7 @@ export function isAllowedOfficialRequest(rawUrl) {
     return url.search === '';
   }
   if (endpoint === OFFICIAL_ENDPOINTS.leaderboard) {
-    return ['create', 'b'].includes(url.searchParams.get('cmd'));
+    return ['create', 'b', 'guild'].includes(url.searchParams.get('cmd'));
   }
   return false;
 }
@@ -192,7 +203,7 @@ function isLeaderboardRequest(rawUrl) {
   const url = new URL(rawUrl);
   return (
     `${url.origin}${url.pathname}` === OFFICIAL_ENDPOINTS.leaderboard &&
-    ['create', 'b'].includes(url.searchParams.get('cmd'))
+    ['create', 'b', 'guild'].includes(url.searchParams.get('cmd'))
   );
 }
 
@@ -228,6 +239,107 @@ export function assertCredentialFree(value) {
   if (lower.includes('cmd=') && lower.includes('&p=')) {
     throw new Error('refusing a complete signed leaderboard URL');
   }
+}
+
+export function assertBridgeCredentialFree(value) {
+  const candidate =
+    typeof value === 'string' ? JSON.parse(value) : JSON.parse(JSON.stringify(value));
+  const scrubOnlineProfiles = (entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    if (Object.hasOwn(entry, 'profile')) {
+      const profile = entry.profile;
+      if (
+        !profile ||
+        Array.isArray(profile) ||
+        typeof profile !== 'object' ||
+        Object.keys(profile).some((key) => !['motto', 'guild'].includes(key)) ||
+        typeof profile.motto !== 'string' ||
+        typeof profile.guild !== 'string'
+      ) {
+        throw new Error('refusing credential-bearing data ("profile")');
+      }
+      assertCredentialFree(Object.values(profile));
+      delete entry.profile;
+    }
+    for (const value of Object.values(entry)) {
+      scrubOnlineProfiles(value);
+    }
+  };
+  scrubOnlineProfiles(candidate);
+  assertCredentialFree(candidate);
+}
+
+export function classifyGuildResponse({ status = 200, body = '', error = false } = {}) {
+  if (error) return { category: 'delivery-failed' };
+  if (status < 200 || status >= 300) return { category: 'http-rejected' };
+  const encoded = Buffer.from(body);
+  if (encoded.length > MAX_GUILD_RESPONSE_BYTES) {
+    return { category: 'oversized' };
+  }
+
+  const parts = body.split('|');
+  if (parts.length > 2) return { category: 'unknown' };
+  const [message = '', navigation = ''] = parts;
+  if (navigation) {
+    try {
+      const destination = new URL(navigation, OFFICIAL_ENDPOINTS.leaderboard);
+      if (destination.origin !== 'https://progressquest.com') {
+        return { category: 'unknown' };
+      }
+    } catch {
+      return { category: 'unknown' };
+    }
+  }
+  if (message && navigation) return { category: 'message-and-navigation' };
+  if (message) return { category: 'message-only' };
+  if (navigation) return { category: 'navigation-only' };
+  return { category: 'empty' };
+}
+
+export const GUILD_NORMALIZATION = 'guild-designations-sha256/v1';
+export const GUILD_FIELDS = Object.freeze(['cmd', 'n', 'r', 'c', 'l', 'h', 'rev', 'guild']);
+
+export function guildResponseFingerprint(body, prior = '', submitted = '') {
+  if (typeof body !== 'string' || typeof prior !== 'string' || typeof submitted !== 'string') {
+    throw new Error('invalid guild fingerprint input');
+  }
+  if (Buffer.byteLength(body, 'utf8') > MAX_GUILD_RESPONSE_BYTES) {
+    throw new Error('guild response exceeds fingerprint limit');
+  }
+  const designations = [...new Set([prior, submitted])]
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  // Match original text once so replacements cannot modify other placeholders.
+  const pattern = designations.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const normalized = pattern.length
+    ? body.replace(new RegExp(pattern.join('|'), 'gu'), () => '<guild-designation>')
+    : body;
+  return createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
+
+function exactKeys(value, keys) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key));
+}
+
+function validGuildSubmission(submission, category, guildEmpty) {
+  return exactKeys(submission, ['request', 'outcome', 'browser', 'serverVerified', 'pass']) &&
+    submission.pass === true &&
+    submission.serverVerified === true &&
+    exactKeys(submission.request, ['endpoint', 'method', 'operation', 'fields']) &&
+    submission.request.endpoint === OFFICIAL_ENDPOINTS.leaderboard &&
+    submission.request.method === 'GET' &&
+    submission.request.operation === 'guild' &&
+    JSON.stringify(submission.request.fields) === JSON.stringify(GUILD_FIELDS) &&
+    exactKeys(submission.outcome, ['category', 'fingerprint']) &&
+    submission.outcome.category === category &&
+    typeof submission.outcome.fingerprint === 'string' &&
+    /^[0-9a-f]{64}$/.test(submission.outcome.fingerprint) &&
+    exactKeys(submission.browser, ['alerted', 'navigated', 'guildEmpty']) &&
+    typeof submission.browser.alerted === 'boolean' &&
+    typeof submission.browser.navigated === 'boolean' &&
+    submission.browser.guildEmpty === guildEmpty;
 }
 
 export function buildClassificationQueryUrl(name) {
@@ -481,7 +593,7 @@ function bridgeInputForScenario(character, scenario, motto) {
 }
 
 async function callBridge(input) {
-  assertCredentialFree(input);
+  assertBridgeCredentialFree(input);
   const stdin = JSON.stringify(input);
   const stdout = await new Promise((resolve, reject) => {
     const child = spawn(
@@ -495,14 +607,16 @@ async function callBridge(input) {
       output += chunk;
       if (output.length > 1024 * 1024) child.kill();
     });
-    child.on('error', () => reject(new Error('credential-free bridge could not start')));
+    child.on('error', () => {
+      reject(new Error('stage:bridge:spawn-failed'));
+    });
     child.on('close', (status) => {
       if (status === 0) resolve(output);
-      else reject(new Error('credential-free bridge failed'));
+      else reject(new Error('stage:bridge:execution-failed'));
     });
     child.stdin.end(stdin);
   });
-  assertCredentialFree(stdout);
+  assertBridgeCredentialFree(stdout);
   return JSON.parse(stdout);
 }
 
@@ -523,7 +637,7 @@ async function waitForGame(page) {
 }
 
 async function loadFixtureState(page, state) {
-  assertCredentialFree(state);
+  assertBridgeCredentialFree(state);
   await page.evaluate((nextState) => {
     if (!globalThis.game?.online?.passkey) {
       throw new Error('missing disposable online passkey inside browser context');
@@ -817,38 +931,48 @@ function scenarioPasses(comparison, classification) {
 }
 
 async function runInitialLoadScenario(page, observedRequests, options) {
-  const requestStart = observedRequests.length;
-  const character = await createDisposableCharacter(page);
-  const motto = await currentMotto(page);
-  const scenario = SCENARIOS[0];
-  const bridge = await callBridge(bridgeInputForScenario(character, scenario, motto));
-  const expected = expectedObservationsFromBridgeEvents(bridge.events);
-  await waitForObservedCount(observedRequests, requestStart + expected.length);
-  const observed = observedRequests
-    .slice(requestStart)
-    .filter((request) => request.operation === 'b');
-  const comparison = compareTraceObservations(expected, observed);
-  const snapshot = summarizeCharacter(character);
-  const classification = await classifyScenarioIfSubmitted(options, snapshot.name);
-  const result = {
-    id: scenario.id,
-    title: scenario.title,
-    pass: scenarioPasses(comparison, classification),
-    browserGapMs: 0,
-    bridgeAdvancementMs: [],
-    snapshot,
-    expected,
-    observed,
-    bridge: {
-      eventTriggers: bridge.events.map((event) => event.trigger),
-    },
-    differences: comparison.differences,
-    classification,
-    enrollment: successfulEnrollmentEvidence(observedRequests, requestStart),
-  };
-  result.pass &&= result.enrollment.pass;
-  assertCredentialFree(result);
-  return result;
+  let stage = 'creating-character';
+  try {
+    const requestStart = observedRequests.length;
+    const character = await createDisposableCharacter(page);
+    stage = 'reading-motto';
+    const motto = await currentMotto(page);
+    const scenario = SCENARIOS[0];
+    stage = 'running-rust-bridge';
+    const bridge = await callBridge(bridgeInputForScenario(character, scenario, motto));
+    const expected = expectedObservationsFromBridgeEvents(bridge.events);
+    stage = 'waiting-for-initial-report';
+    await waitForObservedCount(observedRequests, requestStart + expected.length);
+    const observed = observedRequests
+      .slice(requestStart)
+      .filter((request) => request.operation === 'b');
+    const comparison = compareTraceObservations(expected, observed);
+    const snapshot = summarizeCharacter(character);
+    stage = 'classifying-character';
+    const classification = await classifyScenarioIfSubmitted(options, snapshot.name);
+    const result = {
+      id: scenario.id,
+      title: scenario.title,
+      pass: scenarioPasses(comparison, classification),
+      browserGapMs: 0,
+      bridgeAdvancementMs: [],
+      snapshot,
+      expected,
+      observed,
+      bridge: {
+        eventTriggers: bridge.events.map((event) => event.trigger),
+      },
+      differences: comparison.differences,
+      classification,
+      enrollment: successfulEnrollmentEvidence(observedRequests, requestStart),
+    };
+    result.pass &&= result.enrollment.pass;
+    assertCredentialFree(result);
+    return result;
+  } catch (error) {
+    if (String(error?.message).startsWith('stage:')) throw error;
+    throw new Error(`stage:initial-load:${stage}`);
+  }
 }
 
 async function runFixtureScenario(page, scenario, observedRequests, options) {
@@ -888,7 +1012,244 @@ async function runFixtureScenario(page, scenario, observedRequests, options) {
   return result;
 }
 
-async function installRequestPolicy(context, options, observedRequests, { interruptCreation = false } = {}) {
+async function waitForGuildOutcome(guildOutcomes, expectedCount) {
+  const deadline = Date.now() + 5_000;
+  while (guildOutcomes.length < expectedCount) {
+    if (Date.now() >= deadline) {
+      throw new Error('timed out waiting for sanitized guild response');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+async function publicHtml(url) {
+  const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error('public verification unavailable');
+  return response.text();
+}
+
+export function publicGuildId(href) {
+  try {
+    const url = new URL(href, 'https://progressquest.com/');
+    const id = url.searchParams.get('id');
+    return url.origin === 'https://progressquest.com' &&
+      ['/guild.php', '/guilds.php'].includes(url.pathname) &&
+      /^\d+$/.test(id ?? '') ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveGuildId(page, designation) {
+  const ids = new Set();
+  for (const suffix of ['', '?type=3', '?type=2', '?type=1']) {
+    const html = await publicHtml(`https://progressquest.com/guilds.php${suffix}`);
+    const matches = await page.evaluate(({ html, designation }) => {
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return [...doc.querySelectorAll('tr')].flatMap((row) => {
+        const cell = row.cells[1];
+        if (cell?.textContent.trim().toLowerCase() !== designation.toLowerCase()) return [];
+        const href = cell.querySelector('a')?.getAttribute('href');
+        if (!href) return [];
+        return [href];
+      });
+    }, { html, designation });
+    for (const href of matches) {
+      const id = publicGuildId(href);
+      if (id !== null) ids.add(id);
+    }
+  }
+  if (ids.size !== 1) throw new Error('stage:guild:identity-unconfirmed');
+  return [...ids][0];
+}
+
+export function verifyGuildMembership(observation, expectedId) {
+  return observation?.found === true &&
+    observation.classification === 'normal' &&
+    observation.guildId === expectedId;
+}
+
+async function pollGuildMembership(page, name, expectedId) {
+  const deadline = Date.now() + CLASSIFICATION_POLL_TIMEOUT_MS;
+  do {
+    let observation;
+    try {
+      const html = await publicHtml(buildClassificationQueryUrl(name));
+      observation = await page.evaluate(({ html, name }) => {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const classification = doc.querySelector('h1')?.textContent.trim() === 'Hall of Fame'
+          ? 'normal' : 'unconfirmed';
+        const rows = [...doc.querySelectorAll('tr')].filter((row) =>
+          row.cells[1]?.textContent === name);
+        if (rows.length !== 1) return { found: false };
+        const row = rows[0];
+        const headers = [...row.closest('table').querySelectorAll('th')];
+        const index = headers.findIndex((cell) => cell.textContent.startsWith('Guild'));
+        if (index < 0 || index !== headers.length - 1 ||
+            row.cells.length < index || row.cells.length > headers.length) return { found: false };
+        const cell = row.cells[index];
+        if (!cell || cell.textContent.trim() === '') return { found: true, classification, guildId: null };
+        const links = cell.querySelectorAll('a');
+        if (links.length !== 1) return { found: false };
+        const url = new URL(links[0].getAttribute('href'), 'https://progressquest.com/');
+        const id = url.searchParams.get('id');
+        if (url.origin !== 'https://progressquest.com' || url.pathname !== '/guilds.php' ||
+            !/^\d+$/.test(id ?? '')) return { found: false };
+        return { found: true, classification, guildId: id };
+      }, { html, name });
+    } catch {
+      observation = { found: false };
+    }
+    if (verifyGuildMembership(observation, expectedId)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, CLASSIFICATION_POLL_INTERVAL_MS));
+  } while (true);
+}
+
+async function runGuildSubmission(page, designation, observedRequests, guildOutcomes) {
+  const requestStart = observedRequests.length;
+  const outcomeStart = guildOutcomes.length;
+  await page.evaluate(() => {
+    globalThis.__gyrognomeGuildEffects = {
+      alerted: false,
+      navigated: false,
+      originalAlert: globalThis.alert,
+      originalNavigate: globalThis.Navigate,
+    };
+    globalThis.alert = () => {
+      globalThis.__gyrognomeGuildEffects.alerted = true;
+    };
+    globalThis.Navigate = () => {
+      globalThis.__gyrognomeGuildEffects.navigated = true;
+    };
+  });
+  try {
+    await page.evaluate((guild) => Guildify(guild), designation);
+    await waitForObservedCount(observedRequests, requestStart + 1);
+    await waitForGuildOutcome(guildOutcomes, outcomeStart + 1);
+    await page.waitForFunction(() => globalThis.jQuery.active === 0);
+    const browser = await page.evaluate(() => ({
+      alerted: globalThis.__gyrognomeGuildEffects.alerted,
+      navigated: globalThis.__gyrognomeGuildEffects.navigated,
+      guildEmpty: globalThis.game?.guild === '',
+    }));
+    return {
+      request: observedRequests[requestStart],
+      outcome: guildOutcomes[outcomeStart],
+      browser,
+    };
+  } finally {
+    await page.evaluate(() => {
+      const effects = globalThis.__gyrognomeGuildEffects;
+      if (effects) {
+        globalThis.alert = effects.originalAlert;
+        globalThis.Navigate = effects.originalNavigate;
+        delete globalThis.__gyrognomeGuildEffects;
+      }
+    });
+  }
+}
+
+export function summarizeGuildEvidence({
+  cancellationRequestAttempts,
+  nonEmpty,
+  invalid,
+  empty,
+  classification = null,
+}) {
+  const submission = (value, category, guildEmpty) => {
+    const candidate = { ...JSON.parse(JSON.stringify(value ?? {})), pass: true };
+    candidate.pass = validGuildSubmission(candidate, category, guildEmpty);
+    return candidate;
+  };
+  const result = {
+    normalization: GUILD_NORMALIZATION,
+    nonEmpty: submission(nonEmpty, 'accepted', false),
+    invalid: submission(invalid, 'rejected', false),
+    empty: submission(empty, 'accepted', true),
+    order: 'non-empty-before-invalid-before-empty',
+    cancellation: {
+      requestAttempts: cancellationRequestAttempts,
+      pass: cancellationRequestAttempts === 0,
+    },
+    cleanup: {
+      browserGuildEmpty: empty.browser?.guildEmpty === true,
+      pass: empty.browser?.guildEmpty === true && empty.serverVerified === true &&
+        empty.outcome?.category === 'accepted',
+    },
+    classification,
+  };
+  result.pass =
+    result.nonEmpty.pass &&
+    result.invalid.pass &&
+    result.empty.pass &&
+    result.invalid.outcome.fingerprint !== result.nonEmpty.outcome.fingerprint &&
+    result.invalid.outcome.fingerprint !== result.empty.outcome.fingerprint &&
+    result.cancellation.pass &&
+    result.cleanup.pass &&
+    (!classification || classification.classification === 'normal');
+  assertCredentialFree(result);
+  return result;
+}
+
+export async function exerciseGuildSequence(submit) {
+  let nonEmpty;
+  let invalid;
+  let empty;
+  try {
+    nonEmpty = await submit('nonEmpty');
+    invalid = await submit('invalid');
+  } finally {
+    empty = await submit('empty');
+  }
+  return { nonEmpty, invalid, empty };
+}
+
+async function runGuildConformance(page, observedRequests, guildOutcomes, options, name, guildAction, guildId) {
+  const designation = options.guildDesignation ?? 'Conformance';
+  if (options.submit && !await pollGuildMembership(page, name, null)) {
+    throw new Error('stage:guild:initial-membership-unconfirmed');
+  }
+  const beforeCancellation = observedRequests.length;
+  await page.evaluate(() => Guildify(null));
+  await settleNoReport();
+  const cancellationRequestAttempts = observedRequests.length - beforeCancellation;
+  const invalidDesignation = `Nonexistent-${randomUUID()}`;
+  const submissions = await exerciseGuildSequence(async (step) => {
+    guildAction.prior = step === 'nonEmpty' ? '' : designation;
+    guildAction.submitted = step === 'nonEmpty' ? designation : step === 'invalid' ? invalidDesignation : '';
+    guildAction.step = step;
+    const submission = await runGuildSubmission(
+      page, guildAction.submitted, observedRequests, guildOutcomes,
+    );
+    const serverVerified = options.submit
+      ? await pollGuildMembership(page, name, step === 'empty' ? null : guildId)
+      : true;
+    const successfulResponse = ['message-only', 'message-and-navigation', 'navigation-only', 'empty']
+      .includes(submission.outcome.category);
+    const category = successfulResponse && serverVerified
+      ? step === 'invalid' ? 'rejected' : 'accepted'
+      : 'indeterminate';
+    return {
+      ...submission,
+      outcome: { category, fingerprint: submission.outcome.fingerprint },
+      serverVerified,
+    };
+  });
+  const classification = await classifyScenarioIfSubmitted(options, name);
+  return summarizeGuildEvidence({
+    cancellationRequestAttempts,
+    ...submissions,
+    classification,
+  });
+}
+
+async function installRequestPolicy(
+  context,
+  options,
+  observedRequests,
+  { interruptCreation = false, guildOutcomes = [], guildAction = {} } = {},
+) {
   await context.route('**/*', async (route) => {
     const request = route.request();
     if (request.method() !== 'GET' || !isAllowedOfficialRequest(request.url())) {
@@ -914,6 +1275,31 @@ async function installRequestPolicy(context, options, observedRequests, { interr
       }
       if (observation.operation === 'b' && !options.submit) {
         await route.fulfill({ status: 200, contentType: 'text/plain', body: '' });
+        return;
+      }
+      if (observation.operation === 'guild') {
+        const observe = (status, body) => {
+          const outcome = classifyGuildResponse({ status, body });
+          if (!['oversized', 'http-rejected', 'unknown'].includes(outcome.category)) {
+            outcome.fingerprint = guildResponseFingerprint(body, guildAction.prior, guildAction.submitted);
+          }
+          return outcome;
+        };
+        if (!options.submit) {
+          const body = `Synthetic ${guildAction.step} guild result|/guilds.php`;
+          guildOutcomes.push(observe(200, body));
+          await route.fulfill({ status: 200, contentType: 'text/plain', body });
+          return;
+        }
+        try {
+          const response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout: 30000 });
+          const body = await response.body();
+          guildOutcomes.push(observe(response.status(), body.toString('utf8')));
+          await route.fulfill({ response, body });
+        } catch {
+          guildOutcomes.push(classifyGuildResponse({ error: true }));
+          await route.abort('connectionfailed');
+        }
         return;
       }
     }
@@ -961,17 +1347,67 @@ export function validateEnrollmentEvidence(evidence) {
   return true;
 }
 
+export function validateGuildEvidence(evidence) {
+  validateEnrollmentEvidence(evidence);
+  const guild = evidence.guild;
+  if (
+    !exactKeys(guild, [
+      'normalization', 'nonEmpty', 'invalid', 'empty', 'order',
+      'cancellation', 'cleanup', 'classification', 'pass',
+    ]) ||
+    guild.normalization !== GUILD_NORMALIZATION ||
+    guild.pass !== true ||
+    !validGuildSubmission(guild.nonEmpty, 'accepted', false) ||
+    !validGuildSubmission(guild.invalid, 'rejected', false) ||
+    !validGuildSubmission(guild.empty, 'accepted', true) ||
+    guild.invalid.outcome.fingerprint === guild.nonEmpty.outcome.fingerprint ||
+    guild.invalid.outcome.fingerprint === guild.empty.outcome.fingerprint ||
+    guild.order !== 'non-empty-before-invalid-before-empty' ||
+    !exactKeys(guild.cancellation, ['requestAttempts', 'pass']) ||
+    guild.cancellation?.requestAttempts !== 0 ||
+    guild.cancellation?.pass !== true ||
+    !exactKeys(guild.cleanup, ['browserGuildEmpty', 'pass']) ||
+    guild.cleanup?.browserGuildEmpty !== true ||
+    guild.cleanup?.pass !== true ||
+    !exactKeys(guild.classification, ['classification', 'attempts']) ||
+    guild.classification?.classification !== 'normal' ||
+    !Array.isArray(guild.classification.attempts) ||
+    guild.classification.attempts.length === 0 ||
+    guild.classification.attempts.at(-1) !== 'normal' ||
+    guild.classification.attempts.some((value) => !['normal', 'not-found', 'error'].includes(value)) ||
+    !Array.isArray(evidence.scenarios) ||
+    evidence.scenarios.length !== SCENARIOS.length ||
+    evidence.summary.total !== SCENARIOS.length ||
+    evidence.scenarios.some((scenario, index) =>
+      scenario.id !== SCENARIOS[index].id ||
+      scenario.pass !== true ||
+      scenario.classification?.classification !== 'normal' ||
+      !Array.isArray(scenario.differences) ||
+      scenario.differences.length !== 0)
+  ) {
+    throw new Error('incomplete guild conformance evidence');
+  }
+  return true;
+}
+
 async function runExperiment(options) {
   let stage = 'launching-browser';
-  const { chromium } = await import('playwright');
-  const browser = await chromium.launch();
-  const context = await browser.newContext();
-  await context.addInitScript(buildClockInitScript());
-  const page = await context.newPage();
+  let browser;
+  let context;
   const observedRequests = [];
+  const guildOutcomes = [];
+  const guildAction = {};
   let clientContentSha256;
 
   try {
+    const { chromium } = await import('playwright');
+    browser = await chromium.launch();
+    stage = 'creating-browser-context';
+    context = await browser.newContext();
+    await context.addInitScript(buildClockInitScript());
+    const page = await context.newPage();
+    stage = 'resolving-guild-identity';
+    const guildId = options.submit ? await resolveGuildId(page, options.guildDesignation) : 'synthetic';
     page.on('response', (response) => {
       if (response.url() !== OFFICIAL_ENDPOINTS.client || clientContentSha256) return;
       response
@@ -981,15 +1417,27 @@ async function runExperiment(options) {
         })
         .catch(() => {});
     });
-    await installRequestPolicy(context, options, observedRequests);
+    await installRequestPolicy(context, options, observedRequests, { guildOutcomes, guildAction });
 
     stage = 'running-paired-scenarios';
     const scenarios = [];
+    stage = 'running-scenario:initial-load';
     const initial = await runInitialLoadScenario(page, observedRequests, options);
     scenarios.push(initial);
     for (const scenario of SCENARIOS.slice(1)) {
+      stage = `running-scenario:${scenario.id}`;
       scenarios.push(await runFixtureScenario(page, scenario, observedRequests, options));
     }
+    stage = 'running-guild-conformance';
+    const guild = await runGuildConformance(
+      page,
+      observedRequests,
+      guildOutcomes,
+      options,
+      initial.snapshot.name,
+      guildAction,
+      guildId,
+    );
     const enrollment = {
       successfulCreation: initial.enrollment,
       duplicateName: options.submit
@@ -1010,6 +1458,7 @@ async function runExperiment(options) {
         content_sha256: clientContentSha256,
       },
       scenarios,
+      guild,
       enrollment,
       summary: {
         total: scenarios.length,
@@ -1017,7 +1466,10 @@ async function runExperiment(options) {
         failed: scenarios.filter((scenario) => !scenario.pass).map((scenario) => scenario.id),
       },
     };
-    if (options.submit) validateEnrollmentEvidence(evidence);
+    if (options.submit) {
+      validateEnrollmentEvidence(evidence);
+      validateGuildEvidence(evidence);
+    }
     else assertCredentialFree(evidence);
     if (options.evidence) {
       await fs.writeFile(options.evidence, `${JSON.stringify(evidence, null, 2)}\n`, {
@@ -1032,14 +1484,14 @@ async function runExperiment(options) {
     }
     throw new Error(`stage:${stage}`);
   } finally {
-    await context.close();
-    await browser.close();
+    await context?.close();
+    await browser?.close();
   }
 }
 
 function printHelp() {
   console.log(
-    'Usage: node scripts/leaderboard-conformance.mjs --confirm-disposable [--submit --confirm-live-submission] [--evidence path]',
+    'Usage: node scripts/leaderboard-conformance.mjs --confirm-disposable [--submit --confirm-live-submission --guild-designation value] [--evidence path]',
   );
 }
 
@@ -1056,6 +1508,7 @@ async function main() {
     const message =
       rawMessage.includes('--confirm-disposable') ||
       rawMessage.includes('--confirm-live-submission') ||
+      rawMessage.includes('--guild-designation') ||
       rawMessage.includes('managed-character') ||
       rawMessage === '--evidence requires a path' ||
       rawMessage === 'evidence path must not be a player save'

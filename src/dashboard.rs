@@ -1,6 +1,7 @@
 //! Credential-safe terminal dashboard for observing one managed character.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     io::{self, Stdout},
     time::{Duration, Instant},
@@ -22,15 +23,18 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 use thiserror::Error;
 
 use crate::{
+    guild::GuildOutcome,
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, ServiceState, SystemctlRunner},
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
     runtime::{CharacterId, CharacterIdentity, ManagedCharacter, StorageError, Store},
-    state::{Activity, Attributes, Equipment, InventoryEntry, Plot, Progress, Spell},
+    state::{
+        Activity, Attributes, Equipment, InventoryEntry, OnlineProfile, Plot, Progress, Spell,
+    },
 };
 
 const MINIMUM_WIDTH: u16 = 40;
@@ -51,6 +55,7 @@ pub struct DashboardCharacter {
     pub plot: Plot,
     pub quests: Vec<String>,
     pub current_quest: String,
+    pub profile: OnlineProfile,
 }
 
 impl From<ManagedCharacter> for DashboardCharacter {
@@ -67,6 +72,7 @@ impl From<ManagedCharacter> for DashboardCharacter {
             plot: character.state.plot,
             quests: character.state.quests,
             current_quest: character.state.bestquest,
+            profile: character.state.profile,
         }
     }
 }
@@ -101,31 +107,38 @@ pub trait DashboardProvider {
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError>;
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError>;
     fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError>;
+    fn set_motto(&self, id: &CharacterId, text: &str) -> Result<DeliveryOutcome, DashboardError>;
+    fn set_guild(
+        &self,
+        id: &CharacterId,
+        designation: &str,
+    ) -> Result<GuildOutcome, DashboardError>;
 }
 
 pub struct LocalProvider {
-    store: Store,
+    store: RefCell<Store>,
 }
 
 impl LocalProvider {
     pub fn open_default() -> Result<Self, DashboardError> {
         Ok(Self {
-            store: Store::open_default()?,
+            store: RefCell::new(Store::open_default()?),
         })
     }
 }
 
 impl DashboardProvider for LocalProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError> {
-        collect_snapshot(&self.store, SystemctlRunner, id)
+        collect_snapshot(&self.store.borrow(), SystemctlRunner, id)
     }
 
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
-        Ok(self.store.get(id)?.into())
+        Ok(self.store.borrow().get(id)?.into())
     }
 
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError> {
-        let lifecycle = Lifecycle::new(&self.store, SystemctlRunner);
+        let store = self.store.borrow();
+        let lifecycle = Lifecycle::new(&store, SystemctlRunner);
         match action {
             LifecycleAction::Start => lifecycle.start(id)?,
             LifecycleAction::Stop => lifecycle.stop(id)?,
@@ -135,7 +148,25 @@ impl DashboardProvider for LocalProvider {
     }
 
     fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
-        Ok(reporting::submit(&self.store, id, &HttpsTransport)?.outcome)
+        Ok(reporting::submit(&self.store.borrow(), id, &HttpsTransport)?.outcome)
+    }
+
+    fn set_motto(&self, id: &CharacterId, text: &str) -> Result<DeliveryOutcome, DashboardError> {
+        Ok(reporting::set_motto(&mut self.store.borrow_mut(), id, text, &HttpsTransport)?.outcome)
+    }
+
+    fn set_guild(
+        &self,
+        id: &CharacterId,
+        designation: &str,
+    ) -> Result<GuildOutcome, DashboardError> {
+        Ok(reporting::set_guild(
+            &mut self.store.borrow_mut(),
+            id,
+            designation,
+            &HttpsTransport,
+        )?
+        .outcome)
     }
 }
 
@@ -403,7 +434,22 @@ enum Command {
     ConfirmAction,
     Cancel,
     TogglePane(Pane),
+    Edit(ProfileField),
+    Insert(char),
+    Backspace,
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProfileField {
+    Motto,
+    Guild,
+}
+
+#[derive(Debug)]
+struct ProfileEditor {
+    field: ProfileField,
+    text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -482,6 +528,8 @@ fn command(event: Event) -> Command {
         KeyCode::Char('q') => Command::Quit,
         KeyCode::Char('r') => Command::Refresh,
         KeyCode::Char('b') => Command::Brag,
+        KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
+        KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
         KeyCode::Char('s') => Command::Confirm(LifecycleAction::Start),
         KeyCode::Char('x') => Command::Confirm(LifecycleAction::Stop),
         KeyCode::Char('c') => Command::Confirm(LifecycleAction::Recover),
@@ -494,6 +542,31 @@ fn command(event: Event) -> Command {
         KeyCode::F(5) => Command::TogglePane(Pane::Status),
         KeyCode::F(6) => Command::TogglePane(Pane::Adventure),
         KeyCode::F(7) => Command::TogglePane(Pane::Journal),
+        _ => Command::None,
+    }
+}
+
+fn editor_command(event: Event) -> Command {
+    let Event::Key(key) = event else {
+        return Command::None;
+    };
+    if key.kind == KeyEventKind::Release {
+        return Command::None;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        return Command::Quit;
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return Command::None;
+    }
+    match key.code {
+        KeyCode::Esc => Command::Cancel,
+        KeyCode::Enter => Command::ConfirmAction,
+        KeyCode::Backspace => Command::Backspace,
+        KeyCode::Char(value) if !value.is_control() => Command::Insert(value),
         _ => Command::None,
     }
 }
@@ -518,7 +591,10 @@ pub fn run<P: DashboardProvider>(
                 &state.updates,
                 state.confirmation,
                 &state.panes,
-            )
+            );
+            if let Some(editor) = &state.editor {
+                render_editor(frame, editor);
+            }
         })?;
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
@@ -527,7 +603,7 @@ pub fn run<P: DashboardProvider>(
             state.handle_deadline(provider, &id, Instant::now());
             continue;
         }
-        if state.apply(provider, &id, command(event::read()?), Instant::now()) {
+        if state.handle_event(provider, &id, event::read()?, Instant::now()) {
             return Ok(());
         }
     }
@@ -537,6 +613,7 @@ struct DashboardState {
     current: DashboardSnapshot,
     updates: RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
+    editor: Option<ProfileEditor>,
     panes: PaneVisibility,
     task_anchor: TaskAnchor,
     next_combined_refresh: Instant,
@@ -550,6 +627,7 @@ impl DashboardState {
             current,
             updates: RecentTaskUpdates::default(),
             confirmation: None,
+            editor: None,
             panes: PaneVisibility::default(),
             task_anchor,
             next_combined_refresh: now.checked_add(refresh_interval).unwrap_or(now),
@@ -676,6 +754,21 @@ impl DashboardState {
         }
     }
 
+    fn handle_event<P: DashboardProvider>(
+        &mut self,
+        provider: &P,
+        id: &CharacterId,
+        event: Event,
+        now: Instant,
+    ) -> bool {
+        let command = if self.editor.is_some() {
+            editor_command(event)
+        } else {
+            command(event)
+        };
+        self.apply(provider, id, command, now)
+    }
+
     fn apply<P: DashboardProvider>(
         &mut self,
         provider: &P,
@@ -683,6 +776,36 @@ impl DashboardState {
         command: Command,
         now: Instant,
     ) -> bool {
+        if let Some(editor) = &mut self.editor {
+            match command {
+                Command::Quit => return true,
+                Command::Cancel => self.editor = None,
+                Command::Insert(value) if !value.is_control() => editor.text.push(value),
+                Command::Backspace => {
+                    editor.text.pop();
+                }
+                Command::ConfirmAction => {
+                    let editor = self.editor.take().expect("editor is open");
+                    let message = match editor.field {
+                        ProfileField::Motto => match provider.set_motto(id, &editor.text) {
+                            Ok(outcome) => outcome.motto_message().to_owned(),
+                            Err(error) => format!("Could not change motto: {error}"),
+                        },
+                        ProfileField::Guild => match provider.set_guild(id, &editor.text) {
+                            Ok(outcome) => outcome.message().to_owned(),
+                            Err(error) => format!("Could not change guild: {error}"),
+                        },
+                    };
+                    self.refresh(provider, id, now);
+                    self.current.message = Some(match self.current.message.take() {
+                        Some(refresh_message) => format!("{message} {refresh_message}"),
+                        None => message,
+                    });
+                }
+                _ => {}
+            }
+            return false;
+        }
         match command {
             Command::Quit => true,
             Command::Refresh => {
@@ -706,6 +829,17 @@ impl DashboardState {
             }
             Command::Confirm(action) => {
                 self.confirmation = Some(action);
+                false
+            }
+            Command::Edit(field) => {
+                self.confirmation = None;
+                self.editor = Some(ProfileEditor {
+                    field,
+                    text: match field {
+                        ProfileField::Motto => self.current.character.profile.motto.clone(),
+                        ProfileField::Guild => self.current.character.profile.guild.clone(),
+                    },
+                });
                 false
             }
             Command::Cancel => {
@@ -732,7 +866,7 @@ impl DashboardState {
                 }
                 false
             }
-            Command::None => false,
+            Command::None | Command::Insert(_) | Command::Backspace => false,
         }
     }
 }
@@ -814,7 +948,11 @@ fn render(
             Constraint::Length(header_height),
             Constraint::Min(6),
             Constraint::Length(status_height),
-            Constraint::Length(3),
+            Constraint::Length(if full_layout || confirmation.is_some() {
+                3
+            } else {
+                5
+            }),
         ])
         .split(area);
     render_header(frame, snapshot, updates, rows[0]);
@@ -847,12 +985,58 @@ fn render(
     }
     let footer = match confirmation {
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
-        None => "q quit | r refresh | b brag | s start | x stop | c recover".to_owned(),
+        None if full_layout => {
+            "q quit | r refresh | b brag | m motto | g guild | s start | x stop | c recover"
+                .to_owned()
+        }
+        None => "q quit | r refresh | b brag\nm motto | g guild\ns start | x stop | c recover"
+            .to_owned(),
     };
     frame.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::ALL).title("Keys")),
         rows[3],
     );
+}
+
+fn render_editor(frame: &mut ratatui::Frame<'_>, editor: &ProfileEditor) {
+    let screen = frame.area();
+    let width = screen.width.saturating_sub(4).min(80);
+    let height = screen.height.min(5);
+    let area = Rect::new(
+        screen.x + (screen.width - width) / 2,
+        screen.y + (screen.height - height) / 2,
+        width,
+        height,
+    );
+    let title = match editor.field {
+        ProfileField::Motto => "Motto (empty clears)",
+        ProfileField::Guild => "Guild (empty leaves)",
+    };
+    let capacity = width.saturating_sub(3) as usize;
+    let mut visible = Vec::new();
+    let mut used = 0;
+    for value in editor.text.chars().rev() {
+        let width = Span::raw(value.to_string()).width();
+        if used + width > capacity {
+            break;
+        }
+        visible.push(value);
+        used += width;
+    }
+    let visible: String = visible.into_iter().rev().collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(visible),
+            Line::from(""),
+            Line::from("Enter submit | Esc cancel"),
+        ])
+        .block(Block::default().borders(Borders::ALL).title(title)),
+        area,
+    );
+    if area.width > 2 && area.height > 2 {
+        frame.set_cursor_position((area.x + 1 + used as u16, area.y + 1));
+    }
 }
 
 fn render_header(
@@ -986,16 +1170,7 @@ fn render_full(
         .split(area);
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(pane_constraints(
-            &[
-                (Pane::Activity, 5),
-                (Pane::Progress, 7),
-                (Pane::Equipment, 5),
-                (Pane::Details, 5),
-            ],
-            panes,
-            &[Pane::Activity, Pane::Progress, Pane::Equipment],
-        ))
+        .constraints(left_pane_constraints(panes, columns[0].height))
         .split(columns[0]);
     let right = Layout::default()
         .direction(Direction::Vertical)
@@ -1031,7 +1206,7 @@ fn render_full(
         "Equipment",
         Pane::Equipment,
         panes,
-        Paragraph::new(equipment_lines(&state.equipment, updates)).wrap(Wrap { trim: true }),
+        Paragraph::new(equipment_lines(&state.equipment, updates)),
     );
     render_pane(
         frame,
@@ -1039,13 +1214,7 @@ fn render_full(
         "Details",
         Pane::Details,
         panes,
-        Paragraph::new(format!(
-            "Character ID: {}\nLast task elapsed: {} seconds\nQuest target: {}",
-            state.id,
-            state.activity.elapsed,
-            quest_target_text(&state.activity.questmonster)
-        ))
-        .wrap(Wrap { trim: true }),
+        Paragraph::new(details_lines(state)),
     );
     render_pane(
         frame,
@@ -1116,27 +1285,68 @@ fn journal_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     lines
 }
 
-fn pane_constraints(
-    panes: &[(Pane, u16)],
-    visibility: &PaneVisibility,
-    flexible_panes: &[Pane],
-) -> Vec<Constraint> {
-    let expanded = panes
-        .iter()
-        .rposition(|(pane, _)| !visibility.is_collapsed(*pane) && flexible_panes.contains(pane));
-    panes
-        .iter()
-        .enumerate()
-        .map(|(index, (pane, height))| {
-            if visibility.is_collapsed(*pane) {
-                Constraint::Length(2)
-            } else if Some(index) == expanded {
-                Constraint::Min(*height)
-            } else {
-                Constraint::Length(*height)
-            }
-        })
-        .collect()
+fn left_pane_constraints(visibility: &PaneVisibility, height: u16) -> [Constraint; 5] {
+    let pane_height = |pane, expanded| {
+        if visibility.is_collapsed(pane) {
+            2
+        } else {
+            expanded
+        }
+    };
+    let activity = pane_height(Pane::Activity, 4);
+    let progress = pane_height(Pane::Progress, 7);
+    let details_min = pane_height(Pane::Details, 6);
+    let equipment = pane_height(
+        Pane::Equipment,
+        height
+            .saturating_sub(activity + progress + details_min)
+            .clamp(2, 13),
+    );
+    let details = pane_height(
+        Pane::Details,
+        height
+            .saturating_sub(activity + progress + equipment)
+            .max(details_min),
+    );
+    [
+        Constraint::Length(activity),
+        Constraint::Length(progress),
+        Constraint::Length(equipment),
+        Constraint::Length(details),
+        Constraint::Min(0),
+    ]
+}
+
+fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::from(format!("Character ID: {}", character.id)),
+        Line::from(format!(
+            "Last task elapsed: {}",
+            format_elapsed(character.activity.elapsed)
+        )),
+    ];
+    if !character.profile.motto.is_empty() {
+        lines.push(Line::from(format!("Motto: {}", character.profile.motto)));
+    }
+    if !character.profile.guild.is_empty() {
+        lines.push(Line::from(format!("Guild: {}", character.profile.guild)));
+    }
+    lines
+}
+
+fn format_elapsed(seconds: u64) -> String {
+    let units = [
+        (seconds / 86_400, "d"),
+        (seconds / 3_600 % 24, "h"),
+        (seconds / 60 % 60, "m"),
+        (seconds % 60, "s"),
+    ];
+    units
+        .into_iter()
+        .skip_while(|(value, unit)| *value == 0 && *unit != "s")
+        .map(|(value, unit)| format!("{value}{unit}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn right_pane_constraints(visibility: &PaneVisibility) -> [Constraint; 2] {
@@ -1263,20 +1473,6 @@ fn activity_text(activity: &Activity) -> &str {
         &activity.task
     } else {
         &activity.kill
-    }
-}
-
-fn quest_target_text(target: &str) -> String {
-    let mut fields = target.split('|');
-    let monster = fields.next().unwrap_or_default();
-    if monster.is_empty() {
-        return "none".to_owned();
-    }
-    match (fields.next(), fields.next()) {
-        (Some(quantity), Some(item)) if !item.is_empty() => {
-            format!("{monster} — collect {quantity} {item}")
-        }
-        _ => monster.to_owned(),
     }
 }
 
@@ -1518,6 +1714,392 @@ mod tests {
         brag_results: std::cell::RefCell<Vec<Result<DeliveryOutcome, DashboardError>>>,
     }
 
+    struct ProfileProvider {
+        observer: FakeProvider,
+        calls: RefCell<Vec<(CharacterId, ProfileField, String)>>,
+        motto: RefCell<Vec<Result<DeliveryOutcome, DashboardError>>>,
+        guild: RefCell<Vec<Result<GuildOutcome, DashboardError>>>,
+    }
+
+    impl DashboardProvider for ProfileProvider {
+        fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError> {
+            self.observer.refresh(id)
+        }
+        fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
+            self.observer.read_state(id)
+        }
+        fn lifecycle(
+            &self,
+            action: LifecycleAction,
+            id: &CharacterId,
+        ) -> Result<(), DashboardError> {
+            self.observer.lifecycle(action, id)
+        }
+        fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+            self.observer.brag(id)
+        }
+        fn set_motto(
+            &self,
+            id: &CharacterId,
+            text: &str,
+        ) -> Result<DeliveryOutcome, DashboardError> {
+            self.calls
+                .borrow_mut()
+                .push((id.clone(), ProfileField::Motto, text.to_owned()));
+            self.motto.borrow_mut().remove(0)
+        }
+        fn set_guild(&self, id: &CharacterId, text: &str) -> Result<GuildOutcome, DashboardError> {
+            self.calls
+                .borrow_mut()
+                .push((id.clone(), ProfileField::Guild, text.to_owned()));
+            self.guild.borrow_mut().remove(0)
+        }
+    }
+
+    fn profile_provider(next: DashboardSnapshot) -> ProfileProvider {
+        ProfileProvider {
+            observer: fake_provider(vec![Ok(next)], Vec::new()),
+            calls: RefCell::new(Vec::new()),
+            motto: RefCell::new(vec![Ok(DeliveryOutcome::Delivered)]),
+            guild: RefCell::new(vec![Ok(GuildOutcome::Accepted)]),
+        }
+    }
+
+    fn key_event(code: KeyCode) -> Event {
+        Event::Key(crossterm::event::KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn profile_editors_treat_action_keys_as_text_and_cancel_without_calls() {
+        let snapshot = active_snapshot(250.0, 1_000);
+        let id = snapshot.character.id.clone();
+        let now = Instant::now();
+        for (key, field) in [('m', ProfileField::Motto), ('g', ProfileField::Guild)] {
+            let mut initial = snapshot.clone();
+            initial.character.profile.motto = "Old".to_owned();
+            initial.character.profile.guild = "Old".to_owned();
+            let provider = profile_provider(initial.clone());
+            let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+            state.handle_event(&provider, &id, key_event(KeyCode::Char(key)), now);
+            assert_eq!(state.editor.as_ref().unwrap().field, field);
+            assert_eq!(state.editor.as_ref().unwrap().text, "Old");
+            for value in "qrbmsxcg\u{2603}\u{754c}".chars() {
+                assert!(!state.handle_event(&provider, &id, key_event(KeyCode::Char(value)), now));
+            }
+            state.handle_event(&provider, &id, key_event(KeyCode::Backspace), now);
+            state.handle_event(&provider, &id, key_event(KeyCode::Char('\n')), now);
+            state.handle_event(&provider, &id, key_event(KeyCode::F(1)), now);
+            assert_eq!(state.editor.as_ref().unwrap().text, "Oldqrbmsxcg\u{2603}");
+            assert!(!state.panes.is_collapsed(Pane::Activity));
+            assert!(state.confirmation.is_none());
+            state.handle_event(&provider, &id, key_event(KeyCode::Esc), now);
+            assert!(state.editor.is_none());
+            assert_eq!(
+                state.current.character.profile,
+                snapshot_with_profile("Old", "Old").character.profile
+            );
+            assert!(provider.calls.borrow().is_empty());
+            assert!(provider.observer.actions.borrow().is_empty());
+            assert!(provider.observer.brags.borrow().is_empty());
+            assert_eq!(provider.observer.refreshes.get(), 0);
+        }
+    }
+
+    fn snapshot_with_profile(motto: &str, guild: &str) -> DashboardSnapshot {
+        let mut snapshot = sample();
+        snapshot.character.profile = OnlineProfile {
+            motto: motto.to_owned(),
+            guild: guild.to_owned(),
+        };
+        snapshot
+    }
+
+    #[test]
+    fn profile_submissions_refresh_the_persisted_value_and_safe_outcome() {
+        let now = Instant::now();
+        for field in [ProfileField::Motto, ProfileField::Guild] {
+            for text in ["Changed \u{2603}", ""] {
+                let mut initial = snapshot_with_profile("Old", "Old");
+                initial.runtime_owned = Some(true);
+                let id = initial.character.id.clone();
+                let mut next = initial.clone();
+                match field {
+                    ProfileField::Motto => next.character.profile.motto = text.to_owned(),
+                    ProfileField::Guild => next.character.profile.guild = text.to_owned(),
+                }
+                let expected = next.character.profile.clone();
+                let provider = profile_provider(next);
+                let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+                state.apply(&provider, &id, Command::Edit(field), now);
+                for _ in 0..3 {
+                    state.handle_event(&provider, &id, key_event(KeyCode::Backspace), now);
+                }
+                for value in text.chars() {
+                    state.handle_event(&provider, &id, key_event(KeyCode::Char(value)), now);
+                }
+                state.handle_event(&provider, &id, key_event(KeyCode::Enter), now);
+                assert!(state.editor.is_none());
+                assert_eq!(state.current.character.profile, expected);
+                assert_eq!(
+                    *provider.calls.borrow(),
+                    [(id.clone(), field, text.to_owned())]
+                );
+                assert_eq!(provider.observer.refreshes.get(), 1);
+                assert_eq!(state.current.runtime_owned, Some(true));
+                let message = state.current.message.unwrap();
+                assert!(!message.contains("4242"));
+                assert!(!message.contains("alpaquil.php"));
+                assert!(message.contains(if field == ProfileField::Motto {
+                    "Motto saved"
+                } else {
+                    "accepted"
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn profile_failures_show_retained_values_and_safe_errors() {
+        let now = Instant::now();
+        for outcome in [GuildOutcome::Rejected, GuildOutcome::Indeterminate] {
+            let initial = snapshot_with_profile("Old motto", "Old guild");
+            let id = initial.character.id.clone();
+            let provider = profile_provider(initial.clone());
+            *provider.guild.borrow_mut() = vec![Ok(outcome)];
+            let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+            state.apply(&provider, &id, Command::Edit(ProfileField::Guild), now);
+            state.apply(&provider, &id, Command::Insert('!'), now);
+            state.apply(&provider, &id, Command::ConfirmAction, now);
+            assert_eq!(state.current.character.profile.guild, "Old guild");
+            assert_eq!(state.current.message.as_deref(), Some(outcome.message()));
+            assert_eq!(provider.calls.borrow().len(), 1);
+        }
+        for outcome in [
+            DeliveryOutcome::EndpointRejected,
+            DeliveryOutcome::DeliveryFailed,
+        ] {
+            let initial = snapshot_with_profile("Old", "Old guild");
+            let id = initial.character.id.clone();
+            let mut next = initial.clone();
+            next.character.profile.motto.push('!');
+            let provider = profile_provider(next);
+            *provider.motto.borrow_mut() = vec![Ok(outcome)];
+            let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+            state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+            state.apply(&provider, &id, Command::Insert('!'), now);
+            state.apply(&provider, &id, Command::ConfirmAction, now);
+            assert_eq!(state.current.character.profile.motto, "Old!");
+            assert_eq!(
+                state.current.message.as_deref(),
+                Some(outcome.motto_message())
+            );
+        }
+        let initial = sample();
+        let id = initial.character.id.clone();
+        let provider = profile_provider(initial.clone());
+        *provider.motto.borrow_mut() = vec![Err(ReportingError::InvalidProfileText.into())];
+        let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+        state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+        state.apply(&provider, &id, Command::ConfirmAction, now);
+        assert!(state.current.message.unwrap().contains("control character"));
+    }
+
+    #[test]
+    fn refresh_failure_after_profile_delivery_is_not_hidden() {
+        let initial = sample();
+        let id = initial.character.id.clone();
+        let provider = profile_provider(initial.clone());
+        *provider.observer.snapshots.borrow_mut() =
+            vec![Err(ReportingError::InvalidProfileText.into())];
+        let now = Instant::now();
+        let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+        state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+        state.apply(&provider, &id, Command::ConfirmAction, now);
+        let message = state.current.message.unwrap();
+        assert!(message.contains("Motto saved"));
+        assert!(message.contains("Could not refresh dashboard"));
+    }
+
+    #[test]
+    fn profile_editor_control_keys_and_interrupt_do_not_submit() {
+        for value in ['x', '\u{85}'] {
+            assert_eq!(
+                editor_command(Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Char(value),
+                    KeyModifiers::CONTROL
+                ))),
+                Command::None
+            );
+        }
+        assert_eq!(
+            editor_command(Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Char('c'),
+                KeyModifiers::CONTROL
+            ))),
+            Command::Quit
+        );
+        let initial = sample();
+        let id = initial.character.id.clone();
+        let provider = profile_provider(initial.clone());
+        let now = Instant::now();
+        let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+        state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+        assert!(state.apply(&provider, &id, Command::Quit, now));
+        assert!(provider.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn formats_elapsed_boundaries_without_leading_zero_units() {
+        for (seconds, expected) in [
+            (0, "0s"),
+            (59, "59s"),
+            (60, "1m 0s"),
+            (3600, "1h 0m 0s"),
+            (86400, "1d 0h 0m 0s"),
+            (90061, "1d 1h 1m 1s"),
+        ] {
+            assert_eq!(format_elapsed(seconds), expected);
+            let mut snapshot = sample();
+            snapshot.character.activity.elapsed = seconds;
+            let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render(
+                        frame,
+                        &snapshot,
+                        0,
+                        &RecentTaskUpdates::default(),
+                        None,
+                        &PaneVisibility::default(),
+                    )
+                })
+                .unwrap();
+            let output: String = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(output.contains(&format!("Last task elapsed: {expected}")));
+        }
+    }
+
+    #[test]
+    fn details_show_each_profile_line_independently_without_quest_target() {
+        for motto in ["", "Test motto"] {
+            for guild in ["", "Test guild"] {
+                for width in [90, 120] {
+                    let snapshot = snapshot_with_profile(motto, guild);
+                    let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            render(
+                                frame,
+                                &snapshot,
+                                0,
+                                &RecentTaskUpdates::default(),
+                                None,
+                                &PaneVisibility::default(),
+                            )
+                        })
+                        .unwrap();
+                    let output: String = terminal
+                        .backend()
+                        .buffer()
+                        .content()
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect();
+                    assert!(output.contains("Character ID:"));
+                    assert!(output.contains("Last task elapsed:"));
+                    assert_eq!(output.contains("Motto:"), !motto.is_empty());
+                    assert_eq!(output.contains("Guild:"), !guild.is_empty());
+                    assert!(!output.contains("Quest target"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn left_panes_fill_details_and_cap_equipment_for_all_collapses() {
+        for height in [20, 24, 40, 80] {
+            for mask in 0..128 {
+                let mut panes = PaneVisibility::default();
+                for (index, pane) in Pane::ALL.into_iter().enumerate() {
+                    if mask & (1 << index) != 0 {
+                        panes.toggle(pane);
+                    }
+                }
+                let areas = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(left_pane_constraints(&panes, height))
+                    .split(Rect::new(0, 0, 50, height));
+                for (index, pane, expanded) in [(0, Pane::Activity, 4), (1, Pane::Progress, 7)] {
+                    assert_eq!(
+                        areas[index].height,
+                        if panes.is_collapsed(pane) {
+                            2
+                        } else {
+                            expanded
+                        },
+                        "height={height}, mask={mask}, pane={pane:?}"
+                    );
+                }
+                assert!((2..=13).contains(&areas[2].height));
+                if panes.is_collapsed(Pane::Equipment) {
+                    assert_eq!(areas[2].height, 2);
+                }
+                if panes.is_collapsed(Pane::Details) {
+                    assert_eq!(areas[3].height, 2);
+                } else {
+                    assert!(areas[3].height >= 6);
+                    assert_eq!(
+                        areas[3].height,
+                        height - areas[0].height - areas[1].height - areas[2].height
+                    );
+                    assert_eq!(areas[3].bottom(), height);
+                    assert_eq!(areas[4].height, 0);
+                }
+                assert_eq!(areas.iter().map(|area| area.height).sum::<u16>(), height);
+            }
+        }
+    }
+
+    #[test]
+    fn profile_editor_and_help_render_at_narrow_and_full_widths() {
+        for width in [40, 70, 120] {
+            let output = rendered(width, 40);
+            for key in ["m motto", "g guild", "q quit", "c recover"] {
+                assert!(output.contains(key));
+            }
+            for field in [ProfileField::Motto, ProfileField::Guild] {
+                let mut terminal = Terminal::new(TestBackend::new(width, 20)).unwrap();
+                let editor = ProfileEditor {
+                    field,
+                    text: format!("{} \u{754c}", "long ".repeat(100)),
+                };
+                terminal
+                    .draw(|frame| render_editor(frame, &editor))
+                    .unwrap();
+                let output: String = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                assert!(output.contains('\u{754c}'));
+                assert!(output.contains("Enter submit | Esc cancel"));
+                assert!(output.contains(if field == ProfileField::Motto {
+                    "empty clears"
+                } else {
+                    "empty leaves"
+                }));
+            }
+        }
+    }
+
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
@@ -1574,6 +2156,14 @@ mod tests {
             self.brags.borrow_mut().push(id.clone());
             self.brag_results.borrow_mut().remove(0)
         }
+
+        fn set_motto(&self, _: &CharacterId, _: &str) -> Result<DeliveryOutcome, DashboardError> {
+            panic!("unexpected motto action")
+        }
+
+        fn set_guild(&self, _: &CharacterId, _: &str) -> Result<GuildOutcome, DashboardError> {
+            panic!("unexpected guild action")
+        }
     }
 
     fn sample() -> DashboardSnapshot {
@@ -1599,6 +2189,7 @@ mod tests {
                 plot: character.plot,
                 quests: character.quests,
                 current_quest: character.bestquest,
+                profile: character.profile,
             },
             service: Some(ServiceState::Inactive),
             runtime_owned: Some(false),
@@ -1908,14 +2499,9 @@ mod tests {
     }
 
     #[test]
-    fn activity_and_quest_target_use_human_readable_text() {
+    fn activity_uses_human_readable_text() {
         let activity = &sample().character.activity;
         assert_eq!(activity_text(activity), "Selling a widget...");
-        assert_eq!(
-            quest_target_text(&activity.questmonster),
-            "Goblin — collect 1 ear"
-        );
-        assert_eq!(quest_target_text(""), "none");
     }
 
     fn has_update_style(line: Line<'static>, label: &str) -> bool {
@@ -2748,38 +3334,22 @@ mod tests {
     }
 
     #[test]
-    fn expanded_details_has_exactly_five_rows() {
+    fn expanded_details_fills_remaining_vertical_space() {
         let areas = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(pane_constraints(
-                &[
-                    (Pane::Activity, 5),
-                    (Pane::Progress, 7),
-                    (Pane::Equipment, 5),
-                    (Pane::Details, 5),
-                ],
-                &PaneVisibility::default(),
-                &[Pane::Activity, Pane::Progress, Pane::Equipment],
-            ))
+            .constraints(left_pane_constraints(&PaneVisibility::default(), 40))
             .split(Rect::new(0, 0, 50, 40));
 
-        assert_eq!(areas[3].height, 5);
+        assert_eq!(areas[3].height, 16);
+        assert_eq!(areas[3].bottom(), 40);
+        assert_eq!(areas[4].height, 0);
     }
 
     #[test]
     fn expanded_progress_has_exactly_seven_rows() {
         let areas = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(pane_constraints(
-                &[
-                    (Pane::Activity, 5),
-                    (Pane::Progress, 7),
-                    (Pane::Equipment, 5),
-                    (Pane::Details, 5),
-                ],
-                &PaneVisibility::default(),
-                &[Pane::Activity, Pane::Progress, Pane::Equipment],
-            ))
+            .constraints(left_pane_constraints(&PaneVisibility::default(), 40))
             .split(Rect::new(0, 0, 50, 40));
 
         assert_eq!(areas[1].height, 7);
@@ -2794,11 +3364,17 @@ mod tests {
         .unwrap();
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&character).unwrap();
+        let profile = OnlineProfile {
+            motto: "Observed motto".to_owned(),
+            guild: "Observed guild".to_owned(),
+        };
+        store.replace_profile(&registered.id, &profile).unwrap();
         let local = LocalProvider {
-            store: Store::open_at(&directory.0).unwrap(),
+            store: RefCell::new(Store::open_at(&directory.0).unwrap()),
         };
         let state_only = local.read_state(&registered.id).unwrap();
         assert_eq!(state_only.identity.name, "Reference Hero");
+        assert_eq!(state_only.profile, profile);
 
         let active = collect_snapshot(
             &store,
@@ -2814,6 +3390,7 @@ mod tests {
         .unwrap();
         assert_eq!(active.service, Some(ServiceState::Active));
         assert_eq!(active.character.identity.name, "Reference Hero");
+        assert_eq!(active.character.profile, profile);
         assert!(!format!("{active:?}").contains("4242"));
 
         let failed = collect_snapshot(

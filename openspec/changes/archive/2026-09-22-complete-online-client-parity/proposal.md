@@ -23,8 +23,9 @@ elapsed-time display easier to read.
   their request ordering and profile snapshots are well defined without
   surrendering runtime ownership.
 - Extend the disposable browser conformance procedure and evidence gate to
-  cover non-empty and empty guild-designation submissions before production
-  guild requests are enabled.
+  cover accepted non-empty and empty guild-designation submissions plus a
+  deliberate invalid-designation rejection before production guild requests
+  are enabled.
 - Replace the dashboard's misleading Quest target line with conditional Motto
   and Guild lines when those values are present; reduce the Activity pane by
   one row; cap Equipment content at the eleven supported equipment slots; and
@@ -50,8 +51,9 @@ elapsed-time display easier to read.
 - `opt-in-leaderboard-reporting`: Explicit motto and guild operations join the
   gated, official-endpoint-only reporting surface with safe outcomes and no
   automatic retry.
-- `leaderboard-conformance`: Disposable browser evidence covers non-empty and
-  empty guild-designation requests and sanitized endpoint outcomes.
+- `leaderboard-conformance`: Disposable browser evidence covers accepted
+  non-empty and empty guild-designation requests, a rejected invalid
+  designation, and sanitized response fingerprints and endpoint outcomes.
 - `terminal-dashboard`: The dashboard exposes live motto and guild editing and
   revises pane contents, sizing, and elapsed-time formatting.
 
@@ -61,5 +63,6 @@ The change affects browser-save parsing, managed-character SQLite schema and
 migration, worker/report synchronization, reporting transport response
 handling, CLI commands, dashboard state/input/rendering, conformance scripts
 and fixtures, integration tests, and README documentation. It adds no new
-external service or dependency and continues to restrict authenticated traffic
-to the official Progress Quest endpoint.
+external service or package to the dependency graph; the already locked `ring`
+crate becomes a direct dependency for SHA-256 fingerprinting. Authenticated
+traffic remains restricted to the official Progress Quest endpoint.

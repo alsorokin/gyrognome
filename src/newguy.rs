@@ -214,6 +214,7 @@ pub fn generate_from_roll(
         date: "Offline character".to_owned(),
         stamp: unix_millis(),
         online: None,
+        profile: Default::default(),
         save_name: selection.name.clone(),
         bestspell: String::new(),
         bestquest: String::new(),

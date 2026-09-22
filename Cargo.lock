@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "gyrognome"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -397,6 +397,7 @@ dependencies = [
  "directories",
  "fs2",
  "ratatui",
+ "ring",
  "rusqlite",
  "serde",
  "serde_json",

@@ -85,6 +85,16 @@ enum Command {
     Delete { id: String },
     /// Submit one confirmed browser-compatible leaderboard report.
     Report { id: String },
+    /// Save a motto and deliver one report; --clear stores an empty motto.
+    Motto {
+        id: String,
+        #[arg(required_unless_present = "clear", conflicts_with = "clear")]
+        text: Option<String>,
+        #[arg(long)]
+        clear: bool,
+    },
+    /// Join or change guild; an explicitly empty designation leaves.
+    Guild { id: String, designation: String },
     /// Open an interactive credential-safe dashboard with an immediate manual Brag action.
     Dashboard {
         id: Option<String>,
@@ -290,6 +300,31 @@ pub fn run() -> Result<(), CliError> {
                 }
             }
         }
+        Command::Motto { id, text, clear: _ } => {
+            let id = parse_id(&id)?;
+            let mut store = Store::open_default()?;
+            #[cfg(feature = "enrollment-test-transport")]
+            let transport = reporting::TestEnrollmentTransport::from_environment();
+            #[cfg(not(feature = "enrollment-test-transport"))]
+            let transport = HttpsTransport;
+            let result =
+                reporting::set_motto(&mut store, &id, text.as_deref().unwrap_or(""), &transport)?;
+            println!("{}", result.outcome.motto_message());
+        }
+        Command::Guild { id, designation } => {
+            let id = parse_id(&id)?;
+            let mut store = Store::open_default()?;
+            #[cfg(feature = "enrollment-test-transport")]
+            let result = reporting::set_guild_for_test(
+                &mut store,
+                &id,
+                &designation,
+                &reporting::TestEnrollmentTransport::from_environment(),
+            )?;
+            #[cfg(not(feature = "enrollment-test-transport"))]
+            let result = reporting::set_guild(&mut store, &id, &designation, &HttpsTransport)?;
+            println!("{}", result.outcome.message());
+        }
         Command::Dashboard { id, refresh_ms } => {
             let stop = shutdown_flag()?;
             let id = match id {
@@ -441,9 +476,35 @@ fn print_status(status: RuntimeStatus, json: bool) -> Result<(), CliError> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
     use std::io::Cursor;
 
-    use super::delete_confirmed;
+    use super::{Args, Command, delete_confirmed};
+
+    #[test]
+    fn profile_commands_require_explicit_values_or_motto_clear() {
+        for args in [
+            vec!["gyrognome", "motto", "id"],
+            vec!["gyrognome", "motto", "id", "text", "--clear"],
+            vec!["gyrognome", "guild", "id"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
+        assert!(matches!(
+            Args::try_parse_from(["gyrognome", "motto", "id", "--clear"])
+                .unwrap()
+                .command,
+            Command::Motto {
+                text: None,
+                clear: true,
+                ..
+            }
+        ));
+        assert!(
+            matches!(Args::try_parse_from(["gyrognome", "guild", "id", ""]).unwrap().command,
+            Command::Guild { designation, .. } if designation.is_empty())
+        );
+    }
 
     #[test]
     fn deletion_requires_an_explicit_yes_confirmation() {

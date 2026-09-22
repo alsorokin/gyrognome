@@ -1,4 +1,4 @@
-# Spec Delta
+# online-character-profile Specification
 
 ## Purpose
 
@@ -6,7 +6,7 @@ Provide durable, credential-safe management of an online character's motto and
 guild membership through explicit client actions that remain available while
 the local runtime is active.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Persistent online profile metadata
 
@@ -35,7 +35,6 @@ updates SHALL NOT overwrite concurrently persisted simulation progress.
   persists simulation progress
 - **THEN** both the profile update and the complete simulation update remain
   durable without one overwriting the other
-
 ### Requirement: Explicit motto management
 
 The system SHALL provide CLI and dashboard actions that let an operator set or
@@ -74,7 +73,6 @@ or contacting the endpoint.
 
 - **WHEN** an operator cancels the dashboard motto editor
 - **THEN** the previous motto remains persisted and no network request occurs
-
 ### Requirement: Explicit guild membership management
 
 The system SHALL provide CLI and dashboard actions that let an operator submit
@@ -83,9 +81,10 @@ active or inactive. A non-empty designation SHALL request joining or changing
 guilds, and an empty designation SHALL request leaving the current guild. Each
 confirmed submission SHALL send exactly one browser-compatible guild request.
 The system SHALL update the persisted guild designation only when the official
-endpoint response matches a browser-derived accepted outcome for the submitted
-value; rejected or indeterminate responses SHALL preserve the previous
-designation.
+endpoint response matches a browser-derived accepted normalized response
+fingerprint for the submitted value; a validated rejected fingerprint or an
+unknown, oversized, unsuccessful, or undeliverable response SHALL preserve the
+previous designation.
 
 Guild designations SHALL accept non-control Unicode text, including an empty
 value. Cancelling dashboard input SHALL leave the guild unchanged and send no
@@ -117,7 +116,6 @@ request.
 - **WHEN** an operator cancels the dashboard guild editor
 - **THEN** the previous guild designation remains persisted and no network
   request occurs
-
 ### Requirement: Live online-action ordering
 
 The system SHALL serialize a managed character's explicit motto changes, guild
@@ -139,7 +137,6 @@ the order in which they acquire that boundary.
   character's simulation lock
 - **THEN** the profile action completes without stopping the runtime or
   violating exclusive simulation ownership
-
 ### Requirement: Credential-safe profile actions
 
 Online profile actions SHALL require a managed online character with a valid

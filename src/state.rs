@@ -33,6 +33,8 @@ pub struct Character {
     pub date: String,
     pub stamp: u64,
     pub online: Option<OnlineMetadata>,
+    #[serde(default)]
+    pub profile: OnlineProfile,
     pub save_name: String,
     pub bestspell: String,
     pub bestquest: String,
@@ -259,6 +261,12 @@ pub struct OnlineMetadata {
     pub host: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnlineProfile {
+    pub motto: String,
+    pub guild: String,
+}
+
 impl Character {
     pub(crate) fn from_document(document: Value) -> Result<Self, SaveError> {
         let root = object(&document, "document")?;
@@ -345,6 +353,10 @@ impl Character {
                     })
                 })
                 .transpose()?,
+            profile: OnlineProfile {
+                motto: string_or_default(root, "motto", "motto")?,
+                guild: string_or_default(root, "guild", "guild")?,
+            },
             save_name: string(root, "saveName", "saveName")?,
             bestspell: string(root, "bestspell", "bestspell")?,
             bestquest: string_or_default(root, "bestquest", "bestquest")?,
@@ -360,6 +372,7 @@ impl Character {
             .unwrap_or_else(|| "offline".to_owned());
         format!(
             "Identity\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\n  Online: {online}\n\
+             \nOnline Profile\n  Motto: {}\n  Guild: {}\n\
              \nAttributes\n  STR: {}\n  CON: {}\n  DEX: {}\n  INT: {}\n  WIS: {}\n  CHA: {}\n  HP Max: {}\n  MP Max: {}\n\
              \nActivity\n  Task: {}\n  Tasks: {}\n  Elapsed: {}\n  Status: {}\n  Quest monster: {}\n\
              \nProgress\n  Experience: {}/{}\n  Encumbrance: {}/{}\n  Plot: {}/{}\n  Quest: {}/{}\n  Task: {}/{}\n\
@@ -371,6 +384,8 @@ impl Character {
             self.traits.race,
             self.traits.class,
             self.traits.level,
+            self.profile.motto,
+            self.profile.guild,
             self.stats.strength,
             self.stats.constitution,
             self.stats.dexterity,

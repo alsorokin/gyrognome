@@ -24,14 +24,14 @@ use uuid::Uuid;
 
 use crate::{
     reporting::{HttpsTransport, ReportTransport},
-    state::Character,
+    state::{Character, OnlineProfile},
 };
 use rusqlite::OptionalExtension;
 #[cfg(test)]
 use serde_json::Value;
 
 const DATABASE_FILENAME: &str = "characters.sqlite3";
-const DATABASE_SCHEMA_VERSION: i64 = 1;
+const DATABASE_SCHEMA_VERSION: i64 = 2;
 pub const CANONICAL_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -154,6 +154,8 @@ pub struct Store {
     #[cfg(test)]
     fail_next_update: bool,
     #[cfg(test)]
+    fail_next_profile_update: bool,
+    #[cfg(test)]
     fail_next_remove: bool,
 }
 
@@ -162,11 +164,17 @@ pub struct CharacterLock {
     _file: File,
 }
 
+/// A short-lived advisory lock that serializes online requests for one character.
+pub(crate) struct OnlineActionLock {
+    _file: File,
+}
+
 pub(crate) struct ReportingTarget {
     pub(crate) identity: CharacterIdentity,
     pub(crate) state: Character,
     pub(crate) passkey: i32,
     _lock: Option<CharacterLock>,
+    _online_action_lock: OnlineActionLock,
 }
 
 impl Store {
@@ -190,6 +198,8 @@ impl Store {
             connection,
             #[cfg(test)]
             fail_next_update: false,
+            #[cfg(test)]
+            fail_next_profile_update: false,
             #[cfg(test)]
             fail_next_remove: false,
         })
@@ -224,6 +234,25 @@ impl Store {
             }
             Err(error) => Err(StorageError::Io(error)),
         }
+    }
+
+    pub(crate) fn acquire_online_action_lock(
+        &self,
+        id: &CharacterId,
+    ) -> Result<OnlineActionLock, StorageError> {
+        let lock_directory = self.data_root.join("locks");
+        fs::create_dir_all(&lock_directory)?;
+        restrict_permissions(&lock_directory, 0o700)?;
+        let lock_path = lock_directory.join(format!("{id}.online.lock"));
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)?;
+        restrict_permissions(&lock_path, 0o600)?;
+        file.lock_exclusive()?;
+        Ok(OnlineActionLock { _file: file })
     }
 
     pub fn is_owned(&self, id: &CharacterId) -> Result<bool, StorageError> {
@@ -261,9 +290,9 @@ impl Store {
         transaction.execute(
             "INSERT INTO characters (
                 id, name, race, character_class, level, canonical_state,
-                canonical_state_version, original_document, created_at_unix_ms,
-                updated_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                canonical_state_version, original_document, motto, guild,
+                created_at_unix_ms, updated_at_unix_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id.to_string(),
                 identity.name,
@@ -273,6 +302,8 @@ impl Store {
                 canonical_state,
                 CANONICAL_STATE_VERSION,
                 original_document,
+                character.profile.motto,
+                character.profile.guild,
                 now,
                 now,
             ],
@@ -292,7 +323,8 @@ impl Store {
     pub fn list(&self) -> Result<Vec<ManagedCharacter>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, name, race, character_class, level, canonical_state,
-                    canonical_state_version, created_at_unix_ms, updated_at_unix_ms
+                    canonical_state_version, motto, guild, created_at_unix_ms,
+                    updated_at_unix_ms
              FROM characters ORDER BY created_at_unix_ms, id",
         )?;
         let mut rows = statement.query([])?;
@@ -306,7 +338,8 @@ impl Store {
     pub fn get(&self, id: &CharacterId) -> Result<ManagedCharacter, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, name, race, character_class, level, canonical_state,
-                    canonical_state_version, created_at_unix_ms, updated_at_unix_ms
+                    canonical_state_version, motto, guild, created_at_unix_ms,
+                    updated_at_unix_ms
              FROM characters WHERE id = ?1",
         )?;
         let mut rows = statement.query([id.to_string()])?;
@@ -316,6 +349,53 @@ impl Store {
         }
     }
 
+    pub fn profile(&self, id: &CharacterId) -> Result<OnlineProfile, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT motto, guild FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| {
+                    Ok(OnlineProfile {
+                        motto: row.get(0)?,
+                        guild: row.get(1)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))
+    }
+
+    pub fn replace_profile(
+        &mut self,
+        id: &CharacterId,
+        profile: &OnlineProfile,
+    ) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_profile_update) {
+            transaction.execute(
+                "UPDATE characters SET motto = ?1 WHERE id = ?2",
+                params![profile.motto, id.to_string()],
+            )?;
+            return Err(StorageError::InjectedFailure);
+        }
+
+        let changed = transaction.execute(
+            "UPDATE characters
+             SET motto = ?1, guild = ?2, updated_at_unix_ms = ?3
+             WHERE id = ?4",
+            params![profile.motto, profile.guild, unix_millis(), id.to_string()],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::NotFound(id.clone()));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// Resolves an inactive imported online character while retaining its
     /// ownership lock for the reporting operation.
     pub(crate) fn reporting_target(
@@ -323,6 +403,7 @@ impl Store {
         id: &CharacterId,
     ) -> Result<ReportingTarget, StorageError> {
         let lock = self.acquire_lock(id)?;
+        let online_action_lock = self.acquire_online_action_lock(id)?;
         let character = self.get(id)?;
         if character.state.online.is_none() {
             return Err(StorageError::ReportingIneligible);
@@ -347,6 +428,7 @@ impl Store {
             state: character.state,
             passkey,
             _lock: Some(lock),
+            _online_action_lock: online_action_lock,
         })
     }
 
@@ -357,6 +439,7 @@ impl Store {
         &self,
         id: &CharacterId,
     ) -> Result<ReportingTarget, StorageError> {
+        let online_action_lock = self.acquire_online_action_lock(id)?;
         let character = self.get(id)?;
         if character.state.online.is_none() {
             return Err(StorageError::ReportingIneligible);
@@ -381,6 +464,42 @@ impl Store {
             state: character.state,
             passkey,
             _lock: None,
+            _online_action_lock: online_action_lock,
+        })
+    }
+
+    /// Resolves an online credential while holding only the short-lived online
+    /// action lock, allowing profile actions during active simulation.
+    pub(crate) fn online_action_target(
+        &self,
+        id: &CharacterId,
+    ) -> Result<ReportingTarget, StorageError> {
+        let online_action_lock = self.acquire_online_action_lock(id)?;
+        let character = self.get(id)?;
+        if character.state.online.is_none() {
+            return Err(StorageError::ReportingIneligible);
+        }
+        let source = self
+            .connection
+            .query_row(
+                "SELECT original_document FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let document: serde_json::Value =
+            serde_json::from_str(&source).map_err(StorageError::StateJson)?;
+        let passkey = document["online"]["passkey"]
+            .as_i64()
+            .and_then(|value| i32::try_from(value).ok())
+            .ok_or(StorageError::ReportingIneligible)?;
+        Ok(ReportingTarget {
+            identity: character.identity,
+            state: character.state,
+            passkey,
+            _lock: None,
+            _online_action_lock: online_action_lock,
         })
     }
 
@@ -474,6 +593,11 @@ impl Store {
     }
 
     #[cfg(test)]
+    fn inject_next_profile_update_failure(&mut self) {
+        self.fail_next_profile_update = true;
+    }
+
+    #[cfg(test)]
     fn inject_next_remove_failure(&mut self) {
         self.fail_next_remove = true;
     }
@@ -489,20 +613,54 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StorageError> {
         transaction.commit()?;
         return Ok(());
     }
-    transaction.execute_batch(
-        "CREATE TABLE IF NOT EXISTS characters (
-            id TEXT PRIMARY KEY NOT NULL,
-            name TEXT NOT NULL,
-            race TEXT NOT NULL,
-            character_class TEXT NOT NULL,
-            level INTEGER NOT NULL,
-            canonical_state TEXT NOT NULL,
-            canonical_state_version INTEGER NOT NULL,
-            original_document TEXT NOT NULL,
-            created_at_unix_ms INTEGER NOT NULL,
-            updated_at_unix_ms INTEGER NOT NULL
-        );",
-    )?;
+    if version == 0 {
+        transaction.execute_batch(
+            "CREATE TABLE characters (
+                id TEXT PRIMARY KEY NOT NULL,
+                name TEXT NOT NULL,
+                race TEXT NOT NULL,
+                character_class TEXT NOT NULL,
+                level INTEGER NOT NULL,
+                canonical_state TEXT NOT NULL,
+                canonical_state_version INTEGER NOT NULL,
+                original_document TEXT NOT NULL,
+                motto TEXT NOT NULL DEFAULT '',
+                guild TEXT NOT NULL DEFAULT '',
+                created_at_unix_ms INTEGER NOT NULL,
+                updated_at_unix_ms INTEGER NOT NULL
+            );",
+        )?;
+    } else if version == 1 {
+        transaction.execute_batch(
+            "ALTER TABLE characters ADD COLUMN motto TEXT NOT NULL DEFAULT '';
+             ALTER TABLE characters ADD COLUMN guild TEXT NOT NULL DEFAULT '';",
+        )?;
+        let profiles = {
+            let mut statement =
+                transaction.prepare("SELECT id, original_document FROM characters")?;
+            let rows = statement.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (id, source) in profiles {
+            let document = serde_json::from_str::<serde_json::Value>(&source).ok();
+            let motto = document
+                .as_ref()
+                .and_then(|value| value.get("motto"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let guild = document
+                .as_ref()
+                .and_then(|value| value.get("guild"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            transaction.execute(
+                "UPDATE characters SET motto = ?1, guild = ?2 WHERE id = ?3",
+                params![motto, guild, id],
+            )?;
+        }
+    }
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -515,7 +673,12 @@ fn restrict_permissions(path: &Path, mode: u32) -> Result<(), StorageError> {
 
 fn managed_character_from_row(row: &rusqlite::Row<'_>) -> Result<ManagedCharacter, StorageError> {
     let id = CharacterId::parse(&row.get::<_, String>(0)?)?;
-    let state = serde_json::from_str(&row.get::<_, String>(5)?).map_err(StorageError::StateJson)?;
+    let mut state: Character =
+        serde_json::from_str(&row.get::<_, String>(5)?).map_err(StorageError::StateJson)?;
+    state.profile = OnlineProfile {
+        motto: row.get(7)?,
+        guild: row.get(8)?,
+    };
     Ok(ManagedCharacter {
         id,
         identity: CharacterIdentity {
@@ -526,14 +689,16 @@ fn managed_character_from_row(row: &rusqlite::Row<'_>) -> Result<ManagedCharacte
                 .map_err(|_| StorageError::IntegerOutOfRange("level"))?,
         },
         state_version: row.get(6)?,
-        created_at_unix_ms: row.get(7)?,
-        updated_at_unix_ms: row.get(8)?,
+        created_at_unix_ms: row.get(9)?,
+        updated_at_unix_ms: row.get(10)?,
         state,
     })
 }
 
 fn canonical_json(character: &Character) -> Result<String, StorageError> {
-    serde_json::to_string(character).map_err(StorageError::StateJson)
+    let mut canonical = character.clone();
+    canonical.profile = OnlineProfile::default();
+    serde_json::to_string(&canonical).map_err(StorageError::StateJson)
 }
 
 fn identity(character: &Character) -> CharacterIdentity {
@@ -682,7 +847,7 @@ mod tests {
 
     use base64::{Engine, engine::general_purpose::STANDARD};
     use serde_json::json;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, mpsc};
     use url::Url;
 
     use super::*;
@@ -713,6 +878,56 @@ mod tests {
     fn fixture_character() -> Character {
         save::import_text(&STANDARD.encode(include_str!("../tests/fixtures/reference-save.json")))
             .unwrap()
+    }
+
+    fn create_version_one_database(
+        data_root: &Path,
+        character: &Character,
+    ) -> (CharacterId, String, String) {
+        fs::create_dir_all(data_root).unwrap();
+        let connection = Connection::open(data_root.join(DATABASE_FILENAME)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE characters (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    race TEXT NOT NULL,
+                    character_class TEXT NOT NULL,
+                    level INTEGER NOT NULL,
+                    canonical_state TEXT NOT NULL,
+                    canonical_state_version INTEGER NOT NULL,
+                    original_document TEXT NOT NULL,
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL
+                );
+                PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        let id = CharacterId::new();
+        let canonical_state = serde_json::to_string(character).unwrap();
+        let original_document = serde_json::to_string(&character.document).unwrap();
+        connection
+            .execute(
+                "INSERT INTO characters (
+                    id, name, race, character_class, level, canonical_state,
+                    canonical_state_version, original_document, created_at_unix_ms,
+                    updated_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    id.to_string(),
+                    character.traits.name,
+                    character.traits.race,
+                    character.traits.class,
+                    sqlite_integer(character.traits.level, "level").unwrap(),
+                    canonical_state,
+                    CANONICAL_STATE_VERSION,
+                    original_document,
+                    1_i64,
+                    2_i64,
+                ],
+            )
+            .unwrap();
+        (id, canonical_state, original_document)
     }
 
     #[test]
@@ -746,6 +961,93 @@ mod tests {
                 & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn migrates_version_one_profile_values_without_changing_private_data() {
+        let directory = TestDirectory::new("profile-migration");
+        let mut character = fixture_character();
+        character.document["motto"] = json!("Steady progress");
+        character.document["guild"] = json!("Gnomes");
+        let (id, canonical_state, original_document) =
+            create_version_one_database(&directory.0, &character);
+
+        let store = Store::open_at(&directory.0).unwrap();
+
+        let version: i64 = store
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, DATABASE_SCHEMA_VERSION);
+        let persisted: (String, String, String, String) = store
+            .connection
+            .query_row(
+                "SELECT motto, guild, canonical_state, original_document
+                 FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(persisted.0, "Steady progress");
+        assert_eq!(persisted.1, "Gnomes");
+        assert_eq!(persisted.2, canonical_state);
+        assert_eq!(persisted.3, original_document);
+        assert_eq!(
+            serde_json::from_str::<Value>(&persisted.3).unwrap()["online"]["passkey"],
+            4242
+        );
+    }
+
+    #[test]
+    fn migration_defaults_missing_invalid_or_malformed_profile_values() {
+        for (label, document) in [
+            ("missing", json!({"online": {"passkey": 4242}})),
+            ("invalid", json!({"motto": 7, "guild": false})),
+            ("malformed", Value::String("not json".to_owned())),
+        ] {
+            let directory = TestDirectory::new(label);
+            let mut character = fixture_character();
+            character.document = document;
+            let (id, _, _) = create_version_one_database(&directory.0, &character);
+            if label == "malformed" {
+                Store::open_at(&directory.0)
+                    .unwrap()
+                    .connection
+                    .execute(
+                        "UPDATE characters SET original_document = 'not json' WHERE id = ?1",
+                        [id.to_string()],
+                    )
+                    .unwrap();
+            }
+
+            let store = Store::open_at(&directory.0).unwrap();
+            let profile: (String, String) = store
+                .connection
+                .query_row(
+                    "SELECT motto, guild FROM characters WHERE id = ?1",
+                    [id.to_string()],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(profile, (String::new(), String::new()));
+        }
+    }
+
+    #[test]
+    fn rejects_database_schemas_newer_than_supported() {
+        let directory = TestDirectory::new("newer-schema");
+        fs::create_dir_all(&directory.0).unwrap();
+        let connection = Connection::open(directory.0.join(DATABASE_FILENAME)).unwrap();
+        connection
+            .pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION + 1)
+            .unwrap();
+        drop(connection);
+
+        assert!(matches!(
+            Store::open_at(&directory.0),
+            Err(StorageError::UnsupportedSchema(version))
+                if version == DATABASE_SCHEMA_VERSION + 1
+        ));
     }
 
     #[test]
@@ -862,6 +1164,81 @@ mod tests {
     }
 
     #[test]
+    fn profile_updates_are_independent_from_canonical_state_writes() {
+        let directory = TestDirectory::new("profile-state-independence");
+        let mut state_store = Store::open_at(&directory.0).unwrap();
+        let registered = state_store.register(&fixture_character()).unwrap();
+        let mut stale_state = registered.state.clone();
+        stale_state.activity.tasks += 1;
+
+        let mut profile_store = Store::open_at(&directory.0).unwrap();
+        let profile = OnlineProfile {
+            motto: "Persist independently".to_owned(),
+            guild: "Gnomes".to_owned(),
+        };
+        profile_store
+            .replace_profile(&registered.id, &profile)
+            .unwrap();
+        state_store
+            .replace_state(&registered.id, &stale_state)
+            .unwrap();
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        let managed = reopened.get(&registered.id).unwrap();
+        assert_eq!(managed.state.activity.tasks, stale_state.activity.tasks);
+        assert_eq!(managed.state.profile, profile);
+        assert_eq!(reopened.profile(&registered.id).unwrap(), profile);
+    }
+
+    #[test]
+    fn failed_profile_update_retains_the_previous_complete_profile() {
+        let directory = TestDirectory::new("profile-transaction");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let original = OnlineProfile {
+            motto: "Original motto".to_owned(),
+            guild: "Original guild".to_owned(),
+        };
+        store.replace_profile(&registered.id, &original).unwrap();
+        store.inject_next_profile_update_failure();
+
+        assert!(matches!(
+            store.replace_profile(
+                &registered.id,
+                &OnlineProfile {
+                    motto: "Partial motto".to_owned(),
+                    guild: "Replacement guild".to_owned(),
+                }
+            ),
+            Err(StorageError::InjectedFailure)
+        ));
+        drop(store);
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        assert_eq!(reopened.profile(&registered.id).unwrap(), original);
+        assert_eq!(
+            reopened.get(&registered.id).unwrap().state.profile,
+            original
+        );
+    }
+
+    #[test]
+    fn profile_operations_report_missing_characters() {
+        let directory = TestDirectory::new("profile-missing");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let id = CharacterId::new();
+
+        assert!(matches!(
+            store.profile(&id),
+            Err(StorageError::NotFound(missing)) if missing == id
+        ));
+        assert!(matches!(
+            store.replace_profile(&id, &OnlineProfile::default()),
+            Err(StorageError::NotFound(missing)) if missing == id
+        ));
+    }
+
+    #[test]
     fn removes_all_persisted_character_data_atomically() {
         let directory = TestDirectory::new("remove");
         let mut store = Store::open_at(&directory.0).unwrap();
@@ -956,6 +1333,53 @@ mod tests {
 
         drop(first);
         Worker::start(Store::open_at(&directory.0).unwrap(), registered.id).unwrap();
+    }
+
+    #[test]
+    fn online_action_lock_serializes_without_using_worker_ownership() {
+        let directory = TestDirectory::new("online-action-lock");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let first = store.acquire_online_action_lock(&registered.id).unwrap();
+        let path = directory.0.clone();
+        let id = registered.id.clone();
+        let (sender, receiver) = mpsc::channel();
+
+        let waiting = thread::spawn(move || {
+            let store = Store::open_at(path).unwrap();
+            let second = store.acquire_online_action_lock(&id).unwrap();
+            sender.send(()).unwrap();
+            drop(second);
+        });
+
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(first);
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        waiting.join().unwrap();
+    }
+
+    #[test]
+    fn online_action_lock_does_not_block_worker_ownership_or_profile_updates() {
+        let directory = TestDirectory::new("online-action-boundaries");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        let online_action = store.acquire_online_action_lock(&registered.id).unwrap();
+
+        let profile = OnlineProfile {
+            motto: "Still running".to_owned(),
+            guild: "Gnomes".to_owned(),
+        };
+        Store::open_at(&directory.0)
+            .unwrap()
+            .replace_profile(&registered.id, &profile)
+            .unwrap();
+
+        assert!(store.is_owned(&registered.id).unwrap());
+        assert_eq!(store.profile(&registered.id).unwrap(), profile);
+        drop(online_action);
+        drop(worker);
     }
 
     #[test]
@@ -1242,6 +1666,7 @@ mod tests {
 
     struct RecordingTransport {
         triggers: Arc<Mutex<Vec<String>>>,
+        mottos: Arc<Mutex<Vec<String>>>,
         outcome: DeliveryOutcome,
     }
 
@@ -1251,6 +1676,14 @@ mod tests {
                 request
                     .query_pairs()
                     .find(|(key, _)| key == "t")
+                    .unwrap()
+                    .1
+                    .into_owned(),
+            );
+            self.mottos.lock().unwrap().push(
+                request
+                    .query_pairs()
+                    .find(|(key, _)| key == "m")
                     .unwrap()
                     .1
                     .into_owned(),
@@ -1273,9 +1706,20 @@ mod tests {
         initial.queue = vec!["plot|1|Loading".to_owned()];
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&initial).unwrap();
+        store
+            .replace_profile(
+                &registered.id,
+                &OnlineProfile {
+                    motto: "Worker profile motto".to_owned(),
+                    guild: String::new(),
+                },
+            )
+            .unwrap();
         let triggers = Arc::new(Mutex::new(Vec::new()));
+        let mottos = Arc::new(Mutex::new(Vec::new()));
         let transport = RecordingTransport {
             triggers: Arc::clone(&triggers),
+            mottos: Arc::clone(&mottos),
             outcome: DeliveryOutcome::Delivered,
         };
         let mut worker = Worker::start_with_transport(
@@ -1290,6 +1734,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(*triggers.lock().unwrap(), ["l", "a"]);
+        assert_eq!(
+            *mottos.lock().unwrap(),
+            [
+                "Worker profile motto".to_owned(),
+                "Worker profile motto".to_owned()
+            ]
+        );
         assert_eq!(
             Store::open_at(&directory.0)
                 .unwrap()
@@ -1316,8 +1767,10 @@ mod tests {
         let mut store = Store::open_at(&directory.0).unwrap();
         let online_registered = store.register(&online).unwrap();
         let failed_triggers = Arc::new(Mutex::new(Vec::new()));
+        let failed_mottos = Arc::new(Mutex::new(Vec::new()));
         let failed = RecordingTransport {
             triggers: Arc::clone(&failed_triggers),
+            mottos: Arc::clone(&failed_mottos),
             outcome: DeliveryOutcome::DeliveryFailed,
         };
         let mut online_worker = Worker::start_with_transport(
@@ -1345,8 +1798,10 @@ mod tests {
         offline.online = None;
         let offline_registered = store.register(&offline).unwrap();
         let suppressed_triggers = Arc::new(Mutex::new(Vec::new()));
+        let suppressed_mottos = Arc::new(Mutex::new(Vec::new()));
         let suppressed = RecordingTransport {
             triggers: Arc::clone(&suppressed_triggers),
+            mottos: Arc::clone(&suppressed_mottos),
             outcome: DeliveryOutcome::Delivered,
         };
         let mut offline_worker = Worker::start_with_transport(

@@ -105,34 +105,44 @@ for the `m` field.
 ### Persist guild only after a conformance-recognized acceptance
 
 Guild membership is server-authoritative. Deliver `cmd=guild`, consume the
-response body internally, and map only browser-observed response forms to safe
-accepted, rejected, or indeterminate outcomes. Persist the submitted
-designation only for an accepted outcome; an accepted empty designation clears
-the current guild.
+response body internally to a fixed maximum size, and map only
+browser-observed normalized response fingerprints to safe accepted or rejected
+outcomes. Normalize by replacing every occurrence of the prior and submitted
+guild designations with fixed placeholders before computing a SHA-256
+fingerprint. Persist the submitted designation only for a validated accepted
+fingerprint; an accepted empty designation clears the current guild. A
+validated rejected fingerprint preserves the prior guild, while any unknown,
+oversized, unsuccessful, or undeliverable response is indeterminate and also
+preserves the prior guild.
 
 Persisting before delivery was rejected because a rejected designation would
 be displayed locally as membership. Treating every HTTP 2xx as acceptance was
 rejected because the browser consumes an application-level message and
 optional navigation target from the response body.
 
-The transport must bound response-body size and must never return or log the
-raw body. Unknown content becomes an indeterminate safe failure and preserves
-the prior guild value.
+The transport must never return or log the raw body or normalized text.
+Conformance evidence stores only the safe fingerprint, accepted or rejected
+category, sanitized request descriptor, and browser effects. Accepted and
+rejected fingerprints must be distinct; otherwise evidence validation fails
+closed.
 
 ### Extend disposable conformance before enabling guild delivery
 
-Extend the existing browser harness with a non-empty guild-designation
-submission followed by an empty guild-designation submission for its newly
-created disposable character. Capture request field names, operation ordering,
-browser-visible acceptance/rejection categories, cleanup status, and existing
-anti-cheat classification. Do not capture credentials, signed URLs, raw
-response bodies, or identifying private-guild text.
+Extend the existing browser harness with an accepted non-empty
+guild-designation submission, a deliberately invalid designation that the
+endpoint rejects, and an accepted empty guild-designation submission for its
+newly created disposable character. The harness may hold raw bodies only
+ephemerally while normalizing the current and submitted designations and
+computing fingerprints. Capture request field names, operation ordering, safe
+accepted/rejected categories and fingerprints, cleanup status, and existing
+anti-cheat classification. Do not persist credentials, signed URLs, raw or
+normalized response text, or identifying private-guild text.
 
-Bundled evidence validation gains explicit passing non-empty submission, empty
-submission, and cleanup requirements. Production guild actions fail closed
-before transport until that evidence is complete. Motto delivery continues to
-rely on the existing motto-change trace evidence plus the general
-enrollment/reporting gate.
+Bundled evidence validation gains explicit passing accepted non-empty,
+rejected invalid, accepted empty, distinct-fingerprint, and cleanup
+requirements. Production guild actions fail closed before transport until that
+evidence is complete. Motto delivery continues to rely on the existing
+motto-change trace evidence plus the general enrollment/reporting gate.
 
 ### Expose explicit CLI commands and dashboard editors
 
@@ -172,8 +182,9 @@ Change the full-layout left-column allocations as follows:
 - Activity: four total rows, containing two border rows and the existing two
   content lines.
 - Progress: unchanged at seven total rows.
-- Details: six total rows, allowing Character ID, formatted elapsed time,
-  Motto, and optional Guild.
+- Details: fills the remaining left-column height, reserving at least six
+  total rows when space permits for Character ID, formatted elapsed time,
+  Motto, and optional Guild. When collapsed, it retains only two border rows.
 - Equipment: flexible but capped at thirteen total rows, providing no more
   than eleven inner rows for the eleven equipment slots.
 

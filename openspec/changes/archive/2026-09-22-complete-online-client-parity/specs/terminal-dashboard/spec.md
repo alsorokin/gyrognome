@@ -52,8 +52,10 @@ every other pane. When both are expanded, Journal SHALL consume no more than
 one quarter of the usable right-column height and Adventure SHALL receive the
 remaining space. When expanded in the full dashboard layout, Activity SHALL
 occupy exactly four terminal rows, consisting of two border rows and two
-inner-content rows. Details SHALL occupy exactly six terminal rows, consisting
-of two border rows and up to four profile-detail rows. Progress SHALL occupy
+inner-content rows. Expanded Details SHALL fill all remaining left-column
+height after allocating Activity, Progress, and the capped Equipment pane,
+with at least six total rows when space permits. Collapsed Details SHALL
+occupy only its two border rows. Progress SHALL occupy
 exactly seven terminal rows, consisting of two border rows and five inner
 progress-bar rows. Equipment SHALL receive flexible space when available but
 its inner content height SHALL NOT exceed eleven rows, matching the maximum
@@ -86,8 +88,14 @@ view for terminals that do not use the full layout.
 #### Scenario: Allocating Details height
 
 - **WHEN** Details is expanded in the full dashboard layout
-- **THEN** it occupies exactly six terminal rows with two border rows and up to
-  four profile-detail rows
+- **THEN** it fills all remaining left-column height after allocating the other
+  panes, reserving at least six total rows when space permits
+- **AND** no unused vertical space remains below Details
+
+#### Scenario: Collapsing Details
+
+- **WHEN** Details is collapsed in the full dashboard layout
+- **THEN** it occupies only two border rows rather than absorbing unused space
 
 #### Scenario: Allocating Progress height
 

@@ -21,6 +21,47 @@ fn imports_complete_ordered_canonical_state() {
     assert_eq!(character.spells[1].rank, "II");
     assert_eq!(character.quests[1], "Fetch me an anvil");
     assert_eq!(character.online.unwrap().realm, "Alpaquil");
+    assert_eq!(character.profile.motto, "");
+    assert_eq!(character.profile.guild, "");
+}
+
+#[test]
+fn imports_optional_online_profile_values() {
+    let mut document: Value =
+        serde_json::from_str(include_str!("fixtures/reference-save.json")).unwrap();
+    document["motto"] = json!("Progress through persistence");
+    document["guild"] = json!("Gnomes");
+
+    let character = import_text(&STANDARD.encode(serde_json::to_vec(&document).unwrap())).unwrap();
+
+    assert_eq!(character.profile.motto, "Progress through persistence");
+    assert_eq!(character.profile.guild, "Gnomes");
+    assert!(
+        character
+            .summary()
+            .contains("Motto: Progress through persistence")
+    );
+    assert!(character.summary().contains("Guild: Gnomes"));
+    let inspected = serde_json::to_value(character).unwrap();
+    assert_eq!(
+        inspected["profile"]["motto"],
+        "Progress through persistence"
+    );
+    assert_eq!(inspected["profile"]["guild"], "Gnomes");
+}
+
+#[test]
+fn rejects_invalid_present_online_profile_values() {
+    for field in ["motto", "guild"] {
+        let mut document: Value =
+            serde_json::from_str(include_str!("fixtures/reference-save.json")).unwrap();
+        document[field] = json!(42);
+
+        let error =
+            import_text(&STANDARD.encode(serde_json::to_vec(&document).unwrap())).unwrap_err();
+
+        assert!(error.to_string().contains(field));
+    }
 }
 
 #[test]
@@ -74,6 +115,7 @@ fn json_and_text_inspection_redact_private_data() {
     assert!(json.contains("\"Inventory\""));
     for section in [
         "Identity",
+        "Online Profile",
         "Attributes",
         "Activity",
         "Progress",

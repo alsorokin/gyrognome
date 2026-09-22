@@ -11,10 +11,11 @@ its passkey SHALL remain only in the ephemeral browser experiment. The
 procedure SHALL compare browser and Gyrognome report histories across initial
 load, pause, restart, delayed callbacks, task completion, level-up, act
 completion, manual bragging, and motto change. It SHALL additionally exercise
-a non-empty guild-designation submission followed by an empty
-guild-designation submission through the official browser, record their
-request shape and sanitized accepted or rejected outcome categories, and
-restore the disposable character to no guild before completion. It SHALL
+an accepted non-empty guild-designation submission, an accepted empty
+guild-designation submission, and a deliberately invalid designation
+through the official browser, record their request shape and sanitized
+accepted or rejected outcome categories, and restore the disposable
+character to no guild before completion. It SHALL
 record only credential-free observations and SHALL require evidence that the
 Gyrognome character appears in the normal leaderboard population rather than
 the cheater population. Native `newguy` character-generation support is not
@@ -28,13 +29,22 @@ required.
   records credential-free comparison, guild-outcome, and
   leaderboard-classification evidence for the disposable character
 
-#### Scenario: Observing non-empty and empty guild submissions
+#### Scenario: Observing accepted and rejected guild submissions
 
 - **WHEN** the disposable browser character submits a testable existing guild
-  designation and then submits an empty designation
+  designation, submits a deliberately invalid designation, and then submits an
+  empty designation
 - **THEN** the evidence records sanitized request field names, operation order,
-  and safe response categories without recording the designation when it would
-  identify a private guild, the passkey, signed URL, or raw response body
+  safe accepted or rejected categories, and normalized response fingerprints
+  that remove the current and submitted designations before hashing, without
+  recording either designation when it would identify a private guild, the
+  passkey, signed URL, or raw response body
+
+#### Scenario: Guild response fingerprints are ambiguous
+
+- **WHEN** normalized accepted and rejected guild responses do not produce
+  distinct credential-safe fingerprints
+- **THEN** guild conformance fails and production guild actions remain disabled
 
 #### Scenario: Guild cleanup cannot be confirmed
 

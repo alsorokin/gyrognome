@@ -1,7 +1,8 @@
 # Gyrognome Roadmap
 
-Gyrognome is a Linux-native Progress Quest client. Its compatibility,
-inspection, deterministic simulation, and local-runtime foundations are complete.
+Gyrognome 1.0.0 is feature-complete as a Linux-native Progress Quest client.
+Its compatibility, inspection, deterministic simulation, local-runtime,
+credential-safe online actions, and terminal dashboard are complete.
 
 ## Completed: Compatibility Core
 
@@ -115,6 +116,40 @@ delivery-failed. They do not expose passkeys, raw saves, signed URLs, response
 bodies, or leaderboard classification, and no automated retries are attempted.
 Automatic worker failures preserve progression and are not queued for replay.
 
+## Completed: Online Profile Management
+
+Managed online characters now retain credential-safe motto and guild metadata
+independently from deterministic simulation state:
+
+- Browser-save imports preserve optional motto and guild values, defaulting
+  omitted fields to empty values.
+- `gyrognome motto <character-id> <text>` and `gyrognome guild <character-id>
+  <designation>` provide explicit set, clear, join, change, and leave actions.
+- Profile actions remain available while a local runtime is active and are
+  serialized with automatic reports and manual bragging.
+- Motto changes persist before their one-shot report; guild changes persist only
+  after a conformance-recognized accepted response.
+- Offline characters, invalid credentials, unofficial endpoints, incomplete
+  evidence, control characters, and unsafe response data are rejected without
+  exposing credentials or raw endpoint content.
+
+## Completed: Dashboard Profile Editing and Presentation
+
+The full dashboard now exposes the completed online client surface without
+duplicating simulation or lifecycle ownership:
+
+- `m` edits or clears the persisted motto and `g` submits a guild designation;
+  an empty guild value leaves the current guild.
+- Editors support printable Unicode input, Backspace, Enter to submit, and
+  Escape to cancel, with credential-safe categorized outcomes.
+- Details displays formatted elapsed time, Motto, and Guild independently while
+  omitting the Quest target.
+- Expanded Details fills the remaining left-column height, Activity is capped
+  at four rows, Equipment at eleven inner rows, and compact layouts remain
+  available for narrow terminals.
+- Keyboard help, refresh behavior, and snapshots reflect the completed profile
+  and presentation model.
+
 ## Completed: Online Enrollment Conformance
 
 The `online-enrollment-conformance` capability establishes browser-derived,
@@ -147,12 +182,12 @@ official `cmd=create` request, and delivers the browser-compatible initial
 - Enrollment is restricted to the foreground Online wizard; import, offline
   New Guy, workers, lifecycle commands, dashboard, administration, and manual
   reporting cannot invoke enrollment.
-- Automated coverage uses a feature-gated synthetic transport. Native live
-  endpoint validation remains pending a separate disposable-character safety
-  workflow.
+- Automated coverage uses a feature-gated synthetic transport, while the
+  explicitly confirmed disposable-character conformance workflow keeps live
+  credentials and raw responses ephemeral.
 
-## Planned Sequence
+## Release Status
 
-1. Add an explicitly confirmed disposable-character workflow to validate the
-   native online enrollment path against the real endpoint without retaining
-   credentials, raw responses, or signed URLs.
+Version 1.0.0 is the feature-complete baseline. Future work may improve
+usability, portability, and operational tooling without changing the completed
+credential-safety and local-runtime boundaries described above.
