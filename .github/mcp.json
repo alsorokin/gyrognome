@@ -2,10 +2,12 @@
   "mcpServers": {
     "playwright": {
       "type": "local",
-      "command": "npx",
+      "command": "node",
+      "env": {
+        "npm_config_allow_remote": "all"
+      },
       "args": [
-        "-y",
-        "@playwright/mcp@latest",
+        ".github/playwright-mcp.cjs",
         "--headless",
         "--isolated",
         "--block-service-workers",
