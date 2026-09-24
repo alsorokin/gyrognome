@@ -57,7 +57,12 @@ leaderboard report, the canonical `bestspell` value SHALL equal the
 browser-compatible name-and-rank display value of the learned spell with the
 greatest product of its zero-based collection index plus one and its
 Roman-numeral rank. Equal products SHALL retain the earliest spell. If no
-spells are learned, `bestspell` SHALL be empty.
+spells are learned, `bestspell` SHALL be empty. Before state is persisted or
+used for a leaderboard report, the canonical `beststat` value SHALL equal the
+browser-compatible label-and-integer display value of the highest current prime
+stat among `STR`, `CON`, `DEX`, `INT`, `WIS`, and `CHA`, and `Stats.best` SHALL
+identify that same stat. Equal current values SHALL retain the earliest stat in
+that browser order.
 
 #### Scenario: Resolving a simulation outcome
 
@@ -86,6 +91,16 @@ spells are learned, `bestspell` SHALL be empty.
 - **WHEN** a simulated state with no learned spells is persisted or produces a
   leaderboard report
 - **THEN** the canonical `bestspell` value is empty
+
+#### Scenario: Recording the current Prime Stat
+
+- **WHEN** a simulated state is persisted or produces a leaderboard report after its prime statistics have changed
+- **THEN** `beststat`, `Stats.best`, and the leaderboard Prime Stat value identify the highest current prime stat and its current integer value
+
+#### Scenario: Resolving an equal current Prime Stat
+
+- **WHEN** multiple current prime stats share the highest integer value at a persistence or report boundary
+- **THEN** the canonical Prime Stat reflects the earliest tied name in `STR`, `CON`, `DEX`, `INT`, `WIS`, `CHA` order
 
 ### Requirement: Browser conformance checkpoints
 
