@@ -122,6 +122,8 @@ fn trace_snapshots_preserve_browser_report_call_sites_and_final_state() {
         .initial;
     state.online = reference.online;
     state.queue = vec!["plot|1|Loading".to_owned()];
+    state.stats.best = "STR".to_owned();
+    state.beststat = "STR 1".to_owned();
 
     let traced = advance_with_trace(&state, &ruleset::BUNDLED, 1_000, "Trace motto").unwrap();
     assert_eq!(
@@ -139,6 +141,10 @@ fn trace_snapshots_preserve_browser_report_call_sites_and_final_state() {
 
     let level = &traced.events[0].snapshot.character;
     let act = &traced.events[1].snapshot.character;
+    for snapshot in [level, act, &traced.state] {
+        assert_eq!(snapshot.stats.best, "CHA");
+        assert_eq!(snapshot.beststat, "CHA 16");
+    }
     assert_eq!(level.traits.level, 2);
     assert_eq!(level.inventory.len(), 1, "level report precedes kill loot");
     assert_eq!(
@@ -154,6 +160,9 @@ fn trace_snapshots_preserve_browser_report_call_sites_and_final_state() {
 fn explicit_actions_are_credential_free_and_capture_their_input_motto() {
     let mut character = reference_character();
     character.activity.elapsed = 0;
+    character.stats.best = "STR".to_owned();
+    character.beststat = "STR 1".to_owned();
+    character.stats.wisdom = 80.0;
     let events = explicit_report_events(
         &character,
         [
@@ -182,6 +191,11 @@ fn explicit_actions_are_credential_free_and_capture_their_input_motto() {
         to_value(&events[1].snapshot.character).unwrap()
     );
     assert!(events[0].snapshot.character.document.is_null());
+    for event in &events {
+        assert_eq!(event.snapshot.character.stats.best, "WIS");
+        assert_eq!(event.snapshot.character.beststat, "WIS 80");
+    }
+    assert_eq!(character.beststat, "STR 1");
 
     let serialized = serde_json::to_string(&events).unwrap();
     for prohibited in ["passkey", "4242", "cmd=", "&p="] {

@@ -2,6 +2,13 @@
 
 All notable changes to Gyrognome are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Refresh Prime Stat from current attributes when advancing managed state or
+  preparing leaderboard reports, retaining browser stat order on ties.
+
 ## [1.0.0] - 2026-09-23
 
 The first feature-complete release of Gyrognome, a Linux-native Progress Quest
@@ -44,4 +51,3 @@ credential-safe opt-in online actions.
   credential-free conformance evidence.
 - Guild responses are bounded, normalized, fingerprinted, and exposed only as
   safe accepted, rejected, or indeterminate outcome categories.
-

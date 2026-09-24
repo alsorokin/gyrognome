@@ -70,6 +70,7 @@ impl TransitionSnapshot {
     fn capture(state: &Character, seed: crate::rng::AleaState) -> Self {
         let mut character = state.clone();
         update_bestspell(&mut character);
+        update_beststat(&mut character);
         character.document = Value::Null;
         character.seed = seed;
         Self { character }
@@ -187,6 +188,7 @@ pub fn advance_with_trace(
         remaining -= tick;
     }
     update_bestspell(&mut next);
+    update_beststat(&mut next);
     Ok(AdvancementTrace {
         state: next,
         events,
@@ -524,6 +526,21 @@ fn win_spell(state: &mut Character, ruleset: &Ruleset, rng: &mut Alea) {
             rank: "I".to_owned(),
         });
     }
+}
+
+/// Ports the browser's `HotOrNot()` prime-stat selection.
+pub fn update_beststat(state: &mut Character) {
+    let mut best = crate::ruleset::PRIME_STATS[0];
+    let mut value = stat_integer(state, best);
+    for &stat in &crate::ruleset::PRIME_STATS[1..] {
+        let candidate = stat_integer(state, stat);
+        if candidate > value {
+            best = stat;
+            value = candidate;
+        }
+    }
+    state.stats.best = best.to_owned();
+    state.beststat = format!("{best} {value}");
 }
 
 /// Ports the browser's `HotOrNot()` specialty selection.
@@ -1281,6 +1298,49 @@ mod tests {
     }
 
     #[test]
+    fn prime_stat_refreshes_the_winning_value_and_attribute_without_other_changes() {
+        let mut state = character();
+        state.stats.best = "CHA".to_owned();
+        state.beststat = "CHA 1".to_owned();
+        state.stats.charisma = 80.0;
+        let before = to_value(&state).unwrap();
+
+        update_beststat(&mut state);
+        assert_eq!(state.stats.best, "CHA");
+        assert_eq!(state.beststat, "CHA 80");
+        let mut expected = before;
+        expected["beststat"] = "CHA 80".into();
+        assert_eq!(to_value(&state).unwrap(), expected);
+
+        state.stats.intelligence = 81.9;
+        update_beststat(&mut state);
+        assert_eq!(state.stats.best, "INT");
+        assert_eq!(state.beststat, "INT 81");
+    }
+
+    #[test]
+    fn prime_stat_ties_retain_the_first_stat_in_browser_order() {
+        let mut state = character();
+        state.stats.strength = 20.1;
+        state.stats.constitution = 20.9;
+        state.stats.dexterity = 20.0;
+        state.stats.intelligence = 20.0;
+        state.stats.wisdom = 20.0;
+        state.stats.charisma = 20.0;
+        state.stats.hit_points_max = 100.0;
+        state.stats.mana_points_max = 100.0;
+
+        for &stat in crate::ruleset::PRIME_STATS {
+            state.stats.best = "Stale".to_owned();
+            state.beststat = "Stale 999".to_owned();
+            update_beststat(&mut state);
+            assert_eq!(state.stats.best, stat);
+            assert_eq!(state.beststat, format!("{stat} 20"));
+            add_stat(&mut state, stat, -1.0);
+        }
+    }
+
+    #[test]
     fn specialty_uses_official_indexed_rank_selection() {
         let mut state = character();
         state.spells = vec![
@@ -1347,6 +1407,23 @@ mod tests {
             to_value(&after.spells).unwrap(),
             to_value(&before.spells).unwrap()
         );
+    }
+
+    #[test]
+    fn advancement_refreshes_prime_stat_even_without_elapsed_time() {
+        let mut before = character();
+        before.stats.best = "STR".to_owned();
+        before.beststat = "STR 1".to_owned();
+        before.stats.wisdom = 80.0;
+        let mut expected = to_value(&before).unwrap();
+        expected["Stats"]["best"] = "WIS".into();
+        expected["beststat"] = "WIS 80".into();
+
+        let after = advance(&before, &Ruleset::default(), 0).unwrap();
+
+        assert_eq!(to_value(&after).unwrap(), expected);
+        assert_eq!(before.stats.best, "STR");
+        assert_eq!(before.beststat, "STR 1");
     }
 
     #[test]

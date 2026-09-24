@@ -173,7 +173,6 @@ pub(crate) struct ReportingTarget {
     pub(crate) identity: CharacterIdentity,
     pub(crate) state: Character,
     pub(crate) passkey: i32,
-    _lock: Option<CharacterLock>,
     _online_action_lock: OnlineActionLock,
 }
 
@@ -396,45 +395,8 @@ impl Store {
         Ok(())
     }
 
-    /// Resolves an inactive imported online character while retaining its
-    /// ownership lock for the reporting operation.
-    pub(crate) fn reporting_target(
-        &self,
-        id: &CharacterId,
-    ) -> Result<ReportingTarget, StorageError> {
-        let lock = self.acquire_lock(id)?;
-        let online_action_lock = self.acquire_online_action_lock(id)?;
-        let character = self.get(id)?;
-        if character.state.online.is_none() {
-            return Err(StorageError::ReportingIneligible);
-        }
-        let source = self
-            .connection
-            .query_row(
-                "SELECT original_document FROM characters WHERE id = ?1",
-                [id.to_string()],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
-        let document: serde_json::Value =
-            serde_json::from_str(&source).map_err(StorageError::StateJson)?;
-        let passkey = document["online"]["passkey"]
-            .as_i64()
-            .and_then(|value| i32::try_from(value).ok())
-            .ok_or(StorageError::ReportingIneligible)?;
-        Ok(ReportingTarget {
-            identity: character.identity,
-            state: character.state,
-            passkey,
-            _lock: Some(lock),
-            _online_action_lock: online_action_lock,
-        })
-    }
-
     /// Resolves an online credential for the active worker that already owns
-    /// this character. Foreground reporting must use [`Self::reporting_target`]
-    /// so it acquires an inactive-character lock instead.
+    /// this character.
     pub(crate) fn reporting_target_for_worker(
         &self,
         id: &CharacterId,
@@ -463,13 +425,12 @@ impl Store {
             identity: character.identity,
             state: character.state,
             passkey,
-            _lock: None,
             _online_action_lock: online_action_lock,
         })
     }
 
-    /// Resolves an online credential while holding only the short-lived online
-    /// action lock, allowing profile actions during active simulation.
+    /// Resolves an online credential while holding the short-lived online
+    /// action lock, allowing explicit online actions during active simulation.
     pub(crate) fn online_action_target(
         &self,
         id: &CharacterId,
@@ -498,7 +459,6 @@ impl Store {
             identity: character.identity,
             state: character.state,
             passkey,
-            _lock: None,
             _online_action_lock: online_action_lock,
         })
     }
@@ -1072,11 +1032,11 @@ mod tests {
     }
 
     #[test]
-    fn reporting_target_requires_an_inactive_online_credential() {
+    fn online_action_target_allows_active_or_inactive_online_credentials() {
         let directory = TestDirectory::new("reporting-target");
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&fixture_character()).unwrap();
-        let target = store.reporting_target(&registered.id).unwrap();
+        let target = store.online_action_target(&registered.id).unwrap();
         assert_eq!(target.identity, registered.identity);
         assert_eq!(target.state.document, Value::Null);
         drop(target);
@@ -1085,22 +1045,22 @@ mod tests {
         offline.online = None;
         let offline = store.register(&offline).unwrap();
         assert!(matches!(
-            store.reporting_target(&offline.id),
+            store.online_action_target(&offline.id),
             Err(StorageError::ReportingIneligible)
         ));
 
         assert!(matches!(
-            store.reporting_target(&CharacterId::new()),
+            store.online_action_target(&CharacterId::new()),
             Err(StorageError::NotFound(_))
         ));
 
         let owned = store.register(&fixture_character()).unwrap();
         let worker =
             Worker::start(Store::open_at(&directory.0).unwrap(), owned.id.clone()).unwrap();
-        assert!(matches!(
-            store.reporting_target(&owned.id),
-            Err(StorageError::AlreadyOwned(_))
-        ));
+        let target = store.online_action_target(&owned.id).unwrap();
+        assert_eq!(target.identity, owned.identity);
+        assert!(store.is_owned(&owned.id).unwrap());
+        drop(target);
         drop(worker);
 
         store
@@ -1111,7 +1071,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.reporting_target(&registered.id),
+            store.online_action_target(&registered.id),
             Err(StorageError::ReportingIneligible)
         ));
 
@@ -1123,7 +1083,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.reporting_target(&registered.id),
+            store.online_action_target(&registered.id),
             Err(StorageError::StateJson(_))
         ));
     }
@@ -1402,7 +1362,10 @@ mod tests {
     fn worker_persists_active_progress_without_downtime_catchup() {
         let directory = TestDirectory::new("worker-progress");
         let mut store = Store::open_at(&directory.0).unwrap();
-        let registered = store.register(&fixture_character()).unwrap();
+        let mut initial = fixture_character();
+        initial.stats.best = "STR".to_owned();
+        initial.beststat = "STR 1".to_owned();
+        let registered = store.register(&initial).unwrap();
         let original_position = registered.state.progress.task.position;
         let mut worker =
             Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
@@ -1417,6 +1380,8 @@ mod tests {
             after_active.state.progress.task.position,
             original_position + 25.0
         );
+        assert_eq!(after_active.state.stats.best, "CHA");
+        assert_eq!(after_active.state.beststat, "CHA 15");
 
         thread::sleep(Duration::from_millis(5));
         let mut restarted =
@@ -1672,6 +1637,10 @@ mod tests {
 
     impl ReportTransport for RecordingTransport {
         fn deliver(&self, request: Url) -> DeliveryOutcome {
+            assert_eq!(
+                request.query_pairs().find(|(key, _)| key == "k").unwrap().1,
+                "CHA 16"
+            );
             self.triggers.lock().unwrap().push(
                 request
                     .query_pairs()
@@ -1704,6 +1673,8 @@ mod tests {
         initial.document["online"]["host"] =
             serde_json::Value::String(format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?"));
         initial.queue = vec!["plot|1|Loading".to_owned()];
+        initial.stats.best = "STR".to_owned();
+        initial.beststat = "STR 1".to_owned();
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&initial).unwrap();
         store
@@ -1741,16 +1712,14 @@ mod tests {
                 "Worker profile motto".to_owned()
             ]
         );
-        assert_eq!(
-            Store::open_at(&directory.0)
-                .unwrap()
-                .get(&registered.id)
-                .unwrap()
-                .state
-                .plot
-                .act,
-            1
-        );
+        let persisted = Store::open_at(&directory.0)
+            .unwrap()
+            .get(&registered.id)
+            .unwrap()
+            .state;
+        assert_eq!(persisted.plot.act, 1);
+        assert_eq!(persisted.stats.best, "CHA");
+        assert_eq!(persisted.beststat, "CHA 16");
     }
 
     #[test]

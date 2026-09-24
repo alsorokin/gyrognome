@@ -289,7 +289,11 @@ pub fn run() -> Result<(), CliError> {
                 println!("Report cancelled.");
                 return Ok(());
             }
-            let result = reporting::submit(&store, &id, &HttpsTransport)?;
+            #[cfg(feature = "enrollment-test-transport")]
+            let transport = reporting::TestEnrollmentTransport::from_environment();
+            #[cfg(not(feature = "enrollment-test-transport"))]
+            let transport = HttpsTransport;
+            let result = reporting::submit(&store, &id, &transport)?;
             match result.outcome {
                 DeliveryOutcome::Delivered => println!("Leaderboard report delivered."),
                 DeliveryOutcome::EndpointRejected => {

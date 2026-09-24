@@ -45,12 +45,22 @@ impl TestDirectory {
     }
 
     fn command_with_input(&self, arguments: &[&str], input: &str) -> Output {
+        self.command_with_input_and_env(arguments, input, &[])
+    }
+
+    fn command_with_input_and_env(
+        &self,
+        arguments: &[&str],
+        input: &str,
+        environment: &[(&str, &str)],
+    ) -> Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
             .args(arguments)
             .env("XDG_DATA_HOME", &self.0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .envs(environment.iter().copied())
             .spawn()
             .unwrap();
         child
@@ -354,6 +364,49 @@ fn cli_declined_report_sends_no_request_and_keeps_safe_output() {
             .status
             .success()
     );
+}
+
+#[cfg(feature = "enrollment-test-transport")]
+#[test]
+fn cli_confirmed_report_succeeds_while_character_is_running() {
+    let directory = TestDirectory::new("report-owned");
+    let mut character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    character.online.as_mut().unwrap().host = "https://progressquest.com/alpaquil.php?".to_owned();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let registered = store.register(&character).unwrap();
+    let before = serde_json::to_value(store.get(&registered.id).unwrap().state).unwrap();
+    let worker = Worker::start(
+        Store::open_at(directory.0.join("gyrognome")).unwrap(),
+        registered.id.clone(),
+    )
+    .unwrap();
+    let action_log = directory.0.join("actions");
+    let id = registered.id.to_string();
+
+    let reported = directory.command_with_input_and_env(
+        &["report", &id],
+        "yes\n",
+        &[
+            ("GYROGNOME_TEST_ACTION_LOG", action_log.to_str().unwrap()),
+            ("GYROGNOME_TEST_REPORT", "delivered"),
+        ],
+    );
+
+    assert!(reported.status.success(), "{}", stderr(&reported));
+    let output = [stdout(&reported), stderr(&reported)].join("");
+    assert!(output.contains("Leaderboard report delivered."));
+    assert!(!output.contains("already running"));
+    assert!(!output.contains("4242"));
+    assert!(!output.contains("unrecognized-future-field"));
+    assert!(!output.contains("passkey"));
+    assert_eq!(fs::read_to_string(action_log).unwrap(), "report\n");
+    assert!(store.is_owned(&registered.id).unwrap());
+    assert_eq!(
+        serde_json::to_value(store.get(&registered.id).unwrap().state).unwrap(),
+        before
+    );
+    drop(worker);
 }
 
 #[test]

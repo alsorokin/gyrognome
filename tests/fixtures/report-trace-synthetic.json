@@ -213,7 +213,7 @@
           "bestequip": "Stick",
           "bestquest": "",
           "bestspell": "Invisible Hands I",
-          "beststat": "CHA 15",
+          "beststat": "CHA 16",
           "birthday": "Tue Sep 15 2026 13:00:00 GMT+0400 (Armenia Standard Time)",
           "birthstamp": 1789462800000,
           "date": "Tue Sep 15 2026 13:00:01 GMT+0400 (Armenia Standard Time)",
@@ -787,7 +787,7 @@
       "validator": -1136545038
     },
     {
-      "normalized": "https://example.invalid/?cmd=b&t=l&n=Synthetic+Level+Subject&r=Gyrognome&c=Robot+Monk&l=2&x=0&i=Stick&z=Invisible+Hands+I&k=CHA+15&a=Act+I&h=Alpaquil&rev=6",
+      "normalized": "https://example.invalid/?cmd=b&t=l&n=Synthetic+Level+Subject&r=Gyrognome&c=Robot+Monk&l=2&x=0&i=Stick&z=Invisible+Hands+I&k=CHA+16&a=Act+I&h=Alpaquil&rev=6",
       "unsigned_fields": [
         {
           "name": "cmd",
@@ -827,7 +827,7 @@
         },
         {
           "name": "k",
-          "value": "CHA 15"
+          "value": "CHA 16"
         },
         {
           "name": "a",
@@ -846,7 +846,7 @@
           "value": "Synthetic motto"
         }
       ],
-      "validator": -745702908
+      "validator": -1307876739
     },
     {
       "normalized": "https://example.invalid/?cmd=b&t=a&n=Synthetic+Reward+Subject&r=Gyrognome&c=Robot+Monk&l=2&x=0&i=Macrame+Gauntlets&z=&k=CHA+15&a=Act+II&h=Alpaquil&rev=6",

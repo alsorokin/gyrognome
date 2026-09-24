@@ -344,6 +344,7 @@ fn enrolled_character(
     realm: &str,
     passkey: i32,
 ) -> Result<Character, ReportingError> {
+    crate::simulation::update_beststat(&mut character);
     character.online = Some(OnlineMetadata {
         realm: realm.to_owned(),
         host: OFFICIAL_LEADERBOARD_HOST.to_owned(),
@@ -396,9 +397,10 @@ pub fn submit(
     transport: &impl ReportTransport,
 ) -> Result<ReportResult, ReportingError> {
     validate_bundled_enrollment_evidence()?;
-    let target = store.reporting_target(id)?;
+    let target = store.online_action_target(id)?;
     let mut state = target.state;
     crate::simulation::update_bestspell(&mut state);
+    crate::simulation::update_beststat(&mut state);
     let host = state
         .online
         .as_ref()
@@ -520,6 +522,7 @@ fn set_motto_with_evidence(
     let target = store.online_action_target(id)?;
     let mut state = target.state;
     crate::simulation::update_bestspell(&mut state);
+    crate::simulation::update_beststat(&mut state);
     let host = state
         .online
         .as_ref()
@@ -688,6 +691,11 @@ mod tests {
 
     impl ReportTransport for RecordingTransport {
         fn deliver(&self, request: Url) -> DeliveryOutcome {
+            assert_progress_request(&request, 73);
+            assert_eq!(
+                request.query_pairs().find(|(key, _)| key == "k").unwrap().1,
+                "WIS 80"
+            );
             self.requests.borrow_mut().push(
                 request
                     .query_pairs()
@@ -810,7 +818,7 @@ mod tests {
     fn enrolls_before_registering_with_a_browser_ordered_initial_report() {
         let directory = TestDirectory::new();
         let mut store = Store::open_at(&directory.0).unwrap();
-        let draft = newguy::generate(
+        let mut draft = newguy::generate(
             &newguy::Selection {
                 name: "Online Hero".to_owned(),
                 race: "Gyrognome".to_owned(),
@@ -820,6 +828,9 @@ mod tests {
             &mut Numbers(1),
         )
         .unwrap();
+        draft.stats.best = "STR".to_owned();
+        draft.beststat = "STR 1".to_owned();
+        draft.stats.wisdom = 80.0;
         let transport = RecordingTransport {
             requests: RefCell::new(Vec::new()),
         };
@@ -834,6 +845,8 @@ mod tests {
             registered.state.online.as_ref().unwrap().realm,
             OFFICIAL_REALM
         );
+        assert_eq!(registered.state.stats.best, "WIS");
+        assert_eq!(registered.state.beststat, "WIS 80");
         let private = store.original_document(&registered.id).unwrap();
         assert_eq!(private["online"]["passkey"], 73);
         assert!(
@@ -941,15 +954,46 @@ mod tests {
         }
     }
 
-    struct SpecialtyTransport {
-        specialty: RefCell<Option<String>>,
+    fn assert_progress_request(request: &Url, passkey: i32) {
+        assert_eq!(
+            request.as_str().split('?').next(),
+            Some(OFFICIAL_LEADERBOARD_ENDPOINT)
+        );
+        assert_eq!(
+            request
+                .query_pairs()
+                .map(|(key, _)| key.into_owned())
+                .collect::<Vec<_>>(),
+            [
+                "cmd", "t", "n", "r", "c", "l", "x", "i", "z", "k", "a", "h", "rev", "p", "m",
+            ]
+        );
+        let (unsigned, _) = request.as_str().split_once("&p=").unwrap();
+        let signature = request
+            .query_pairs()
+            .find(|(key, _)| key == "p")
+            .unwrap()
+            .1
+            .parse::<i32>()
+            .unwrap();
+        assert_eq!(signature, protocol::validator(unsigned, passkey));
     }
 
-    impl ReportTransport for SpecialtyTransport {
+    struct DerivedFieldsTransport {
+        specialty: RefCell<Option<String>>,
+        prime_stat: RefCell<Option<String>>,
+    }
+
+    impl ReportTransport for DerivedFieldsTransport {
         fn deliver(&self, request: Url) -> DeliveryOutcome {
+            assert_progress_request(&request, 4242);
             *self.specialty.borrow_mut() = request
                 .query_pairs()
                 .find(|(key, _)| key == "z")
+                .map(|(_, value)| value.into_owned());
+            *self.prime_stat.borrow_mut() = request
+                .query_pairs()
+                .find(|(key, _)| key == "k")
                 .map(|(_, value)| value.into_owned());
             DeliveryOutcome::Delivered
         }
@@ -990,13 +1034,47 @@ mod tests {
     }
 
     #[test]
-    fn manual_brag_derives_specialty_before_constructing_the_report() {
+    fn manual_brag_uses_persisted_state_without_interrupting_active_worker() {
+        let (directory, mut store, id) = registered_store();
+        store
+            .replace_profile(
+                &id,
+                &crate::state::OnlineProfile {
+                    motto: "Running motto".to_owned(),
+                    guild: "Running guild".to_owned(),
+                },
+            )
+            .unwrap();
+        let before = serde_json::to_value(store.get(&id).unwrap().state).unwrap();
+        let worker = Worker::start(Store::open_at(&directory.0).unwrap(), id.clone()).unwrap();
+        let transport = MottoTransport {
+            mottos: RefCell::new(Vec::new()),
+        };
+
+        let result = submit(&store, &id, &transport).unwrap();
+
+        assert_eq!(result.outcome, DeliveryOutcome::Delivered);
+        assert_eq!(*transport.mottos.borrow(), ["Running motto".to_owned()]);
+        assert!(store.is_owned(&id).unwrap());
+        assert_eq!(
+            serde_json::to_value(store.get(&id).unwrap().state).unwrap(),
+            before
+        );
+        drop(worker);
+    }
+
+    #[test]
+    fn manual_brag_derives_specialty_and_prime_stat_before_constructing_the_report() {
         let (_directory, mut store, id) = registered_store();
         let mut state = store.get(&id).unwrap().state;
         state.bestspell = "Stale Specialty".to_owned();
+        state.stats.best = "STR".to_owned();
+        state.beststat = "STR 1".to_owned();
+        state.stats.wisdom = 80.0;
         store.replace_state(&id, &state).unwrap();
-        let transport = SpecialtyTransport {
+        let transport = DerivedFieldsTransport {
             specialty: RefCell::new(None),
+            prime_stat: RefCell::new(None),
         };
 
         submit(&store, &id, &transport).unwrap();
@@ -1004,6 +1082,41 @@ mod tests {
         assert_eq!(
             *transport.specialty.borrow(),
             Some("Hastiness II".to_owned())
+        );
+        assert_eq!(*transport.prime_stat.borrow(), Some("WIS 80".to_owned()));
+        assert_eq!(
+            serde_json::to_value(store.get(&id).unwrap().state).unwrap(),
+            serde_json::to_value(&state).unwrap(),
+            "report preparation must not overwrite a worker's canonical state"
+        );
+    }
+
+    #[test]
+    fn motto_change_derives_specialty_and_prime_stat_before_constructing_the_report() {
+        let (_directory, mut store, id) = registered_store();
+        let mut state = store.get(&id).unwrap().state;
+        state.bestspell = "Stale Specialty".to_owned();
+        state.stats.best = "STR".to_owned();
+        state.beststat = "STR 1".to_owned();
+        state.stats.wisdom = 80.0;
+        store.replace_state(&id, &state).unwrap();
+        let transport = DerivedFieldsTransport {
+            specialty: RefCell::new(None),
+            prime_stat: RefCell::new(None),
+        };
+
+        set_motto(&mut store, &id, "Current prime stat", &transport).unwrap();
+
+        assert_eq!(
+            *transport.specialty.borrow(),
+            Some("Hastiness II".to_owned())
+        );
+        assert_eq!(*transport.prime_stat.borrow(), Some("WIS 80".to_owned()));
+        state.profile.motto = "Current prime stat".to_owned();
+        assert_eq!(
+            serde_json::to_value(store.get(&id).unwrap().state).unwrap(),
+            serde_json::to_value(&state).unwrap(),
+            "motto changes must persist only the profile, not overwrite worker state"
         );
     }
 
@@ -1411,18 +1524,25 @@ mod tests {
             .initial;
         initial.online = store.get(&id).unwrap().state.online;
         initial.queue = vec!["plot|1|Loading".to_owned()];
-        let events = advance_with_trace(
+        initial.stats.best = "STR".to_owned();
+        initial.beststat = "STR 1".to_owned();
+        let trace = advance_with_trace(
             &initial,
             &crate::ruleset::BUNDLED,
             1_000,
             "Stale event motto",
         )
-        .unwrap()
-        .events;
+        .unwrap();
+        store.replace_state(&id, &trace.state).unwrap();
+        let events = trace.events;
         assert_eq!(
             events.iter().map(|event| event.trigger).collect::<Vec<_>>(),
             vec![ReportTrigger::LevelUp, ReportTrigger::ActCompletion]
         );
+        for event in &events {
+            assert_eq!(event.snapshot.character.stats.best, "CHA");
+            assert_eq!(event.snapshot.character.beststat, "CHA 16");
+        }
 
         struct EventTransport {
             triggers: RefCell<Vec<String>>,
@@ -1431,9 +1551,10 @@ mod tests {
         }
         impl ReportTransport for EventTransport {
             fn deliver(&self, request: Url) -> DeliveryOutcome {
+                assert_progress_request(&request, 4242);
                 assert_eq!(
-                    request.as_str().split('?').next(),
-                    Some(OFFICIAL_LEADERBOARD_ENDPOINT)
+                    request.query_pairs().find(|(key, _)| key == "k").unwrap().1,
+                    "CHA 16"
                 );
                 self.triggers.borrow_mut().push(
                     request
@@ -1482,5 +1603,19 @@ mod tests {
                 ]
             );
         }
+
+        let transport = EventTransport {
+            triggers: RefCell::new(Vec::new()),
+            mottos: RefCell::new(Vec::new()),
+            outcome: DeliveryOutcome::Delivered,
+        };
+        let mut unofficial = events[0].clone();
+        unofficial.snapshot.character.online.as_mut().unwrap().host =
+            "https://example.invalid/?".to_owned();
+        assert!(matches!(
+            submit_event(&store, &id, &unofficial, &transport),
+            Err(ReportingError::UnofficialEndpoint)
+        ));
+        assert!(transport.triggers.borrow().is_empty());
     }
 }
