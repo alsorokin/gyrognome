@@ -1233,7 +1233,7 @@ fn indefinite(name: &str, quantity: i64) -> String {
             format!("a {name}")
         }
     } else {
-        format!("{quantity} {name}s")
+        format!("{quantity} {}", plural(name))
     }
 }
 
@@ -1272,6 +1272,13 @@ mod tests {
     fn character() -> Character {
         import_text(&STANDARD.encode(include_str!("../tests/fixtures/reference-save.json")))
             .unwrap()
+    }
+
+    #[test]
+    fn indefinite_pluralizes_quantified_monsters() {
+        assert_eq!(indefinite("Monoclonius", 5), "5 Monoclonii");
+        assert_eq!(indefinite("Lich", 2), "2 Liches");
+        assert_eq!(indefinite("Harpy", 3), "3 Harpies");
     }
 
     #[test]
