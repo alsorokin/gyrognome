@@ -13,7 +13,11 @@ The system SHALL provide an interactive terminal dashboard for a specified
 managed character. The `dashboard` command SHALL accept an optional managed
 character identifier. When no identifier is supplied, it SHALL present a
 credential-safe interactive list of registered characters and open the
-dashboard for the user-selected character. When an identifier is supplied, it
+dashboard for the user-selected character. The selection list SHALL display
+each character's credential-safe identity, stable identifier, last accessed
+time, and whether its local runtime is currently active. The selection list
+SHALL order characters by last accessed time descending, with the most
+recently accessed character first. When an identifier is supplied, it
 SHALL open that character directly. The dashboard SHALL display the persisted
 credential-safe identity, current activity, progress bars, equipment,
 inventory, spells, plot, and local runtime service status. In the full
@@ -36,6 +40,15 @@ character is not registered.
 - **WHEN** a user invokes `gyrognome dashboard` without an identifier and
   selects a registered character from the presented list
 - **THEN** the system opens the dashboard for that selected character
+
+#### Scenario: Viewing character recency and activity before selection
+
+- **WHEN** a user invokes `gyrognome dashboard` without an identifier and
+  multiple managed characters are registered
+- **THEN** the selection list displays each character's last accessed time and
+  whether that character is currently active
+- **AND** the characters are ordered from most recently accessed to least
+  recently accessed
 
 #### Scenario: Cancelling dashboard selection
 

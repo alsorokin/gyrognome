@@ -13,6 +13,7 @@ use std::{
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use gyrognome::{
+    dashboard,
     runtime::{CharacterId, Store, Worker},
     save,
 };
@@ -300,6 +301,41 @@ fn dashboard_without_registrations_reports_an_error_before_terminal_mode() {
             .join("")
             .contains("\u{1b}[?1049h")
     );
+}
+
+#[test]
+fn dashboard_selection_entries_are_newest_first_with_credential_safe_activity() {
+    let directory = TestDirectory::new("dashboard-selection");
+    let character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let older = store.register(&character).unwrap();
+    thread::sleep(Duration::from_millis(5));
+    let newer = store.register(&character).unwrap();
+
+    let entries = dashboard::selector_entries(&store, |id| {
+        if id == &older.id {
+            dashboard::SelectorActivity::Unavailable
+        } else {
+            dashboard::SelectorActivity::Active
+        }
+    })
+    .unwrap();
+
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry.id.to_string())
+            .collect::<Vec<_>>(),
+        [newer.id.to_string(), older.id.to_string()]
+    );
+    assert_eq!(entries[0].activity, dashboard::SelectorActivity::Active);
+    assert_eq!(
+        entries[1].activity,
+        dashboard::SelectorActivity::Unavailable
+    );
+    assert_eq!(entries[0].last_accessed_unix_ms, newer.updated_at_unix_ms);
+    assert_eq!(entries[0].identity.name, "Reference Hero");
 }
 
 #[test]

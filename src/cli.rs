@@ -334,11 +334,15 @@ pub fn run() -> Result<(), CliError> {
             let id = match id {
                 Some(id) => parse_id(&id)?,
                 None => {
-                    let characters = Store::open_default()?
-                        .list()?
-                        .into_iter()
-                        .map(|character| (character.id, character.identity))
-                        .collect();
+                    let store = Store::open_default()?;
+                    let lifecycle = Lifecycle::new(&store, SystemctlRunner);
+                    let characters =
+                        dashboard::selector_entries(&store, |id| match lifecycle.status(id) {
+                            Ok(status) => {
+                                dashboard::SelectorActivity::from_service(&status.service)
+                            }
+                            Err(_) => dashboard::SelectorActivity::Unavailable,
+                        })?;
                     match dashboard::select_character(characters, &stop)? {
                         Some(id) => id,
                         None => return Ok(()),

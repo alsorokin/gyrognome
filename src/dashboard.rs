@@ -362,9 +362,141 @@ impl SelectorState {
     }
 }
 
+/// Credential-safe runtime activity shown beside each selectable character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectorActivity {
+    Active,
+    Inactive,
+    Unavailable,
+}
+
+impl SelectorActivity {
+    /// Maps a resolved local service state onto selector activity metadata.
+    pub fn from_service(state: &ServiceState) -> Self {
+        match state {
+            ServiceState::Active => Self::Active,
+            _ => Self::Inactive,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Inactive => "inactive",
+            Self::Unavailable => "activity unavailable",
+        }
+    }
+}
+
+/// Credential-safe metadata for one entry of the character-selection list.
+#[derive(Debug, Clone)]
+pub struct SelectorEntry {
+    pub id: CharacterId,
+    pub identity: CharacterIdentity,
+    pub last_accessed_unix_ms: i64,
+    pub activity: SelectorActivity,
+}
+
+/// Orders selector entries from most recently accessed to least recently
+/// accessed, breaking ties on the stable identifier for deterministic output.
+pub fn sort_by_last_accessed(entries: &mut [SelectorEntry]) {
+    entries.sort_by(|left, right| {
+        right
+            .last_accessed_unix_ms
+            .cmp(&left.last_accessed_unix_ms)
+            .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+    });
+}
+
+/// Builds credential-safe selector entries for every registered character,
+/// ordered from most recently accessed to least recently accessed. The
+/// supplied resolver reports each character's local runtime activity and may
+/// report `Unavailable` when a status lookup fails.
+pub fn selector_entries(
+    store: &Store,
+    mut activity: impl FnMut(&CharacterId) -> SelectorActivity,
+) -> Result<Vec<SelectorEntry>, StorageError> {
+    let mut entries = store
+        .list()?
+        .into_iter()
+        .map(|character| SelectorEntry {
+            activity: activity(&character.id),
+            id: character.id,
+            identity: character.identity,
+            last_accessed_unix_ms: character.updated_at_unix_ms,
+        })
+        .collect::<Vec<_>>();
+    sort_by_last_accessed(&mut entries);
+    Ok(entries)
+}
+
+fn selector_entry_lines(entry: &SelectorEntry, width: usize) -> Vec<Line<'static>> {
+    vec![
+        padded_line(
+            format!(
+                "{} — {} {} (level {})",
+                entry.identity.name,
+                entry.identity.race,
+                entry.identity.class,
+                entry.identity.level
+            ),
+            format!(
+                "Last accessed {}",
+                format_last_accessed(entry.last_accessed_unix_ms)
+            ),
+            width,
+        ),
+        padded_line(
+            entry.id.to_string(),
+            entry.activity.label().to_owned(),
+            width,
+        ),
+    ]
+}
+
+/// Places `right` against the right edge of `width`, keeping at least one
+/// space between the two texts when they cannot both fit.
+fn padded_line(left: String, right: String, width: usize) -> Line<'static> {
+    let used = left.chars().count() + right.chars().count();
+    let padding = width.saturating_sub(used).max(1);
+    Line::from(format!("{left}{}{right}", " ".repeat(padding)))
+}
+
+/// Renders a Unix millisecond timestamp as a minute-resolution UTC label.
+fn format_last_accessed(unix_ms: i64) -> String {
+    let seconds = unix_ms.div_euclid(1_000);
+    let days = seconds.div_euclid(86_400);
+    let second_of_day = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        second_of_day / 3_600,
+        (second_of_day % 3_600) / 60
+    )
+}
+
+/// Converts days since the Unix epoch into a proleptic Gregorian date.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let shifted_month = (5 * day_of_year + 2) / 153;
+    let day = (day_of_year - (153 * shifted_month + 2) / 5 + 1) as u32;
+    let month = if shifted_month < 10 {
+        shifted_month + 3
+    } else {
+        shifted_month - 9
+    } as u32;
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
 /// Lets users select a registered character before entering its dashboard.
 pub fn select_character(
-    characters: Vec<(CharacterId, CharacterIdentity)>,
+    characters: Vec<SelectorEntry>,
     interrupted: &std::sync::atomic::AtomicBool,
 ) -> Result<Option<CharacterId>, DashboardError> {
     if characters.is_empty() {
@@ -381,28 +513,20 @@ pub fn select_character(
             return Ok(None);
         }
         if let Some(result) = state.apply(selection_command(event::read()?)) {
-            return Ok(result.map(|index| characters[index].0.clone()));
+            return Ok(result.map(|index| characters[index].id.clone()));
         }
     }
 }
 
-fn render_selector(
-    frame: &mut ratatui::Frame<'_>,
-    characters: &[(CharacterId, CharacterIdentity)],
-    selected: usize,
-) {
+fn render_selector(frame: &mut ratatui::Frame<'_>, characters: &[SelectorEntry], selected: usize) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(1), Constraint::Length(3)])
         .split(frame.area());
+    let entry_width = usize::from(areas[0].width.saturating_sub(4));
     let entries = characters
         .iter()
-        .map(|(id, identity)| {
-            ListItem::new(format!(
-                "{} — {} {} (level {})\n{}",
-                identity.name, identity.race, identity.class, identity.level, id
-            ))
-        })
+        .map(|entry| ListItem::new(selector_entry_lines(entry, entry_width)))
         .collect::<Vec<_>>();
     let mut state = ListState::default();
     state.select(Some(selected));
@@ -2425,6 +2549,162 @@ mod tests {
             select_character(Vec::new(), &interrupted),
             Err(DashboardError::NoManagedCharacters)
         ));
+    }
+
+    fn selector_entry(
+        name: &str,
+        id: &str,
+        last_accessed_unix_ms: i64,
+        activity: SelectorActivity,
+    ) -> SelectorEntry {
+        SelectorEntry {
+            id: CharacterId::parse(id).unwrap(),
+            identity: CharacterIdentity {
+                name: name.to_string(),
+                race: "Half Orc".to_string(),
+                class: "Bard".to_string(),
+                level: 3,
+            },
+            last_accessed_unix_ms,
+            activity,
+        }
+    }
+
+    fn rendered_selector_rows(entries: &[SelectorEntry], width: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| render_selector(frame, entries, 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        buffer
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>()
+                    .trim_end_matches(['│', ' '])
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn selector_entries_show_credential_safe_recency_and_activity() {
+        let entries = [
+            selector_entry(
+                "Reference Hero",
+                "00000000-0000-4000-8000-000000000001",
+                1_774_000_000_000,
+                SelectorActivity::Active,
+            ),
+            selector_entry(
+                "Idle Hero",
+                "00000000-0000-4000-8000-000000000002",
+                0,
+                SelectorActivity::Inactive,
+            ),
+            selector_entry(
+                "Unknown Hero",
+                "00000000-0000-4000-8000-000000000003",
+                1_000,
+                SelectorActivity::Unavailable,
+            ),
+        ];
+        let rows = rendered_selector_rows(&entries, 80);
+        let rendered = rows.concat();
+
+        for right_aligned in [
+            "Last accessed 2026-03-20 09:46 UTC",
+            "Last accessed 1970-01-01 00:00 UTC",
+            "active",
+            "inactive",
+            "activity unavailable",
+        ] {
+            assert!(
+                rows.iter()
+                    .any(|row| row.ends_with(right_aligned) && row.len() > right_aligned.len()),
+                "{right_aligned} must be rendered against the right edge"
+            );
+        }
+        assert!(rendered.contains("Reference Hero — Half Orc Bard (level 3)"));
+        assert!(rendered.contains("00000000-0000-4000-8000-000000000001"));
+        for sensitive in ["4242", "unrecognized-future-field", "secret"] {
+            assert!(!rendered.contains(sensitive));
+        }
+    }
+
+    #[test]
+    fn selector_metadata_stays_right_aligned_against_the_list_edge() {
+        let entries = [selector_entry(
+            "Reference Hero",
+            "00000000-0000-4000-8000-000000000001",
+            1_774_000_000_000,
+            SelectorActivity::Active,
+        )];
+
+        for width in [80_u16, 100, 120] {
+            let rows = rendered_selector_rows(&entries, width);
+            let metadata = rows
+                .iter()
+                .find(|row| row.contains("Last accessed"))
+                .unwrap();
+            assert!(
+                metadata.ends_with("Last accessed 2026-03-20 09:46 UTC"),
+                "metadata must hug the right edge at width {width}: {metadata}"
+            );
+        }
+    }
+
+    #[test]
+    fn selector_entries_are_ordered_from_most_recently_accessed() {
+        let mut entries = vec![
+            selector_entry(
+                "Oldest",
+                "00000000-0000-4000-8000-000000000003",
+                10,
+                SelectorActivity::Inactive,
+            ),
+            selector_entry(
+                "Newest",
+                "00000000-0000-4000-8000-000000000002",
+                300,
+                SelectorActivity::Active,
+            ),
+            selector_entry(
+                "Tied",
+                "00000000-0000-4000-8000-000000000001",
+                300,
+                SelectorActivity::Inactive,
+            ),
+        ];
+
+        sort_by_last_accessed(&mut entries);
+
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.identity.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Tied", "Newest", "Oldest"]
+        );
+    }
+
+    #[test]
+    fn selector_activity_maps_local_service_state() {
+        assert_eq!(
+            SelectorActivity::from_service(&ServiceState::Active),
+            SelectorActivity::Active
+        );
+        assert_eq!(
+            SelectorActivity::from_service(&ServiceState::Inactive),
+            SelectorActivity::Inactive
+        );
+        assert_eq!(
+            SelectorActivity::from_service(&ServiceState::Failed),
+            SelectorActivity::Inactive
+        );
     }
 
     #[test]
