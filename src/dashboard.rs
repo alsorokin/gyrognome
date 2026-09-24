@@ -1445,7 +1445,7 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from(format!("Character ID: {}", character.id)),
         Line::from(format!(
-            "Last task elapsed: {}",
+            "Character age: {}",
             format_elapsed(character.activity.elapsed)
         )),
     ];
