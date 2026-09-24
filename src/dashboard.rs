@@ -1166,7 +1166,7 @@ fn render_full(
 ) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .constraints([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)])
         .split(area);
     let left = Layout::default()
         .direction(Direction::Vertical)
@@ -3331,6 +3331,17 @@ mod tests {
 
         assert_eq!(areas[0].height, 30);
         assert_eq!(areas[1].height, 10);
+    }
+
+    #[test]
+    fn first_dashboard_column_uses_one_third_of_available_width() {
+        let areas = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)])
+            .split(Rect::new(0, 0, 90, 40));
+
+        assert_eq!(areas[0].width, 30);
+        assert_eq!(areas[1].width, 60);
     }
 
     #[test]
