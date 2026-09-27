@@ -2,6 +2,8 @@
 name = "gyrognome"
 version = "1.0.0"
 edition = "2024"
+autobins = false
+default-run = "gyro"
 
 [features]
 # Exposes a stdin/stdout-only adapter used exclusively by the Playwright
@@ -9,6 +11,10 @@ edition = "2024"
 conformance-bridge = []
 desktop-live-conformance = []
 enrollment-test-transport = []
+
+[[bin]]
+name = "gyro"
+path = "src/main.rs"
 
 [[bin]]
 name = "desktop-live-conformance"

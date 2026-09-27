@@ -59,16 +59,14 @@ fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
         }
     }
 
-    let help = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+    let help = Command::new(env!("CARGO_BIN_EXE_gyro"))
         .arg("--help")
         .output()
         .unwrap();
     assert!(help.status.success());
-    assert!(
-        !String::from_utf8(help.stdout)
-            .unwrap()
-            .contains("conformance-bridge")
-    );
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.starts_with("Offline Progress Quest compatibility tools\n\nUsage: gyro "));
+    assert!(!help.contains("conformance-bridge"));
 }
 
 #[test]
@@ -110,7 +108,7 @@ fn dashboard_presentation_cannot_access_raw_save_documents() {
 #[test]
 fn packaged_user_service_is_rootless_and_runs_the_local_worker() {
     let unit = fs::read_to_string("systemd/user/gyrognome@.service").unwrap();
-    assert!(unit.contains("ExecStart=gyrognome worker %i"));
+    assert!(unit.contains("ExecStart=gyro worker %i"));
     assert!(!unit.contains("User=root"));
     assert!(!unit.contains("sudo"));
 }

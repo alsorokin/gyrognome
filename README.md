@@ -123,17 +123,17 @@ Register a browser or desktop save, list safe identities with their persisted
 profiles and eligibility, and inspect persisted canonical state:
 
 ```sh
-gyrognome register /path/to/character.pqw
-gyrognome register /path/to/desktop-character.pq
-gyrognome register /path/to/desktop-character.bak
-gyrognome list
-gyrognome managed-inspect <character-id> --json
+gyro register /path/to/character.pqw
+gyro register /path/to/desktop-character.pq
+gyro register /path/to/desktop-character.bak
+gyro list
+gyro managed-inspect <character-id> --json
 ```
 
 Delete an inactive managed character with an explicit confirmation:
 
 ```sh
-gyrognome delete <character-id>
+gyro delete <character-id>
 ```
 
 The command prints only the target's safe identity and requires `yes` before
@@ -149,7 +149,7 @@ credential-free enrollment-conformance evidence is complete and passing. The
 command builds its report from the current persisted canonical state and motto:
 
 ```sh
-gyrognome report <character-id>
+gyro report <character-id>
 ```
 
 It displays the safe identity and requires typing `yes` for every submission.
@@ -170,10 +170,10 @@ and leaderboard polling are intentionally out of scope.
 Eligible online characters can update their profile without stopping a worker:
 
 ```sh
-gyrognome motto <character-id> "Onward!"
-gyrognome motto <character-id> --clear
-gyrognome guild <character-id> "Existing guild designation"
-gyrognome guild <character-id> ""
+gyro motto <character-id> "Onward!"
+gyro motto <character-id> --clear
+gyro guild <character-id> "Existing guild designation"
+gyro guild <character-id> ""
 ```
 
 Each explicit command submits exactly one action without another confirmation.
@@ -198,7 +198,7 @@ categories; there are no automatic retries or production membership lookups.
 
 ### Interactive New Guy enrollment
 
-Run `gyrognome new-guy` without explicit traits to open the terminal creator.
+Run `gyro new-guy` without explicit traits to open the terminal creator.
 Its Mode row starts at Offline; select Online to make Sold! perform one
 foreground enrollment through the official endpoint. The wizard validates
 bundled enrollment evidence before creating the character, sends the required
@@ -223,7 +223,7 @@ For foreground operation, run a worker with the identifier printed by
 stops cleanly on `SIGINT` or `SIGTERM`.
 
 ```sh
-gyrognome worker <character-id> --interval-ms 1000
+gyro worker <character-id> --interval-ms 1000
 ```
 
 Only time spent in an active worker is advanced. Starting a worker later does
@@ -247,8 +247,8 @@ systemctl --user daemon-reload
 ```
 
 The service manager must be available for the logged-in user, and
-`gyrognome` must resolve from its service environment. If it does not, replace
-the unit's `ExecStart=gyrognome` command with the absolute path to the installed
+`gyro` must resolve from its service environment. If it does not, replace
+the unit's `ExecStart=gyro` command with the absolute path to the installed
 binary, reload the user units, and retry.
 
 Use the CLI lifecycle commands rather than invoking the unit directly; they
@@ -256,10 +256,10 @@ first validate the local character identifier and then delegate to
 `systemctl --user`:
 
 ```sh
-gyrognome start <character-id>
-gyrognome status <character-id>
-gyrognome stop <character-id>
-gyrognome recover <character-id>
+gyro start <character-id>
+gyro status <character-id>
+gyro stop <character-id>
+gyro recover <character-id>
 ```
 
 `status` reports the safe persisted identity, service activity, and whether a
@@ -276,8 +276,8 @@ Observe a registered character in a local, full-screen dashboard. With no
 identifier, choose one from the safe registered-character list:
 
 ```sh
-gyrognome dashboard
-gyrognome dashboard <character-id>
+gyro dashboard
+gyro dashboard <character-id>
 ```
 
 The dashboard reads the persisted canonical state and `systemctl --user`

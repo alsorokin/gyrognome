@@ -60,7 +60,7 @@ gated; future online use requires a fresh official-client import.
 The `managed-character-administration` capability lets users remove unwanted
 local registrations without editing the database:
 
-- `gyrognome delete <character-id>` displays only the safe identity and requires
+- `gyro delete <character-id>` displays only the safe identity and requires
   explicit confirmation before removal.
 - Removal is atomic and refuses a character currently owned by a local worker;
   users must stop it before retrying.
@@ -74,7 +74,7 @@ of a managed character:
 
 - Displays live identity, human-readable activity, progress bars, equipped
   items, inventory, spells, plots, quests, and runtime/service status.
-- Lets users run `gyrognome dashboard` without an identifier and select a
+- Lets users run `gyro dashboard` without an identifier and select a
   registered character, while preserving direct identifier-based startup.
 - Refreshes persisted state without owning character locks or advancing
   simulation.
@@ -139,7 +139,7 @@ independently from deterministic simulation state:
 
 - Browser-save imports preserve optional motto and guild values, defaulting
   omitted fields to empty values.
-- `gyrognome motto <character-id> <text>` and `gyrognome guild <character-id>
+- `gyro motto <character-id> <text>` and `gyro guild <character-id>
   <designation>` provide explicit set, clear, join, change, and leave actions.
 - Profile actions remain available while a local runtime is active and are
   serialized with automatic reports and manual bragging.
@@ -183,7 +183,7 @@ credential-free evidence for a future native enrollment feature:
 
 ## Completed: Online New Guy Enrollment
 
-The interactive `gyrognome new-guy` wizard now provides Offline and Online
+The interactive `gyro new-guy` wizard now provides Offline and Online
 modes. Online Sold! validates the bundled enrollment evidence, makes one
 official `cmd=create` request, and delivers the browser-compatible initial
 `s` report before registering an online managed character.

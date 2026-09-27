@@ -37,13 +37,13 @@ character is not registered.
 
 #### Scenario: Selecting a character before opening the dashboard
 
-- **WHEN** a user invokes `gyrognome dashboard` without an identifier and
+- **WHEN** a user invokes `gyro dashboard` without an identifier and
   selects a registered character from the presented list
 - **THEN** the system opens the dashboard for that selected character
 
 #### Scenario: Viewing character recency and activity before selection
 
-- **WHEN** a user invokes `gyrognome dashboard` without an identifier and
+- **WHEN** a user invokes `gyro dashboard` without an identifier and
   multiple managed characters are registered
 - **THEN** the selection list displays each character's last accessed time and
   whether that character is currently active
@@ -52,14 +52,14 @@ character is not registered.
 
 #### Scenario: Cancelling dashboard selection
 
-- **WHEN** a user invokes `gyrognome dashboard` without an identifier and
+- **WHEN** a user invokes `gyro dashboard` without an identifier and
   cancels the character-selection flow
 - **THEN** the system exits without opening a dashboard or changing any
   character data
 
 #### Scenario: Opening the dashboard with no registrations
 
-- **WHEN** a user invokes `gyrognome dashboard` without an identifier and no
+- **WHEN** a user invokes `gyro dashboard` without an identifier and no
   managed characters are registered
 - **THEN** the system reports that no managed characters are available and
   does not enter an interactive dashboard

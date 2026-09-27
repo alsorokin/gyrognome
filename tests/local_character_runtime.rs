@@ -38,7 +38,7 @@ impl TestDirectory {
     }
 
     fn command(&self, arguments: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+        Command::new(env!("CARGO_BIN_EXE_gyro"))
             .args(arguments)
             .env("XDG_DATA_HOME", &self.0)
             .output()
@@ -55,7 +55,7 @@ impl TestDirectory {
         input: &str,
         environment: &[(&str, &str)],
     ) -> Output {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_gyro"))
             .args(arguments)
             .env("XDG_DATA_HOME", &self.0)
             .stdin(Stdio::piped())
@@ -75,7 +75,7 @@ impl TestDirectory {
 
     #[cfg(feature = "enrollment-test-transport")]
     fn command_with_env(&self, arguments: &[&str], environment: &[(&str, &str)]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_gyrognome"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gyro"));
         command.args(arguments).env("XDG_DATA_HOME", &self.0);
         for (key, value) in environment {
             command.env(key, value);

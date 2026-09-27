@@ -27,10 +27,7 @@ use crate::{
 };
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "gyrognome",
-    about = "Offline Progress Quest compatibility tools"
-)]
+#[command(name = "gyro", about = "Offline Progress Quest compatibility tools")]
 struct Args {
     #[command(subcommand)]
     command: Command,
@@ -545,14 +542,14 @@ mod tests {
     #[test]
     fn profile_commands_require_explicit_values_or_motto_clear() {
         for args in [
-            vec!["gyrognome", "motto", "id"],
-            vec!["gyrognome", "motto", "id", "text", "--clear"],
-            vec!["gyrognome", "guild", "id"],
+            vec!["gyro", "motto", "id"],
+            vec!["gyro", "motto", "id", "text", "--clear"],
+            vec!["gyro", "guild", "id"],
         ] {
             assert!(Args::try_parse_from(args).is_err());
         }
         assert!(matches!(
-            Args::try_parse_from(["gyrognome", "motto", "id", "--clear"])
+            Args::try_parse_from(["gyro", "motto", "id", "--clear"])
                 .unwrap()
                 .command,
             Command::Motto {
@@ -562,7 +559,7 @@ mod tests {
             }
         ));
         assert!(
-            matches!(Args::try_parse_from(["gyrognome", "guild", "id", ""]).unwrap().command,
+            matches!(Args::try_parse_from(["gyro", "guild", "id", ""]).unwrap().command,
             Command::Guild { designation, .. } if designation.is_empty())
         );
     }

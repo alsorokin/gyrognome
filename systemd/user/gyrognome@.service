@@ -3,7 +3,7 @@ Description=Gyrognome local runtime for character %i
 
 [Service]
 Type=exec
-ExecStart=gyrognome worker %i
+ExecStart=gyro worker %i
 KillSignal=SIGTERM
 
 [Install]

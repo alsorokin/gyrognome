@@ -38,7 +38,7 @@ impl ProfileCli {
     }
 
     fn run(&self, args: &[&str], overrides: &[(&str, &str)]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+        Command::new(env!("CARGO_BIN_EXE_gyro"))
             .args(args)
             .env("XDG_DATA_HOME", &self.root)
             .env("GYROGNOME_TEST_ACTION_LOG", self.root.join("actions"))
