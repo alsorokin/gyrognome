@@ -1,0 +1,79 @@
+{
+  "format": "gyrognome-desktop-spelling-normalization-vectors/v1",
+  "source": {
+    "desktop644": {
+      "tag": "v6.4.4",
+      "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+      "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24"
+    },
+    "spellingPatch": {
+      "commit": "ef1ed7f9f5c9ab481a0133f1871871601a9b4a20",
+      "mainPasGitBlob": "4b18894b851060a2578c45f530f73becc3780000",
+      "relationship": "post-v6.4.4-source-history"
+    }
+  },
+  "reference": {
+    "implementation": "scripts/desktop-reference.mjs#spelling-normalization/v1",
+    "requestScope": [
+      "automatic-level",
+      "automatic-act",
+      "manual-brag",
+      "motto",
+      "guild"
+    ]
+  },
+  "cases": {
+    "preCorrection": {
+      "serializedSpells": [
+        {
+          "name": "Gyp",
+          "rank": "I"
+        },
+        {
+          "name": "Innoculate",
+          "rank": "II"
+        },
+        {
+          "name": "Tonsilectomy",
+          "rank": "III"
+        }
+      ],
+      "recordedAdaptations": [
+        "load-spelling-patch"
+      ],
+      "postLoadCanonicalStateSha256": "55efd1944cf3e90363e05fb61c1236bcd4500fb3a2ae13c8ca9365303862d177",
+      "unsignedRequestSha256": {
+        "automaticLevel": "480babc7e1b50426b9781a9f2509fdb424dea1d8e5764cec943c5e3965200d75",
+        "automaticAct": "6baddf40bb399a09fc6f32e29c6d11c545e48dc2a51f1f8f9542cc8774748af4",
+        "manualBrag": "250b9d152da7b07a99628067ba78ce35901d91652dcca38e9b8904abb22195d8",
+        "motto": "6f982f7da88426079f44bab3b633b8fd46923a8323c3acae4482fa3c79c65bdb",
+        "guild": "0d5c508473ee97bfd2e696fdc8a21bfe0e0bdca8ffbb462d57ba397e6eed5191"
+      }
+    },
+    "alreadyCanonical": {
+      "serializedSpells": [
+        {
+          "name": "Gyp",
+          "rank": "I"
+        },
+        {
+          "name": "Inoculate",
+          "rank": "II"
+        },
+        {
+          "name": "Tonsillectomy",
+          "rank": "III"
+        }
+      ],
+      "recordedAdaptations": [],
+      "postLoadCanonicalStateSha256": "55efd1944cf3e90363e05fb61c1236bcd4500fb3a2ae13c8ca9365303862d177",
+      "unsignedRequestSha256": {
+        "automaticLevel": "480babc7e1b50426b9781a9f2509fdb424dea1d8e5764cec943c5e3965200d75",
+        "automaticAct": "6baddf40bb399a09fc6f32e29c6d11c545e48dc2a51f1f8f9542cc8774748af4",
+        "manualBrag": "250b9d152da7b07a99628067ba78ce35901d91652dcca38e9b8904abb22195d8",
+        "motto": "6f982f7da88426079f44bab3b633b8fd46923a8323c3acae4482fa3c79c65bdb",
+        "guild": "0d5c508473ee97bfd2e696fdc8a21bfe0e0bdca8ffbb462d57ba397e6eed5191"
+      }
+    }
+  }
+}

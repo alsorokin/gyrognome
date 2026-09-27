@@ -1,0 +1,40 @@
+{
+  "format": "gyrognome-desktop-live-evidence/v2",
+  "payload": {
+    "status": "passing",
+    "targetProfile": "desktop-6.4.4",
+    "sourceIdentity": {
+      "tag": "v6.4.4",
+      "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+      "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24",
+      "configDfmSha256": "ac42dfaf747713e5f91080fec698b697c69000f75405ed1d787e70ea71619600"
+    },
+    "implementationIdentity": "desktop-online-contract/v1",
+    "importPath": {
+      "sourceFormat": "desktop-delphi-component-stream",
+      "layout": "supported-component-stream",
+      "adaptations": []
+    },
+    "realm": "Spoltog",
+    "savedEndpoint": "http://progressquest.com/spoltog.php?",
+    "verifiedHttpsEndpoint": "https://progressquest.com/spoltog.php",
+    "credentialMode": "account-password",
+    "operations": [
+      "automatic-level",
+      "automatic-act",
+      "manual-brag",
+      "motto",
+      "guild"
+    ],
+    "guildResponses": {
+      "joinAcceptedFingerprintSha256": "f5a48b1c0f296b4e391d0f26736ee902b56daed589064898dd7c2f9279d6c115",
+      "rejectedFingerprintSha256": "3d01c41d894571762aed5d08d4427e2b4d33a9f4a15e8153c72f1c3152984b71",
+      "leaveAcceptedFingerprintSha256": "8dd3a69a69f617062731571d8dace6974aecd303eb4320af84d2308fd75d4667"
+    },
+    "classification": "normal",
+    "cleanupComplete": true,
+    "observedOn": "2026-09-27",
+    "validThrough": "2027-09-27"
+  },
+  "integritySha256": "09e5fc9e2de14635851208b5a085ecebf9404242ffd1d6ed268f16001096a1de"
+}

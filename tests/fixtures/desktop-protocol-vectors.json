@@ -1,0 +1,397 @@
+{
+  "format": "gyrognome-desktop-protocol-vectors/v1",
+  "source": {
+    "tag": "v6.4.4",
+    "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+    "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24",
+    "newGuyPasSha256": "fd3443ea80c5e7827d10b62649ec1e8ac23c5d75ea8d89acd2b763581de9d243"
+  },
+  "reference": {
+    "implementation": "scripts/desktop-reference.mjs#protocol/v1",
+    "revision": "8",
+    "encoding": "ASCII application/x-www-form-urlencoded"
+  },
+  "limitations": {
+    "officialExecutableCorroboration": "not-run",
+    "localContinuationOnly": true,
+    "classicOnlineEligible": false,
+    "fullSignedUrlsStored": false
+  },
+  "observations": {
+    "reports": {
+      "manual": {
+        "fieldsBeforeValidator": [
+          {
+            "name": "cmd",
+            "value": "b",
+            "encoded": "b"
+          },
+          {
+            "name": "t",
+            "value": "b",
+            "encoded": "b"
+          },
+          {
+            "name": "n",
+            "value": "Synthetic Hero & Co.",
+            "encoded": "Synthetic+Hero+%26+Co."
+          },
+          {
+            "name": "r",
+            "value": "Half Orc",
+            "encoded": "Half+Orc"
+          },
+          {
+            "name": "c",
+            "value": "Robot Monk",
+            "encoded": "Robot+Monk"
+          },
+          {
+            "name": "l",
+            "value": "2",
+            "encoded": "2"
+          },
+          {
+            "name": "x",
+            "value": "42",
+            "encoded": "42"
+          },
+          {
+            "name": "i",
+            "value": "Banded Buckler Shield",
+            "encoded": "Banded+Buckler+Shield"
+          },
+          {
+            "name": "k",
+            "value": "STR 12",
+            "encoded": "STR+12"
+          },
+          {
+            "name": "a",
+            "value": "Act I",
+            "encoded": "Act+I"
+          },
+          {
+            "name": "h",
+            "value": "Synthetic Realm",
+            "encoded": "Synthetic+Realm"
+          },
+          {
+            "name": "rev",
+            "value": "8",
+            "encoded": "8"
+          }
+        ],
+        "queryBeforeValidator": "cmd=b&t=b&n=Synthetic+Hero+%26+Co.&r=Half+Orc&c=Robot+Monk&l=2&x=42&i=Banded+Buckler+Shield&k=STR+12&a=Act+I&h=Synthetic+Realm&rev=8",
+        "syntheticValidator": 756353735,
+        "fieldsAfterValidator": [
+          {
+            "name": "m",
+            "value": "Ready & waiting",
+            "encoded": "Ready+%26+waiting"
+          }
+        ],
+        "authentication": {
+          "credentialsPresent": true,
+          "representation": "legacy-url-userinfo",
+          "retainedSeparately": true,
+          "preview": "redacted"
+        }
+      },
+      "level": {
+        "fieldsBeforeValidator": [
+          {
+            "name": "cmd",
+            "value": "b",
+            "encoded": "b"
+          },
+          {
+            "name": "t",
+            "value": "l",
+            "encoded": "l"
+          },
+          {
+            "name": "n",
+            "value": "Synthetic Hero & Co.",
+            "encoded": "Synthetic+Hero+%26+Co."
+          },
+          {
+            "name": "r",
+            "value": "Half Orc",
+            "encoded": "Half+Orc"
+          },
+          {
+            "name": "c",
+            "value": "Robot Monk",
+            "encoded": "Robot+Monk"
+          },
+          {
+            "name": "l",
+            "value": "2",
+            "encoded": "2"
+          },
+          {
+            "name": "x",
+            "value": "0",
+            "encoded": "0"
+          },
+          {
+            "name": "i",
+            "value": "Banded Buckler Shield",
+            "encoded": "Banded+Buckler+Shield"
+          },
+          {
+            "name": "z",
+            "value": "Rabbit Punch II",
+            "encoded": "Rabbit+Punch+II"
+          },
+          {
+            "name": "k",
+            "value": "STR 12",
+            "encoded": "STR+12"
+          },
+          {
+            "name": "a",
+            "value": "Act I",
+            "encoded": "Act+I"
+          },
+          {
+            "name": "h",
+            "value": "Synthetic Realm",
+            "encoded": "Synthetic+Realm"
+          },
+          {
+            "name": "rev",
+            "value": "8",
+            "encoded": "8"
+          }
+        ],
+        "queryBeforeValidator": "cmd=b&t=l&n=Synthetic+Hero+%26+Co.&r=Half+Orc&c=Robot+Monk&l=2&x=0&i=Banded+Buckler+Shield&z=Rabbit+Punch+II&k=STR+12&a=Act+I&h=Synthetic+Realm&rev=8",
+        "syntheticValidator": 1362385310,
+        "fieldsAfterValidator": [
+          {
+            "name": "m",
+            "value": "Ready & waiting",
+            "encoded": "Ready+%26+waiting"
+          }
+        ],
+        "authentication": {
+          "credentialsPresent": true,
+          "representation": "legacy-url-userinfo",
+          "retainedSeparately": true,
+          "preview": "redacted"
+        }
+      },
+      "act": {
+        "fieldsBeforeValidator": [
+          {
+            "name": "cmd",
+            "value": "b",
+            "encoded": "b"
+          },
+          {
+            "name": "t",
+            "value": "a",
+            "encoded": "a"
+          },
+          {
+            "name": "n",
+            "value": "Synthetic Hero & Co.",
+            "encoded": "Synthetic+Hero+%26+Co."
+          },
+          {
+            "name": "r",
+            "value": "Half Orc",
+            "encoded": "Half+Orc"
+          },
+          {
+            "name": "c",
+            "value": "Robot Monk",
+            "encoded": "Robot+Monk"
+          },
+          {
+            "name": "l",
+            "value": "2",
+            "encoded": "2"
+          },
+          {
+            "name": "x",
+            "value": "42",
+            "encoded": "42"
+          },
+          {
+            "name": "i",
+            "value": "Polished Plate",
+            "encoded": "Polished+Plate"
+          },
+          {
+            "name": "k",
+            "value": "STR 12",
+            "encoded": "STR+12"
+          },
+          {
+            "name": "a",
+            "value": "Act II",
+            "encoded": "Act+II"
+          },
+          {
+            "name": "h",
+            "value": "Synthetic Realm",
+            "encoded": "Synthetic+Realm"
+          },
+          {
+            "name": "rev",
+            "value": "8",
+            "encoded": "8"
+          }
+        ],
+        "queryBeforeValidator": "cmd=b&t=a&n=Synthetic+Hero+%26+Co.&r=Half+Orc&c=Robot+Monk&l=2&x=42&i=Polished+Plate&k=STR+12&a=Act+II&h=Synthetic+Realm&rev=8",
+        "syntheticValidator": 2127818976,
+        "fieldsAfterValidator": [
+          {
+            "name": "m",
+            "value": "Ready & waiting",
+            "encoded": "Ready+%26+waiting"
+          }
+        ],
+        "authentication": {
+          "credentialsPresent": true,
+          "representation": "legacy-url-userinfo",
+          "retainedSeparately": true,
+          "preview": "redacted"
+        }
+      },
+      "motto": {
+        "fieldsBeforeValidator": [
+          {
+            "name": "cmd",
+            "value": "b",
+            "encoded": "b"
+          },
+          {
+            "name": "t",
+            "value": "m",
+            "encoded": "m"
+          },
+          {
+            "name": "n",
+            "value": "Synthetic Hero & Co.",
+            "encoded": "Synthetic+Hero+%26+Co."
+          },
+          {
+            "name": "r",
+            "value": "Half Orc",
+            "encoded": "Half+Orc"
+          },
+          {
+            "name": "c",
+            "value": "Robot Monk",
+            "encoded": "Robot+Monk"
+          },
+          {
+            "name": "l",
+            "value": "2",
+            "encoded": "2"
+          },
+          {
+            "name": "x",
+            "value": "42",
+            "encoded": "42"
+          },
+          {
+            "name": "i",
+            "value": "Banded Buckler Shield",
+            "encoded": "Banded+Buckler+Shield"
+          },
+          {
+            "name": "k",
+            "value": "STR 12",
+            "encoded": "STR+12"
+          },
+          {
+            "name": "a",
+            "value": "Act I",
+            "encoded": "Act+I"
+          },
+          {
+            "name": "h",
+            "value": "Synthetic Realm",
+            "encoded": "Synthetic+Realm"
+          },
+          {
+            "name": "rev",
+            "value": "8",
+            "encoded": "8"
+          }
+        ],
+        "queryBeforeValidator": "cmd=b&t=m&n=Synthetic+Hero+%26+Co.&r=Half+Orc&c=Robot+Monk&l=2&x=42&i=Banded+Buckler+Shield&k=STR+12&a=Act+I&h=Synthetic+Realm&rev=8",
+        "syntheticValidator": 1385467231,
+        "fieldsAfterValidator": [
+          {
+            "name": "m",
+            "value": "Changed motto!",
+            "encoded": "Changed+motto!"
+          }
+        ],
+        "authentication": {
+          "credentialsPresent": true,
+          "representation": "legacy-url-userinfo",
+          "retainedSeparately": true,
+          "preview": "redacted"
+        }
+      }
+    },
+    "guild": {
+      "fieldsBeforeValidator": [
+        {
+          "name": "cmd",
+          "value": "guild",
+          "encoded": "guild"
+        },
+        {
+          "name": "n",
+          "value": "Synthetic Hero & Co.",
+          "encoded": "Synthetic+Hero+%26+Co."
+        },
+        {
+          "name": "r",
+          "value": "Half Orc",
+          "encoded": "Half+Orc"
+        },
+        {
+          "name": "c",
+          "value": "Robot Monk",
+          "encoded": "Robot+Monk"
+        },
+        {
+          "name": "l",
+          "value": "2",
+          "encoded": "2"
+        },
+        {
+          "name": "h",
+          "value": "Synthetic Realm",
+          "encoded": "Synthetic+Realm"
+        },
+        {
+          "name": "rev",
+          "value": "8",
+          "encoded": "8"
+        },
+        {
+          "name": "guild",
+          "value": "The A&B Guild",
+          "encoded": "The+A%26B+Guild"
+        }
+      ],
+      "queryBeforeValidator": "cmd=guild&n=Synthetic+Hero+%26+Co.&r=Half+Orc&c=Robot+Monk&l=2&h=Synthetic+Realm&rev=8&guild=The+A%26B+Guild",
+      "syntheticValidator": -1923451476,
+      "authentication": {
+        "credentialsPresent": true,
+        "representation": "legacy-url-userinfo",
+        "retainedSeparately": true,
+        "preview": "redacted"
+      }
+    }
+  }
+}

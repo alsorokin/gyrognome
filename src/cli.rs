@@ -13,12 +13,16 @@ use thiserror::Error;
 #[cfg(feature = "conformance-bridge")]
 use crate::conformance_bridge;
 use crate::{
+    compatibility::CompatibilityProfile,
     dashboard::{self, DashboardProvider, LocalProvider},
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
     newguy::{self, NewGuyError, Selection},
     newguy_wizard::{self, WizardError},
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
-    runtime::{CharacterId, CharacterIdentity, StorageError, Store, Worker, WorkerError},
+    runtime::{
+        CharacterId, CharacterIdentity, ManagedInspectionState, StorageError, Store, Worker,
+        WorkerError,
+    },
     save::{self, SaveError},
 };
 
@@ -34,34 +38,34 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Display canonical state from a browser .pqw export without contacting a server.
+    /// Display canonical state from a supported browser or desktop save without contacting a server.
     Inspect {
         save: PathBuf,
         /// Print the credential-free canonical state as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Register a browser .pqw save for local-only managed advancement.
+    /// Register a supported browser or desktop save for managed advancement.
     Register {
         save: PathBuf,
         /// Print credential-safe registration details as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// List registered managed characters without exposing save documents.
+    /// List safe identities, persisted compatibility profiles, and online eligibility.
     List {
         /// Print credential-safe character identities as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Display the persisted canonical state for a managed character.
+    /// Display credential-safe persisted state, profile, provenance, and eligibility.
     ManagedInspect {
         id: String,
         /// Print credential-safe persisted state as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Run a managed character and best-effort report persisted online level-ups and act completions.
+    /// Run a managed character using its persisted continuation profile.
     Worker {
         id: String,
         /// Milliseconds between monotonic-clock persistence updates.
@@ -83,9 +87,9 @@ enum Command {
     Recover { id: String },
     /// Delete an inactive managed character after confirmation.
     Delete { id: String },
-    /// Submit one confirmed browser-compatible leaderboard report.
+    /// Submit one confirmed leaderboard report when the persisted profile is eligible.
     Report { id: String },
-    /// Save a motto and deliver one report; --clear stores an empty motto.
+    /// Save an eligible motto and deliver one report; --clear stores an empty motto.
     Motto {
         id: String,
         #[arg(required_unless_present = "clear", conflicts_with = "clear")]
@@ -93,7 +97,7 @@ enum Command {
         #[arg(long)]
         clear: bool,
     },
-    /// Join or change guild; an explicitly empty designation leaves.
+    /// Join or change an eligible guild; an explicitly empty designation leaves.
     Guild { id: String, designation: String },
     /// Open an interactive credential-safe dashboard with an immediate manual Brag action.
     Dashboard {
@@ -158,39 +162,42 @@ pub enum CliError {
 
 pub fn run() -> Result<(), CliError> {
     match Args::parse().command {
-        Command::Inspect { save, json } => {
-            let character = save::import_file(&save)?;
-            if json {
-                println!("{}", to_string_pretty(&character)?);
-            } else {
-                println!("{}", character.summary());
+        Command::Inspect { save, json } => match save::import_supported_file(&save)? {
+            save::ImportedSave::Browser(character) => {
+                if json {
+                    println!("{}", to_string_pretty(&character)?);
+                } else {
+                    println!("{}", character.summary());
+                }
             }
-        }
+            save::ImportedSave::Desktop(desktop) => {
+                let inspection = save::inspect_desktop(&desktop);
+                if json {
+                    println!("{}", to_string_pretty(&inspection)?);
+                } else {
+                    println!(
+                        "Desktop save inspection (target: desktop-6.4.4)\n{}",
+                        to_string_pretty(&inspection)?
+                    );
+                }
+            }
+        },
         Command::Register { save, json } => {
-            let character = save::import_file(&save)?;
-            let registered = Store::open_default()?.register(&character)?;
-            if json {
-                println!("{}", to_string_pretty(&registered)?);
-            } else {
-                println!(
-                    "Registered managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}",
-                    registered.id,
-                    registered.identity.name,
-                    registered.identity.race,
-                    registered.identity.class,
-                    registered.identity.level
-                );
+            let mut store = Store::open_default()?;
+            match save::import_supported_file(&save)? {
+                save::ImportedSave::Browser(character) => {
+                    let registered = store.register(&character)?;
+                    print_registration(&registered, json)?;
+                }
+                save::ImportedSave::Desktop(desktop) => {
+                    let mut random = newguy::OsRandom::open()?;
+                    let registered = store.register_desktop(&desktop, &mut random)?;
+                    print_registration(&registered, json)?;
+                }
             }
         }
         Command::List { json } => {
-            let characters: Vec<_> = Store::open_default()?
-                .list()?
-                .into_iter()
-                .map(|character| ListedCharacter {
-                    id: character.id,
-                    identity: character.identity,
-                })
-                .collect();
+            let characters = Store::open_default()?.list_managed()?;
             if json {
                 println!("{}", to_string_pretty(&characters)?);
             } else if characters.is_empty() {
@@ -203,21 +210,43 @@ pub fn run() -> Result<(), CliError> {
                         character.identity.name,
                         character.identity.race,
                         character.identity.class,
-                        character.identity.level
+                        character.identity.level,
                     );
+                    println!(
+                        "    Profile: {}",
+                        compatibility_profile_name(character.compatibility.profile)
+                    );
+                    for eligibility in &character.compatibility.online_eligibility {
+                        println!(
+                            "    {:?}: {:?}",
+                            eligibility.operation, eligibility.decision
+                        );
+                    }
+                    if let Some(notice) = character.compatibility.notice {
+                        println!("    {notice}");
+                    }
                 }
             }
         }
         Command::ManagedInspect { id, json } => {
-            let character = Store::open_default()?.get(&parse_id(&id)?)?;
+            let inspection = Store::open_default()?.managed_inspection(&parse_id(&id)?)?;
             if json {
-                println!("{}", to_string_pretty(&character)?);
+                println!("{}", to_string_pretty(&inspection)?);
             } else {
-                println!(
-                    "Managed character: {}\n\n{}",
-                    character.id,
-                    character.state.summary()
-                );
+                match &inspection.state {
+                    ManagedInspectionState::Browser(character) => println!(
+                        "Managed character: {}\nProfile: browser\n\n{}",
+                        character.id,
+                        character.state.summary()
+                    ),
+                    ManagedInspectionState::Desktop644(character) => {
+                        println!(
+                            "Managed character: {}\nProfile: desktop-6.4.4\n\n{}",
+                            character.id,
+                            to_string_pretty(&inspection)?
+                        );
+                    }
+                }
             }
         }
         Command::Worker { id, interval_ms } => {
@@ -228,6 +257,9 @@ pub fn run() -> Result<(), CliError> {
         Command::Start { id } => {
             let store = Store::open_default()?;
             let id = parse_id(&id)?;
+            if let Some(warning) = store.start_warning(&id)? {
+                eprintln!("Warning: {warning}");
+            }
             Lifecycle::new(&store, SystemctlRunner).start(&id)?;
             println!("Started managed character {id}.");
         }
@@ -245,19 +277,19 @@ pub fn run() -> Result<(), CliError> {
         Command::Recover { id } => {
             let store = Store::open_default()?;
             let id = parse_id(&id)?;
+            if let Some(warning) = store.start_warning(&id)? {
+                eprintln!("Warning: {warning}");
+            }
             Lifecycle::new(&store, SystemctlRunner).recover(&id)?;
             println!("Recovered and started managed character {id}.");
         }
         Command::Delete { id } => {
             let id = parse_id(&id)?;
             let mut store = Store::open_default()?;
-            let character = store.get(&id)?;
+            let identity = store.identity(&id)?;
             println!(
                 "Delete managed character {id}?\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\nType yes to confirm: ",
-                character.identity.name,
-                character.identity.race,
-                character.identity.class,
-                character.identity.level
+                identity.name, identity.race, identity.class, identity.level
             );
             io::stdout().flush().map_err(CliError::Confirmation)?;
             if !delete_confirmed(&mut io::stdin().lock())? {
@@ -276,13 +308,10 @@ pub fn run() -> Result<(), CliError> {
         Command::Report { id } => {
             let id = parse_id(&id)?;
             let store = Store::open_default()?;
-            let character = store.get(&id)?;
+            let identity = store.identity(&id)?;
             println!(
                 "Submit one leaderboard report for managed character {id}?\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\nType yes to confirm: ",
-                character.identity.name,
-                character.identity.race,
-                character.identity.class,
-                character.identity.level
+                identity.name, identity.race, identity.class, identity.level
             );
             io::stdout().flush().map_err(CliError::Confirmation)?;
             if !delete_confirmed(&mut io::stdin().lock())? {
@@ -404,41 +433,65 @@ pub fn run() -> Result<(), CliError> {
                 }
                 _ => return Err(CliError::PartialCreationInputs),
             };
-            print_registration(registered, json)?;
+            print_registration(&registered, json)?;
         }
         #[cfg(feature = "conformance-bridge")]
         Command::ConformanceBridge => conformance_bridge::run_stdio()?,
     }
-
-    fn print_registration(
-        registered: crate::runtime::ManagedCharacter,
-        json: bool,
-    ) -> Result<(), CliError> {
-        if json {
-            println!("{}", to_string_pretty(&registered)?);
-        } else {
-            println!(
-                "Registered managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}",
-                registered.id,
-                registered.identity.name,
-                registered.identity.race,
-                registered.identity.class,
-                registered.identity.level
-            );
-        }
-        Ok(())
-    }
     Ok(())
-}
-
-#[derive(Serialize)]
-struct ListedCharacter {
-    id: CharacterId,
-    identity: CharacterIdentity,
 }
 
 fn parse_id(value: &str) -> Result<CharacterId, CliError> {
     Ok(CharacterId::parse(value)?)
+}
+
+fn compatibility_profile_name(profile: CompatibilityProfile) -> &'static str {
+    match profile {
+        CompatibilityProfile::Browser => "browser",
+        CompatibilityProfile::Desktop644 => "desktop-6.4.4",
+    }
+}
+
+trait RegistrationView: Serialize {
+    fn id(&self) -> &CharacterId;
+    fn identity(&self) -> &CharacterIdentity;
+}
+
+impl RegistrationView for crate::runtime::ManagedCharacter {
+    fn id(&self) -> &CharacterId {
+        &self.id
+    }
+
+    fn identity(&self) -> &CharacterIdentity {
+        &self.identity
+    }
+}
+
+impl RegistrationView for crate::runtime::RegisteredDesktopCharacter {
+    fn id(&self) -> &CharacterId {
+        &self.id
+    }
+
+    fn identity(&self) -> &CharacterIdentity {
+        &self.identity
+    }
+}
+
+fn print_registration(registered: &impl RegistrationView, json: bool) -> Result<(), CliError> {
+    if json {
+        println!("{}", to_string_pretty(registered)?);
+    } else {
+        let identity = registered.identity();
+        println!(
+            "Registered managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}",
+            registered.id(),
+            identity.name,
+            identity.race,
+            identity.class,
+            identity.level
+        );
+    }
+    Ok(())
 }
 
 fn delete_confirmed(input: &mut impl BufRead) -> Result<bool, CliError> {

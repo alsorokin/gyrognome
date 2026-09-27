@@ -43,3 +43,29 @@ fn enrollment_evidence_rejects_response_bodies_and_raw_browser_data() {
         assert!(validate_fixture(Path::new("enrollment-evidence.json"), content).is_err());
     }
 }
+
+#[test]
+fn desktop_evidence_rejects_saves_credentials_authenticated_urls_and_raw_responses() {
+    for path in [
+        "reference.pq",
+        "reference.bak",
+        "reference.pqw",
+        "reference.exe",
+    ] {
+        assert!(validate_fixture(Path::new(path), "{}").is_err());
+    }
+    for content in [
+        r#"{"account": "unsafe"}"#,
+        r#"{"password": "unsafe"}"#,
+        r#"{"credential": "unsafe"}"#,
+        r#"{"destination": "https://user:secret@example.invalid/report"}"#,
+        r#"{"destination": "https://example.invalid/report?p=12345"}"#,
+        r#"{"raw_response": "unsafe"}"#,
+        r#"{"raw_save": "unsafe"}"#,
+        r#"{"raw_request": "cmd=brag&p=unsafe"}"#,
+        r#"{"authenticated_request": "unsafe"}"#,
+        r#"{"request_bytes": "unsafe"}"#,
+    ] {
+        assert!(validate_fixture(Path::new("desktop-reference-evidence.json"), content).is_err());
+    }
+}

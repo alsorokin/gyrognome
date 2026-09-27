@@ -5,16 +5,24 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum FixtureSafetyError {
-    #[error("fixture path must not use the .pqw player-save extension")]
+    #[error("fixture path must not use a player-save extension")]
     PlayerSave,
+    #[error("fixture path must not contain an executable")]
+    Executable,
     #[error("fixture must not contain a full signed leaderboard request")]
     SignedRequest,
     #[error("fixture must not contain a browser profile path")]
     BrowserProfile,
     #[error("fixture must not contain a raw browser save or response body")]
     RawBrowserData,
+    #[error("fixture must not contain a raw authenticated request")]
+    RawAuthenticatedRequest,
     #[error("checkpoint fixture must not contain an online passkey")]
     Passkey,
+    #[error("fixture must not contain account credentials")]
+    AccountCredential,
+    #[error("fixture must not contain an authenticated URL")]
+    AuthenticatedUrl,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -241,9 +249,29 @@ fn valid_guild_submission(submission: &Value, category: &str, guild_empty: bool)
 pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyError> {
     if path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("pqw"))
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "pq" | "bak" | "pqw"
+            )
+        })
     {
         return Err(FixtureSafetyError::PlayerSave);
+    }
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+    {
+        return Err(FixtureSafetyError::Executable);
+    }
+    let lower = content.to_ascii_lowercase();
+    if lower.contains("\"raw_request\"")
+        || lower.contains("\"authenticated_request\"")
+        || lower.contains("\"request_bytes\"")
+    {
+        return Err(FixtureSafetyError::RawAuthenticatedRequest);
     }
     if content.contains("cmd=") && content.contains("&p=") {
         return Err(FixtureSafetyError::SignedRequest);
@@ -255,13 +283,44 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
     {
         return Err(FixtureSafetyError::BrowserProfile);
     }
-    let lower = content.to_ascii_lowercase();
     if lower.contains("\"response\"")
         || lower.contains("\"response_body\"")
+        || lower.contains("\"raw_response\"")
         || lower.contains("\"raw_save\"")
+        || lower.contains("\"save_bytes\"")
         || lower.contains("\"profile\"")
     {
         return Err(FixtureSafetyError::RawBrowserData);
+    }
+    if lower.contains("\"account\"")
+        || lower.contains("\"account_login\"")
+        || lower.contains("\"login\"")
+        || lower.contains("\"password\"")
+        || lower.contains("\"credential\"")
+        || lower.contains("\"credentials\"")
+    {
+        return Err(FixtureSafetyError::AccountCredential);
+    }
+    if content
+        .split_ascii_whitespace()
+        .filter_map(|word| {
+            let trimmed = word.trim_matches(|character| {
+                matches!(character, '"' | '\'' | ',' | '}' | ']' | '(' | ')')
+            });
+            url::Url::parse(trimmed).ok()
+        })
+        .any(|url| {
+            !url.username().is_empty()
+                || url.password().is_some()
+                || url.query_pairs().any(|(key, _)| {
+                    matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "p" | "passkey" | "password" | "account" | "login"
+                    )
+                })
+        })
+    {
+        return Err(FixtureSafetyError::AuthenticatedUrl);
     }
     let is_trace_or_experiment =
         path.file_name()
@@ -298,6 +357,18 @@ mod tests {
             Err(FixtureSafetyError::PlayerSave)
         );
         assert_eq!(
+            validate_fixture(Path::new("reference.pq"), "{}"),
+            Err(FixtureSafetyError::PlayerSave)
+        );
+        assert_eq!(
+            validate_fixture(Path::new("reference.bak"), "{}"),
+            Err(FixtureSafetyError::PlayerSave)
+        );
+        assert_eq!(
+            validate_fixture(Path::new("reference.exe"), ""),
+            Err(FixtureSafetyError::Executable)
+        );
+        assert_eq!(
             validate_fixture(Path::new("request.txt"), "cmd=b&t=l&p=123"),
             Err(FixtureSafetyError::SignedRequest)
         );
@@ -326,6 +397,34 @@ mod tests {
                 r#"{"response_body": "unsafe"}"#
             ),
             Err(FixtureSafetyError::RawBrowserData)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("desktop-evidence.json"),
+                r#"{"raw_request": "cmd=brag&p=unsafe"}"#
+            ),
+            Err(FixtureSafetyError::RawAuthenticatedRequest)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("desktop-evidence.json"),
+                r#"{"account_login": "unsafe"}"#
+            ),
+            Err(FixtureSafetyError::AccountCredential)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("desktop-evidence.json"),
+                r#"{"destination": "https://user:secret@example.invalid/report"}"#
+            ),
+            Err(FixtureSafetyError::AuthenticatedUrl)
+        );
+        assert_eq!(
+            validate_fixture(
+                Path::new("desktop-evidence.json"),
+                r#"{"destination": "https://example.invalid/report?p=12345"}"#
+            ),
+            Err(FixtureSafetyError::AuthenticatedUrl)
         );
     }
 

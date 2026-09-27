@@ -5,7 +5,8 @@ core and opt-in online leaderboard reporting for eligible managed characters.
 
 ## Current support
 
-- Imports browser `.pqw` exports (Base64-encoded JSON) for read-only inspection.
+- Imports browser `.pqw` exports (Base64-encoded JSON) and supported original
+  Windows desktop `.pq` or same-format `.bak` saves for read-only inspection.
 - Preserves unmodified imported JSON documents for export by library consumers.
 - Implements browser-compatible Alea state continuation, form-style URL encoding,
   URL normalization, and LFSR request validators.
@@ -14,9 +15,18 @@ core and opt-in online leaderboard reporting for eligible managed characters.
   supports foreground online enrollment from the interactive New Guy wizard.
 - Persists motto and guild metadata independently of simulation progress, with
   explicit CLI and dashboard editing available while a worker is active.
-- Provides a pure deterministic simulation API plus an opt-in local runtime
-  that schedules and persists explicitly registered characters. Neither layer
-  mutates browser saves, renders a UI, or transports data.
+- Provides separate browser and `desktop-6.4.4` continuation profiles plus an
+  opt-in local runtime that schedules and persists explicitly registered
+  characters without mutating source saves.
+- Enables classic desktop level, act, manual brag, motto, and guild operations
+  only for fresh `desktop-6.4.4` Spoltog imports covered by bundled passing
+  evidence. Unadapted imports and imports recording only the deterministic
+  `load-spelling-patch` normalization are covered; every other realm, endpoint,
+  credential mode, adaptation, encoding, and local-only fork remains closed.
+
+See [Classic desktop save compatibility](docs/classic-desktop-compatibility.md)
+for supported save layouts, continuation behavior, normalization, online
+eligibility, local-only forks, and evidence boundaries.
 
 ## Deterministic simulation
 
@@ -53,30 +63,41 @@ cargo run -- inspect /path/to/character.pqw
 
 The default output is a read-only character sheet containing traits, attributes,
 activity, progress, equipment, inventory, spells, plots, quests, online realm
-metadata, and the credential-safe motto and guild profile. For deterministic
-comparisons, request the same credential-free canonical state as JSON:
+metadata, and the credential-safe motto and guild profile. Desktop output also
+identifies its continuation target, recognized adaptations, counters measured
+since import, and safe online eligibility. For deterministic comparisons,
+request the same credential-free canonical state as JSON:
 
 ```sh
 cargo run -- inspect /path/to/character.pqw --json
 ```
 
-Online character passkeys and unrecognized raw save fields are never included in
-either inspection format. `.pqw` files are bearer credentials for leaderboard
-reporting and must not be committed.
+Passkeys, desktop account passwords, authenticated/raw endpoints, and
+unrecognized raw save fields are never included in either inspection format.
+Save files can contain bearer credentials and must not be committed.
+
+### Classic desktop compatibility
+
+Desktop saves use a separate, bounded compatibility contract rather than
+browser simulation rules. See
+[docs/classic-desktop-compatibility.md](docs/classic-desktop-compatibility.md)
+for supported layouts and adaptations, random/history limitations, online
+eligibility, local-only behavior, transport restrictions, and conformance
+evidence.
 
 ## Local managed-character runtime
 
-The local runtime imports an existing browser save into a per-user SQLite
-database. Online workers send one best-effort official-endpoint report after
-each persisted level-up or act-completion event; offline workers never report.
-Workers do not create online characters and never print passkeys or
-unrecognized raw save fields. The original browser document is retained
-privately for a future export feature; the runtime stores its versioned
-canonical state separately. Schema version 2 stores motto and guild in separate
-non-null columns, migrating optional values from older retained documents.
-Missing or invalid legacy profile values default to empty during migration;
-new imports reject invalid present fields. Worker writes cannot overwrite
-profile edits.
+The local runtime imports an existing browser or supported desktop save into a
+per-user SQLite database. Eligible browser workers send one best-effort
+official-endpoint report after each persisted level-up or act-completion event;
+offline workers and currently gated desktop workers never report. Workers do
+not create online characters and never print private authentication or
+unrecognized raw save fields. Browser source documents are retained privately
+for future export; desktop canonical state and private authentication are stored
+separately, and no desktop source document is retained. Schema version 4 stores
+typed compatibility, profile-specific random continuation, desktop import
+metadata, and private authentication while preserving migrated browser records.
+Worker writes cannot overwrite profile edits.
 
 Runtime data is stored at:
 
@@ -90,11 +111,21 @@ Back up the directory to retain managed state. Do not copy it to
 untrusted locations because the database includes the original browser
 documents.
 
-Register a browser save, list safe identities, and inspect persisted canonical
-state:
+Before a database schema migration, Gyrognome creates a user-private
+`characters.sqlite3.pre-v<schema>.backup` snapshot. To roll back to an older
+binary, stop all workers, move the current data directory aside, restore that
+backup as `characters.sqlite3` in a private `0700` directory with file mode
+`0600`, and then start the older binary. Progress recorded after the backup is
+not present. Gyrognome never automatically downgrades or overwrites newer
+state.
+
+Register a browser or desktop save, list safe identities with their persisted
+profiles and eligibility, and inspect persisted canonical state:
 
 ```sh
 gyrognome register /path/to/character.pqw
+gyrognome register /path/to/desktop-character.pq
+gyrognome register /path/to/desktop-character.bak
 gyrognome list
 gyrognome managed-inspect <character-id> --json
 ```
@@ -148,9 +179,11 @@ gyrognome guild <character-id> ""
 Each explicit command submits exactly one action without another confirmation.
 Motto text and `--clear` are mutually exclusive; an explicitly empty motto also
 clears it. An empty guild designation leaves the current guild; there is no
-separate leave command. Printable non-control Unicode is accepted. Controls,
-offline characters, invalid credentials, unofficial endpoints, and invalid
-conformance evidence are rejected before delivery.
+separate leave command. Printable non-control Unicode is accepted for browser characters. Desktop
+profile text must additionally be ASCII. Controls, offline characters, invalid
+credentials, unofficial endpoints, unsupported encoding, local-only provenance,
+and invalid or absent operation evidence are rejected before mutation or
+delivery.
 
 A motto is saved before its one `t=m` report and retained even if delivery
 fails or the endpoint rejects it. Later manual and worker reports use the saved
@@ -259,6 +292,17 @@ write only profile metadata. It displays only credential-safe canonical fields
 and profile values, never browser passkeys, the retained original save, raw
 endpoint responses, or unrecognized source fields.
 
+For desktop records, Details shows `desktop-6.4.4`, one overall online
+eligibility result, and counters measured since import. Unadvanced provenance
+is hidden; a local-only record instead shows the actionable fresh
+official-client import requirement. Start and recover confirmations repeat the
+permanent local-only warning for an online-originated import that would advance
+while progress reporting is gated.
+Ineligible Brag, motto, and guild controls stop at the shared typed gate without
+calling transport. A desktop Task bar that is full but awaiting its next actual
+callback remains at 100%; display prediction never invents completion rewards,
+a new activity, or a report.
+
 Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
 manual Brag report, `m` to edit the motto, `g` to edit the guild, `s` to start,
 `x` to stop, or `c` to recover the selected service. Brag has no confirmation
@@ -297,6 +341,13 @@ revision, public request-field ordering, and synthetic deterministic values.
 Fixtures intentionally exclude player saves, passkeys, browser profiles, and
 complete signed request URLs. Regenerate observations only with disposable
 characters through the repository's Playwright MCP configuration.
+
+## Classic desktop conformance
+
+Classic online support is bounded by separately approved, disposable
+conformance evidence. The development-only procedure, safety rules, historical
+results, and currently enabled scope are documented in
+[Classic desktop save compatibility](docs/classic-desktop-compatibility.md).
 
 ## Leaderboard conformance experiment
 

@@ -26,6 +26,10 @@ online browser characters with retained passkeys while active or inactive when
 applicable evidence passes. Desktop characters SHALL additionally require
 matching profile, import-path, realm, endpoint, credential-mode, encoding, and
 operation evidence, and SHALL NOT have local-only advancement provenance.
+For import-path matching, an explicitly proven deterministic load
+normalization MAY match its canonical path only under the equivalence rule
+defined by desktop leaderboard conformance. No unknown, progression-affecting,
+or combined adaptation inherits eligibility through that rule.
 Each explicit action SHALL serialize with other online actions without
 stopping, restarting, or interrupting runtime ownership.
 
@@ -61,6 +65,21 @@ desktop eligibility.
 - **WHEN** desktop evidence covers another realm, credential mode, import path,
   or operation
 - **THEN** the requested action is ineligible even if browser evidence passes
+
+#### Scenario: Reporting after the desktop spelling normalization
+
+- **WHEN** a desktop import records only `load-spelling-patch`, its canonical
+  and protocol equivalence is validated, and all other operation evidence
+  matches
+- **THEN** reporting eligibility is evaluated as the evidenced canonical path
+  while the recorded adaptation remains visible
+
+#### Scenario: Reporting after an unapproved adaptation
+
+- **WHEN** a desktop import records a progression-affecting, unknown, or
+  combined adaptation without separately matching evidence
+- **THEN** the request is refused before transport even if one recorded
+  adaptation would be eligible by itself
 
 ### Requirement: Credential-safe report delivery
 

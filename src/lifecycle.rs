@@ -120,7 +120,7 @@ impl<'store, Runner: ServiceRunner> Lifecycle<'store, Runner> {
     }
 
     pub fn start(&self, id: &CharacterId) -> Result<(), LifecycleError> {
-        self.store.get(id)?;
+        self.store.identity(id)?;
         if self.store.is_owned(id)? {
             return Err(LifecycleError::Storage(StorageError::AlreadyOwned(
                 id.clone(),
@@ -147,24 +147,24 @@ impl<'store, Runner: ServiceRunner> Lifecycle<'store, Runner> {
     }
 
     pub fn stop(&self, id: &CharacterId) -> Result<(), LifecycleError> {
-        self.store.get(id)?;
+        self.store.identity(id)?;
         self.run_required(ServiceAction::Stop, id)
     }
 
     /// Clears a failed service state and starts a fresh worker. Worker locking
     /// still rejects recovery if another local process owns the character.
     pub fn recover(&self, id: &CharacterId) -> Result<(), LifecycleError> {
-        self.store.get(id)?;
+        self.store.identity(id)?;
         self.run_required(ServiceAction::ResetFailed, id)?;
         self.start(id)
     }
 
     pub fn status(&self, id: &CharacterId) -> Result<RuntimeStatus, LifecycleError> {
-        let character = self.store.get(id)?;
+        let identity = self.store.identity(id)?;
         let output = self.runner.run(ServiceAction::IsActive, &unit_name(id))?;
         Ok(RuntimeStatus {
             id: id.clone(),
-            identity: character.identity,
+            identity,
             service: if output.success {
                 ServiceState::Active
             } else if output.stdout == "failed" {

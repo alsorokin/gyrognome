@@ -7,6 +7,8 @@ credential-safe online actions, and terminal dashboard are complete.
 ## Completed: Compatibility Core
 
 - Browser `.pqw` import and unmodified export support.
+- Bounded original Windows `.pq` and same-format `.bak` import under an explicit
+  `desktop-6.4.4` continuation profile.
 - Safe, redacted character identity inspection.
 - Browser-compatible Alea continuation, URL encoding, URL normalization, and LFSR
   request construction.
@@ -33,6 +35,12 @@ browser-compatible order from explicit elapsed durations, bundled versioned rule
 data, and synthetic browser-derived conformance checkpoints. It remains pure:
 no clock, filesystem, database, or network access is reachable from simulation.
 
+The desktop profile uses separately pinned 6.4.4 rules, integer/random
+primitives, 100 ms callback semantics, and source-derived checkpoints. Because
+desktop saves omit process random state and reliable lifetime counters,
+registration initializes a new persisted desktop continuation and labels
+historical values unavailable rather than fabricating them.
+
 ## Completed: Local Character Runtime
 
 The `local-character-runtime` capability adds XDG-scoped SQLite persistence,
@@ -41,6 +49,11 @@ characters progress only while their local runtime is active; stopped time does
 not catch up. Eligible online workers deliver each persisted level-up and
 act-completion event once to the official leaderboard endpoint; delivery is
 best effort and never queues or retries.
+
+Desktop workers preserve full-bar pending completion across restart and discard
+delayed callback time above 100 ms. Online-originated desktop imports become
+permanently local-only on first advancement while progress reporting remains
+gated; future online use requires a fresh official-client import.
 
 ## Completed: Managed Character Administration
 
@@ -69,6 +82,9 @@ of a managed character:
 - Restores the terminal on quit, terminal failure, or interrupt.
 - Keeps browser passkeys, raw save documents, and raw request data out of the
   presentation layer.
+- Displays persisted browser or `desktop-6.4.4` identity, overall online
+  eligibility, since-import counters, and actionable local-only recovery
+  guidance without exposing account passwords, passkeys, or raw endpoints.
 
 ## Completed: Simulation Timing Conformance
 
@@ -188,6 +204,16 @@ official `cmd=create` request, and delivers the browser-compatible initial
 
 ## Release Status
 
-Version 1.0.0 is the feature-complete baseline. Future work may improve
-usability, portability, and operational tooling without changing the completed
-credential-safety and local-runtime boundaries described above.
+Version 1.0.0 is the browser-compatible baseline. Local desktop import and
+continuation are implemented under the bounded `desktop-6.4.4` contract.
+The September 27, 2026 clean Spoltog experiment established passing,
+normal-classification evidence for fresh unadapted imports using the exact
+legacy saved endpoint, its verified HTTPS mapping, account/password
+authentication, automatic level and act reports, manual brag, motto set/clear,
+and accepted/rejected/empty guild operations. Those exact scopes are enabled.
+Source-derived differential evidence also permits imports recording only the
+deterministic `load-spelling-patch` normalization to use the same operation
+evidence while retaining that provenance. Legacy prologue, legacy quest
+placeholder, unknown, and combined adaptations, other realms/endpoints or
+credential modes, non-ASCII requests, and locally advanced forks remain closed
+and must not be described as general classic-server compatibility.

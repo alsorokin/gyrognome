@@ -86,12 +86,12 @@ the absence of newer fields. It SHALL support observed 6.2 and 6.4.4 save
 layouts only through validated 6.4.4 load/continuation semantics.
 
 Legacy prologue queues, placeholder quest markers, and load-time spelling
-changes SHALL follow independently evidenced desktop behavior, including
-collection-order effects. An unsupported ambiguous state SHALL be rejected
-with an actionable safe explanation rather than silently converted to browser
-rules. Historical RNG state, birthday, seed history, task counts, or elapsed
-totals not present in the save SHALL be identified as unavailable. New local
-counters SHALL be labeled as measured since import.
+changes SHALL follow the pinned source-derived desktop reference behavior,
+including collection-order effects. An unsupported ambiguous state SHALL be
+rejected with an actionable safe explanation rather than silently converted to
+browser rules. Historical RNG state, birthday, seed history, task counts, or
+elapsed totals not present in the save SHALL be identified as unavailable. New
+local counters SHALL be labeled as measured since import.
 
 #### Scenario: Importing a legacy prologue
 
@@ -115,11 +115,12 @@ counters SHALL be labeled as measured since import.
 
 The desktop profile SHALL use the pinned 6.4.4 ordered rules, integer random
 operations, weighted-stat selection, numeric rounding, and load behavior
-validated against an independent desktop oracle. An import SHALL initialize
-and persist a new desktop random continuation state without claiming to
-reproduce the original client's unsaved next random outcome. Identical imported
-state, supplied desktop random state, and callback inputs SHALL yield identical
-results and restored-state continuation.
+validated against the separately authored source-derived desktop reference
+harness. An import SHALL initialize and persist a new desktop random
+continuation state without claiming to reproduce the original client's unsaved
+next random outcome or exact uncorroborated Delphi runtime edge behavior.
+Identical imported state, supplied desktop random state, and callback inputs
+SHALL yield identical results and restored-state continuation.
 
 The profile SHALL preserve desktop integer XP/quest/plot credit, non-loading
 task plot advancement, level-up ordering, and act rewards. Act II SHALL award
@@ -171,7 +172,7 @@ Unsupported encoding or authentication SHALL fail explicitly.
 #### Scenario: Constructing a desktop report boundary
 
 - **WHEN** a synthetic desktop level-up or act-completion snapshot is supplied
-- **THEN** the unsigned fields and synthetic validator match the independent
+- **THEN** the unsigned fields and synthetic validator match the source-derived
   desktop vector at that exact boundary without sending a request
 
 #### Scenario: Retaining account authentication

@@ -28,12 +28,21 @@ use ratatui::{
 use thiserror::Error;
 
 use crate::{
+    compatibility::CompatibilityProfile,
+    desktop_eligibility::{
+        DesktopEligibilityDecision, DesktopOnlineOperation, DesktopOperationEligibility,
+    },
+    desktop_save::{DesktopValidatedBar, DesktopValidatedRow},
     guild::GuildOutcome,
     lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, ServiceState, SystemctlRunner},
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
-    runtime::{CharacterId, CharacterIdentity, ManagedCharacter, StorageError, Store},
+    runtime::{
+        CharacterId, CharacterIdentity, ManagedCharacter, ManagedCompatibilityPresentation,
+        RegisteredDesktopCharacter, StorageError, Store,
+    },
     state::{
-        Activity, Attributes, Equipment, InventoryEntry, OnlineProfile, Plot, Progress, Spell,
+        Activity, Attributes, Equipment, InventoryEntry, OnlineProfile, Plot, Progress,
+        ProgressBar, Spell,
     },
 };
 
@@ -47,7 +56,7 @@ pub struct DashboardCharacter {
     pub id: CharacterId,
     pub identity: CharacterIdentity,
     pub activity: Activity,
-    pub stats: Attributes,
+    pub stats: DashboardAttributes,
     pub progress: Progress,
     pub equipment: Equipment,
     pub inventory: Vec<InventoryEntry>,
@@ -56,15 +65,46 @@ pub struct DashboardCharacter {
     pub quests: Vec<String>,
     pub current_quest: String,
     pub profile: OnlineProfile,
+    pub compatibility: ManagedCompatibilityPresentation,
 }
 
-impl From<ManagedCharacter> for DashboardCharacter {
-    fn from(character: ManagedCharacter) -> Self {
+#[derive(Debug, Clone)]
+pub struct DashboardAttributes {
+    pub strength: f64,
+    pub constitution: f64,
+    pub dexterity: f64,
+    pub intelligence: f64,
+    pub wisdom: f64,
+    pub charisma: f64,
+    pub hit_points_max: f64,
+    pub mana_points_max: f64,
+}
+
+impl From<Attributes> for DashboardAttributes {
+    fn from(stats: Attributes) -> Self {
+        Self {
+            strength: stats.strength,
+            constitution: stats.constitution,
+            dexterity: stats.dexterity,
+            intelligence: stats.intelligence,
+            wisdom: stats.wisdom,
+            charisma: stats.charisma,
+            hit_points_max: stats.hit_points_max,
+            mana_points_max: stats.mana_points_max,
+        }
+    }
+}
+
+impl DashboardCharacter {
+    fn from_browser(
+        character: ManagedCharacter,
+        compatibility: ManagedCompatibilityPresentation,
+    ) -> Self {
         Self {
             id: character.id,
             identity: character.identity,
             activity: character.state.activity,
-            stats: character.state.stats,
+            stats: character.state.stats.into(),
             progress: character.state.progress,
             equipment: character.state.equipment,
             inventory: character.state.inventory,
@@ -73,6 +113,169 @@ impl From<ManagedCharacter> for DashboardCharacter {
             quests: character.state.quests,
             current_quest: character.state.bestquest,
             profile: character.state.profile,
+            compatibility,
+        }
+    }
+
+    fn from_desktop(
+        character: RegisteredDesktopCharacter,
+        compatibility: ManagedCompatibilityPresentation,
+    ) -> Result<Self, StorageError> {
+        let state = &character.state;
+        let stat = |caption: &'static str| {
+            desktop_row_value(&state.stats, caption)?
+                .parse::<f64>()
+                .map_err(|_| StorageError::InvalidDesktopState(caption))
+        };
+        let progress = Progress {
+            experience: desktop_progress_bar(&state.bars.experience),
+            encumbrance: desktop_progress_bar(&state.bars.encumbrance),
+            plot: desktop_progress_bar(&state.bars.plot),
+            quest: desktop_progress_bar(&state.bars.quest),
+            task: desktop_progress_bar(&state.bars.task),
+        };
+        let inventory = state
+            .inventory
+            .iter()
+            .map(|row| {
+                let quantity = row
+                    .subitems
+                    .first()
+                    .ok_or(StorageError::InvalidDesktopState("inventory quantity"))?
+                    .parse()
+                    .map_err(|_| StorageError::InvalidDesktopState("inventory quantity"))?;
+                Ok(InventoryEntry {
+                    name: row.caption.clone(),
+                    quantity,
+                })
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
+        let spells = state
+            .spells
+            .iter()
+            .map(|row| Spell {
+                name: row.caption.clone(),
+                rank: row.subitems.first().cloned().unwrap_or_default(),
+            })
+            .collect();
+        let current_quest = desktop_current_quest(&state.quests);
+        let bestplot = state
+            .plots
+            .last()
+            .map(|row| row.caption.clone())
+            .unwrap_or_default();
+        let act = u64::try_from(state.plots.len().saturating_sub(1))
+            .map_err(|_| StorageError::IntegerOutOfRange("desktop act"))?;
+        Ok(Self {
+            id: character.id,
+            identity: character.identity,
+            activity: Activity {
+                task: desktop_activity_text(&state.activity, &state.current_task),
+                tasks: character
+                    .import_metadata
+                    .measured_since_import
+                    .tasks_completed,
+                elapsed: character
+                    .import_metadata
+                    .measured_since_import
+                    .elapsed_milliseconds
+                    / 1_000,
+                kill: String::new(),
+                questmonster: String::new(),
+                questmonsterindex: 0,
+            },
+            stats: DashboardAttributes {
+                strength: stat("STR")?,
+                constitution: stat("CON")?,
+                dexterity: stat("DEX")?,
+                intelligence: stat("INT")?,
+                wisdom: stat("WIS")?,
+                charisma: stat("CHA")?,
+                hit_points_max: stat("HP Max")?,
+                mana_points_max: stat("MP Max")?,
+            },
+            progress,
+            equipment: Equipment {
+                weapon: desktop_row_value(&state.equipment, "Weapon")?,
+                shield: desktop_row_value(&state.equipment, "Shield")?,
+                helm: desktop_row_value(&state.equipment, "Helm")?,
+                hauberk: desktop_row_value(&state.equipment, "Hauberk")?,
+                brassairts: desktop_row_value(&state.equipment, "Brassairts")?,
+                vambraces: desktop_row_value(&state.equipment, "Vambraces")?,
+                gauntlets: desktop_row_value(&state.equipment, "Gauntlets")?,
+                gambeson: desktop_row_value(&state.equipment, "Gambeson")?,
+                cuisses: desktop_row_value(&state.equipment, "Cuisses")?,
+                greaves: desktop_row_value(&state.equipment, "Greaves")?,
+                sollerets: desktop_row_value(&state.equipment, "Sollerets")?,
+            },
+            inventory,
+            spells,
+            plot: Plot { act, bestplot },
+            quests: state.quests.iter().map(|row| row.caption.clone()).collect(),
+            current_quest,
+            profile: OnlineProfile {
+                motto: state.profile.motto.clone(),
+                guild: state.profile.guild.clone(),
+            },
+            compatibility,
+        })
+    }
+}
+
+fn desktop_row_value(
+    rows: &[DesktopValidatedRow],
+    caption: &'static str,
+) -> Result<String, StorageError> {
+    rows.iter()
+        .find(|row| row.caption == caption)
+        .and_then(|row| row.subitems.first())
+        .cloned()
+        .ok_or(StorageError::InvalidDesktopState(caption))
+}
+
+fn desktop_progress_bar(bar: &DesktopValidatedBar) -> ProgressBar {
+    let percent = if bar.maximum == 0 {
+        100
+    } else {
+        bar.position.saturating_mul(100) / bar.maximum
+    };
+    ProgressBar {
+        position: bar.position as f64,
+        max: bar.maximum,
+        percent: percent.min(100),
+        remaining: bar.maximum.saturating_sub(bar.position),
+        time: String::new(),
+        hint: String::new(),
+    }
+}
+
+fn desktop_current_quest(quests: &[DesktopValidatedRow]) -> String {
+    quests
+        .last()
+        .map(|quest| quest.caption.clone())
+        .unwrap_or_default()
+}
+
+fn desktop_activity_text(activity: &str, current_task: &str) -> String {
+    if activity.is_empty() {
+        current_task.to_owned()
+    } else {
+        activity.to_owned()
+    }
+}
+
+fn dashboard_character(
+    store: &Store,
+    id: &CharacterId,
+) -> Result<DashboardCharacter, StorageError> {
+    let compatibility = store.managed_compatibility(id)?;
+    match compatibility.profile {
+        CompatibilityProfile::Browser => Ok(DashboardCharacter::from_browser(
+            store.get(id)?,
+            compatibility,
+        )),
+        CompatibilityProfile::Desktop644 => {
+            DashboardCharacter::from_desktop(store.get_desktop(id)?, compatibility)
         }
     }
 }
@@ -133,7 +336,7 @@ impl DashboardProvider for LocalProvider {
     }
 
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
-        Ok(self.store.borrow().get(id)?.into())
+        Ok(dashboard_character(&self.store.borrow(), id)?)
     }
 
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError> {
@@ -175,24 +378,24 @@ pub fn collect_snapshot<Runner: crate::lifecycle::ServiceRunner>(
     runner: Runner,
     id: &CharacterId,
 ) -> Result<DashboardSnapshot, DashboardError> {
-    let character = store.get(id)?;
+    let character = dashboard_character(store, id)?;
     let status = Lifecycle::new(store, runner).status(id);
     Ok(snapshot(character, status))
 }
 
 fn snapshot(
-    character: ManagedCharacter,
+    character: DashboardCharacter,
     status: Result<RuntimeStatus, LifecycleError>,
 ) -> DashboardSnapshot {
     match status {
         Ok(status) => DashboardSnapshot {
-            character: character.into(),
+            character,
             service: Some(status.service),
             runtime_owned: Some(status.runtime_owned),
             message: None,
         },
         Err(error) => DashboardSnapshot {
-            character: character.into(),
+            character,
             service: None,
             runtime_owned: None,
             message: Some(format!("Could not refresh service status: {error}")),
@@ -417,7 +620,7 @@ pub fn selector_entries(
     mut activity: impl FnMut(&CharacterId) -> SelectorActivity,
 ) -> Result<Vec<SelectorEntry>, StorageError> {
     let mut entries = store
-        .list()?
+        .list_managed()?
         .into_iter()
         .map(|character| SelectorEntry {
             activity: activity(&character.id),
@@ -910,6 +1113,15 @@ impl DashboardState {
                 }
                 Command::ConfirmAction => {
                     let editor = self.editor.take().expect("editor is open");
+                    let operation = match editor.field {
+                        ProfileField::Motto => DesktopOnlineOperation::Motto,
+                        ProfileField::Guild => DesktopOnlineOperation::Guild,
+                    };
+                    if let Some(message) = online_action_blocked(&self.current.character, operation)
+                    {
+                        self.current.message = Some(message);
+                        return false;
+                    }
                     let message = match editor.field {
                         ProfileField::Motto => match provider.set_motto(id, &editor.text) {
                             Ok(outcome) => outcome.motto_message().to_owned(),
@@ -937,6 +1149,13 @@ impl DashboardState {
                 false
             }
             Command::Brag => {
+                if let Some(message) = online_action_blocked(
+                    &self.current.character,
+                    DesktopOnlineOperation::ManualBrag,
+                ) {
+                    self.current.message = Some(message);
+                    return false;
+                }
                 let message = match provider.brag(id) {
                     Ok(DeliveryOutcome::Delivered) => "Leaderboard report delivered.".to_owned(),
                     Ok(DeliveryOutcome::EndpointRejected) => {
@@ -957,6 +1176,14 @@ impl DashboardState {
             }
             Command::Edit(field) => {
                 self.confirmation = None;
+                let operation = match field {
+                    ProfileField::Motto => DesktopOnlineOperation::Motto,
+                    ProfileField::Guild => DesktopOnlineOperation::Guild,
+                };
+                if let Some(message) = online_action_blocked(&self.current.character, operation) {
+                    self.current.message = Some(message);
+                    return false;
+                }
                 self.editor = Some(ProfileEditor {
                     field,
                     text: match field {
@@ -991,6 +1218,30 @@ impl DashboardState {
                 false
             }
             Command::None | Command::Insert(_) | Command::Backspace => false,
+        }
+    }
+}
+
+fn online_action_blocked(
+    character: &DashboardCharacter,
+    operation: DesktopOnlineOperation,
+) -> Option<String> {
+    if character.compatibility.profile == CompatibilityProfile::Browser {
+        return None;
+    }
+    match character
+        .compatibility
+        .online_eligibility
+        .iter()
+        .find(|eligibility| eligibility.operation == operation)
+        .map(|eligibility| eligibility.decision)
+    {
+        Some(DesktopEligibilityDecision::Eligible) => None,
+        Some(DesktopEligibilityDecision::Ineligible(reason)) => {
+            Some(format!("Desktop online action unavailable: {reason}."))
+        }
+        None => {
+            Some("Desktop online action unavailable: eligibility is not established.".to_owned())
         }
     }
 }
@@ -1072,11 +1323,15 @@ fn render(
             Constraint::Length(header_height),
             Constraint::Min(6),
             Constraint::Length(status_height),
-            Constraint::Length(if full_layout || confirmation.is_some() {
-                3
-            } else {
-                5
-            }),
+            Constraint::Length(
+                if confirmation.is_some() && snapshot.character.compatibility.notice.is_some() {
+                    5
+                } else if full_layout || confirmation.is_some() {
+                    3
+                } else {
+                    5
+                },
+            ),
         ])
         .split(area);
     render_header(frame, snapshot, updates, rows[0]);
@@ -1108,6 +1363,20 @@ fn render(
         );
     }
     let footer = match confirmation {
+        Some(action @ (LifecycleAction::Start | LifecycleAction::Recover))
+            if snapshot.character.compatibility.notice.is_some() =>
+        {
+            format!(
+                "Confirm {}? Enter=yes  Esc=cancel\nWarning: {}",
+                action.label(),
+                snapshot
+                    .character
+                    .compatibility
+                    .notice
+                    .as_deref()
+                    .expect("notice was checked")
+            )
+        }
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
         None if full_layout => {
             "q quit | r refresh | b brag | m motto | g guild | s start | x stop | c recover"
@@ -1229,7 +1498,7 @@ fn header_uses_single_line(character: &DashboardCharacter, width: u16) -> bool {
     identity_width + stats_width + 2 <= width.saturating_sub(2) as usize
 }
 
-fn header_stats_text(stats: &Attributes) -> String {
+fn header_stats_text(stats: &DashboardAttributes) -> String {
     attribute_values(stats)
         .into_iter()
         .map(|(label, value)| format!("{label}:{value}"))
@@ -1237,7 +1506,7 @@ fn header_stats_text(stats: &Attributes) -> String {
         .join(" ")
 }
 
-fn header_stats_line(stats: &Attributes, updates: &RecentTaskUpdates) -> Line<'static> {
+fn header_stats_line(stats: &DashboardAttributes, updates: &RecentTaskUpdates) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (label, value)) in attribute_values(stats).into_iter().enumerate() {
         if index > 0 {
@@ -1455,7 +1724,54 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     if !character.profile.guild.is_empty() {
         lines.push(Line::from(format!("Guild: {}", character.profile.guild)));
     }
+    lines.push(Line::from(format!(
+        "Compatibility: {}",
+        match character.compatibility.profile {
+            CompatibilityProfile::Browser => "browser",
+            CompatibilityProfile::Desktop644 => "desktop-6.4.4",
+        }
+    )));
+    if let Some(realm) = &character.compatibility.realm {
+        lines.push(Line::from(format!("Realm: {realm}")));
+    }
+    if let Some(eligibility) =
+        overall_online_eligibility(&character.compatibility.online_eligibility)
+    {
+        lines.push(Line::from(format!("Online eligibility: {eligibility}")));
+    }
+    if let Some(counters) = character.compatibility.measured_since_import {
+        lines.push(Line::from(format!(
+            "Measured since import: {} tasks, {} elapsed",
+            counters.tasks_completed,
+            format_elapsed(counters.elapsed_milliseconds / 1_000)
+        )));
+    }
+    let local_only = character.compatibility.advancement_provenance
+        == Some(crate::compatibility::DesktopAdvancementProvenance::LocalOnly);
+    if local_only {
+        lines.push(Line::from(
+            "Online progression: local-only; fresh official-client import required",
+        ));
+    }
+    if !local_only && let Some(notice) = &character.compatibility.notice {
+        lines.push(Line::from(notice.clone()));
+    }
     lines
+}
+
+fn overall_online_eligibility(eligibility: &[DesktopOperationEligibility]) -> Option<String> {
+    if eligibility.is_empty() {
+        return None;
+    }
+    eligibility
+        .iter()
+        .find_map(|operation| match operation.decision {
+            DesktopEligibilityDecision::Eligible => None,
+            DesktopEligibilityDecision::Ineligible(reason) => {
+                Some(format!("ineligible ({reason})"))
+            }
+        })
+        .or_else(|| Some("eligible".to_owned()))
 }
 
 fn format_elapsed(seconds: u64) -> String {
@@ -1639,7 +1955,7 @@ impl RecentTaskUpdates {
     }
 }
 
-fn attribute_values(stats: &Attributes) -> [(&'static str, f64); 8] {
+fn attribute_values(stats: &DashboardAttributes) -> [(&'static str, f64); 8] {
     [
         ("STR", stats.strength),
         ("CON", stats.constitution),
@@ -2146,6 +2462,121 @@ mod tests {
     }
 
     #[test]
+    fn desktop_details_and_start_confirmation_show_safe_compatibility_guidance() {
+        let mut snapshot = sample();
+        snapshot.character.compatibility = ManagedCompatibilityPresentation {
+            profile: CompatibilityProfile::Desktop644,
+            realm: Some("Synthetic Realm".to_owned()),
+            online_eligibility: vec![crate::desktop_eligibility::DesktopOperationEligibility {
+                operation: crate::desktop_eligibility::DesktopOnlineOperation::AutomaticLevel,
+                decision: DesktopEligibilityDecision::Ineligible(
+                    crate::desktop_eligibility::DesktopIneligibilityReason::OperationEvidenceUnavailable,
+                ),
+            }],
+            unavailable_history: Some(crate::compatibility::DesktopUnavailableHistory {
+                original_random_continuation: crate::compatibility::HistoricalValue::Unavailable,
+                birthday: crate::compatibility::HistoricalValue::Unavailable,
+                seed_history: crate::compatibility::HistoricalValue::Unavailable,
+                lifetime_tasks: crate::compatibility::HistoricalValue::Unavailable,
+                lifetime_elapsed: crate::compatibility::HistoricalValue::Unavailable,
+            }),
+            measured_since_import: Some(crate::compatibility::SinceImportCounters {
+                tasks_completed: 3,
+                elapsed_milliseconds: 4_000,
+            }),
+            advancement_provenance: Some(
+                crate::compatibility::DesktopAdvancementProvenance::Unadvanced,
+            ),
+            notice: Some(
+                "Starting local advancement will permanently make this character local-only. Future online use requires a fresh official-client import."
+                    .to_owned(),
+            ),
+        };
+
+        let details = details_lines(&snapshot.character)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(details.contains("Compatibility: desktop-6.4.4"));
+        assert!(details.contains(
+            "Online eligibility: ineligible (matching desktop operation evidence is unavailable)"
+        ));
+        assert!(!details.contains("AutomaticLevel:"));
+        assert!(!details.contains("Desktop history:"));
+        assert!(details.contains("Measured since import: 3 tasks, 4s elapsed"));
+        assert!(details.contains("fresh official-client import"));
+        assert!(!details.contains("Advancement provenance:"));
+        for private in [
+            "4242",
+            "synthetic-account",
+            "synthetic-password",
+            "synthetic.invalid",
+        ] {
+            assert!(!details.contains(private));
+        }
+
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &snapshot,
+                    0,
+                    &RecentTaskUpdates::default(),
+                    Some(LifecycleAction::Start),
+                    &PaneVisibility::default(),
+                )
+            })
+            .unwrap();
+        let output: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(output.contains("Warning:"));
+        assert!(output.contains("local-only"));
+    }
+
+    #[test]
+    fn details_hide_unadvanced_provenance_and_explain_local_only_once() {
+        let mut snapshot = sample();
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        snapshot.character.compatibility.advancement_provenance =
+            Some(crate::compatibility::DesktopAdvancementProvenance::Unadvanced);
+        let unadvanced = details_lines(&snapshot.character)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!unadvanced.contains("Advancement provenance:"));
+        assert!(!unadvanced.contains("Online progression:"));
+
+        snapshot.character.compatibility.advancement_provenance =
+            Some(crate::compatibility::DesktopAdvancementProvenance::LocalOnly);
+        snapshot.character.compatibility.notice = Some(
+            "This desktop character is a local-only fork. Future online use requires a fresh official-client import."
+                .to_owned(),
+        );
+        let local_only = details_lines(&snapshot.character)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            local_only
+                .contains("Online progression: local-only; fresh official-client import required")
+        );
+        assert_eq!(
+            local_only.matches("fresh official-client import").count(),
+            1
+        );
+        assert!(!local_only.contains("Advancement provenance:"));
+    }
+
+    #[test]
     fn left_panes_fill_details_and_cap_equipment_for_all_collapses() {
         for height in [20, 24, 40, 80] {
             for mask in 0..128 {
@@ -2187,6 +2618,41 @@ mod tests {
                 }
                 assert_eq!(areas.iter().map(|area| area.height).sum::<u16>(), height);
             }
+        }
+    }
+
+    #[test]
+    fn details_collapse_operation_eligibility_into_one_overall_line() {
+        let mut snapshot = sample();
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        snapshot.character.compatibility.online_eligibility = [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+            DesktopOnlineOperation::Guild,
+        ]
+        .into_iter()
+        .map(|operation| DesktopOperationEligibility {
+            operation,
+            decision: DesktopEligibilityDecision::Eligible,
+        })
+        .collect();
+
+        let details = details_lines(&snapshot.character)
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(details.contains("Online eligibility: eligible"));
+        for operation in [
+            "AutomaticLevel:",
+            "AutomaticAct:",
+            "ManualBrag:",
+            "Motto:",
+            "Guild:",
+        ] {
+            assert!(!details.contains(operation));
         }
     }
 
@@ -2305,7 +2771,7 @@ mod tests {
                     level: character.traits.level,
                 },
                 activity: character.activity,
-                stats: character.stats,
+                stats: character.stats.into(),
                 progress: character.progress,
                 equipment: character.equipment,
                 inventory: character.inventory,
@@ -2314,6 +2780,15 @@ mod tests {
                 quests: character.quests,
                 current_quest: character.bestquest,
                 profile: character.profile,
+                compatibility: ManagedCompatibilityPresentation {
+                    profile: CompatibilityProfile::Browser,
+                    realm: None,
+                    online_eligibility: Vec::new(),
+                    unavailable_history: None,
+                    measured_since_import: None,
+                    advancement_provenance: None,
+                    notice: None,
+                },
             },
             service: Some(ServiceState::Inactive),
             runtime_owned: Some(false),
@@ -3039,6 +3514,43 @@ mod tests {
     }
 
     #[test]
+    fn desktop_current_quest_uses_latest_journal_caption() {
+        let quests = vec![
+            DesktopValidatedRow {
+                header: [-1, 1, -1, 0, 0],
+                caption: "Exterminate the Rats".to_owned(),
+                subitems: Vec::new(),
+            },
+            DesktopValidatedRow {
+                header: [-1, 0, -1, 0, 0],
+                caption: "Seek the Deadly Corset".to_owned(),
+                subitems: Vec::new(),
+            },
+        ];
+
+        assert_eq!(
+            desktop_current_quest(&quests),
+            "Seek the Deadly Corset".to_owned()
+        );
+        assert_eq!(desktop_current_quest(&[]), "");
+    }
+
+    #[test]
+    fn desktop_activity_uses_human_readable_display_text() {
+        assert_eq!(
+            desktop_activity_text(
+                "Executing an undernourished Merman...",
+                "kill|Merman|1|trident",
+            ),
+            "Executing an undernourished Merman..."
+        );
+        assert_eq!(
+            desktop_activity_text("", "kill|Merman|1|trident"),
+            "kill|Merman|1|trident"
+        );
+    }
+
+    #[test]
     fn progress_labels_contrast_with_the_bar_background() {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -3556,6 +4068,80 @@ mod tests {
             let rendered = rendered(120, 40);
             assert!(rendered.contains("b brag"));
         }
+    }
+
+    #[test]
+    fn gated_desktop_actions_are_disabled_before_provider_calls() {
+        let id = CharacterId::new();
+        let mut snapshot = sample();
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        snapshot.character.compatibility.online_eligibility = [
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+            DesktopOnlineOperation::Guild,
+        ]
+        .into_iter()
+        .map(
+            |operation| crate::desktop_eligibility::DesktopOperationEligibility {
+                operation,
+                decision: DesktopEligibilityDecision::Ineligible(
+                    crate::desktop_eligibility::DesktopIneligibilityReason::OperationEvidenceUnavailable,
+                ),
+            },
+        )
+        .collect();
+        let provider = FakeProvider {
+            snapshots: std::cell::RefCell::new(Vec::new()),
+            state_snapshots: std::cell::RefCell::new(Vec::new()),
+            refreshes: std::cell::Cell::new(0),
+            state_reads: std::cell::Cell::new(0),
+            actions: std::cell::RefCell::new(Vec::new()),
+            action_results: std::cell::RefCell::new(Vec::new()),
+            brags: std::cell::RefCell::new(Vec::new()),
+            brag_results: std::cell::RefCell::new(Vec::new()),
+        };
+        let now = Instant::now();
+        let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+
+        state.apply(&provider, &id, Command::Brag, now);
+        assert!(provider.brags.borrow().is_empty());
+        assert!(state.current.message.as_deref().is_some_and(|message| {
+            message.contains("matching desktop operation evidence is unavailable")
+        }));
+
+        state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+        assert!(state.editor.is_none());
+        state.apply(&provider, &id, Command::Edit(ProfileField::Guild), now);
+        assert!(state.editor.is_none());
+        assert!(provider.actions.borrow().is_empty());
+    }
+
+    #[test]
+    fn desktop_full_task_bar_stays_pending_without_fabricating_completion() {
+        let mut snapshot = sample();
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        snapshot.character.progress.task.position = 1_000.0;
+        snapshot.character.progress.task.max = 1_000;
+        snapshot.character.progress.task.percent = 100;
+        snapshot.character.activity.task = "Pending desktop callback".to_owned();
+        snapshot.character.activity.tasks = 7;
+        snapshot.runtime_owned = Some(true);
+        let now = Instant::now();
+        let state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+
+        assert_eq!(
+            state.displayed_task_position(now + Duration::from_secs(30)),
+            1_000.0
+        );
+        assert_eq!(
+            state.displayed_task_percent(now + Duration::from_secs(30)),
+            100
+        );
+        assert_eq!(
+            state.current.character.activity.task,
+            "Pending desktop callback"
+        );
+        assert_eq!(state.current.character.activity.tasks, 7);
     }
 
     #[test]

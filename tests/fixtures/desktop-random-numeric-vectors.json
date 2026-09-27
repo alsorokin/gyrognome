@@ -1,0 +1,141 @@
+{
+  "format": "gyrognome-desktop-random-numeric-vectors/v1",
+  "source": {
+    "tag": "v6.4.4",
+    "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+    "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24"
+  },
+  "reference": {
+    "implementation": "scripts/desktop-reference.mjs#random-numeric/v1",
+    "assumptions": {
+      "randomAlgorithm": "delphi-6-randseed-lcg-source-derived/v1",
+      "randomMultiplierHex": "08088405",
+      "randomIncrement": 1,
+      "integerDivision": "truncate-toward-zero",
+      "round": "nearest-with-half-to-even",
+      "exactDelphiCompilerRuntimeEquivalence": "unverified"
+    }
+  },
+  "runtimeEquivalence": {
+    "status": "unverified",
+    "officialExecutableCorroboration": "not-run",
+    "localContinuationOnly": true,
+    "classicOnlineEligible": false
+  },
+  "vectors": {
+    "random": {
+      "initialSeed": "305419896",
+      "bounded": [
+        {
+          "upperBound": "2",
+          "result": "1"
+        },
+        {
+          "upperBound": "10",
+          "result": "4"
+        },
+        {
+          "upperBound": "4294967295",
+          "result": "3651437750"
+        }
+      ],
+      "random64": "4366025317568549348",
+      "random64Below": {
+        "upperBound": "1000003",
+        "result": "401907"
+      },
+      "finalSeed": "2635074403"
+    },
+    "weightedStat": {
+      "initialSeed": "195948557",
+      "stats": [
+        12,
+        11,
+        10,
+        9,
+        8,
+        7,
+        1000
+      ],
+      "selectedIndex": 2,
+      "finalSeed": "4265254520"
+    },
+    "integerDivision": [
+      {
+        "dividend": "5114",
+        "divisor": "1000",
+        "result": "5"
+      },
+      {
+        "dividend": "-5114",
+        "divisor": "1000",
+        "result": "-5"
+      }
+    ],
+    "halfEvenRound": [
+      {
+        "input": 1200.5,
+        "result": 1200
+      },
+      {
+        "input": 1201.5,
+        "result": 1202
+      },
+      {
+        "input": -1200.5,
+        "result": -1200
+      },
+      {
+        "input": -1201.5,
+        "result": -1202
+      }
+    ],
+    "levelUpTime": [
+      {
+        "level": 1,
+        "rawSeconds": 1269,
+        "roundedSeconds": 1269
+      },
+      {
+        "level": 2,
+        "rawSeconds": 1279.35,
+        "roundedSeconds": 1279
+      },
+      {
+        "level": 10,
+        "rawSeconds": 1442.7334641424743,
+        "roundedSeconds": 1443
+      },
+      {
+        "level": 20,
+        "rawSeconds": 2181.9922435767653,
+        "roundedSeconds": 2182
+      },
+      {
+        "level": 30,
+        "rawSeconds": 5172.706317407146,
+        "roundedSeconds": 5173
+      },
+      {
+        "level": 40,
+        "rawSeconds": 17271.81277408215,
+        "roundedSeconds": 17272
+      }
+    ],
+    "limits": {
+      "seed": {
+        "minimum": "0",
+        "maximum": "4294967295"
+      },
+      "boundedUpper": {
+        "minimum": "1",
+        "maximum": "4294967295"
+      },
+      "random64Below": {
+        "minimum": "1",
+        "maximum": "9223372036854775807"
+      },
+      "weightedTotalMaximum": "9223372036854775807"
+    }
+  }
+}

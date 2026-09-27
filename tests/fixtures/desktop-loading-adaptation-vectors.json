@@ -1,0 +1,166 @@
+{
+  "format": "gyrognome-desktop-loading-adaptation-vectors/v1",
+  "source": {
+    "desktop644": {
+      "tag": "v6.4.4",
+      "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+      "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24"
+    },
+    "legacy62": {
+      "tag": "v6.2",
+      "commit": "5e7e820533146f179174c97b592cee87db1f6f10",
+      "mainPasGitBlob": "4f4ee563577407de34d29fa5058da73b9c2271b9"
+    },
+    "spellingPatch": {
+      "commit": "ef1ed7f9f5c9ab481a0133f1871871601a9b4a20",
+      "mainPasGitBlob": "4b18894b851060a2578c45f530f73becc3780000",
+      "relationship": "post-v6.4.4-source-history"
+    }
+  },
+  "runtimeEquivalence": {
+    "status": "unverified",
+    "officialExecutableCorroboration": "not-run",
+    "localContinuationOnly": true,
+    "classicOnlineEligible": false
+  },
+  "observations": {
+    "omittedDefaults": {
+      "spells": [],
+      "quests": [],
+      "taskBarPosition": 0,
+      "questBarPosition": 0,
+      "plotBarPosition": 0,
+      "motto": "",
+      "guild": ""
+    },
+    "prologue62": {
+      "loaded": {
+        "layout": "6.2",
+        "internalTask": "",
+        "activity": "Loading....",
+        "taskBar": {
+          "position": 0,
+          "max": 2000
+        },
+        "queue": [
+          "task|10|Experiencing an enigmatic and foreboding night vision",
+          "task|6|Much is revealed about that wise old bastard you'd underestimated",
+          "task|6|A shocking series of events leaves you alone and bewildered, but resolute",
+          "task|4|Drawing upon an unexpected reserve of determination, you set out on a long and dangerous journey",
+          "task|2|Loading"
+        ],
+        "questMarker": "",
+        "questTag": 0,
+        "plots": [
+          {
+            "caption": "Prologue",
+            "completed": false
+          }
+        ]
+      },
+      "finalQueueTransition": {
+        "state": {
+          "layout": "6.2",
+          "internalTask": "",
+          "activity": "Loading...",
+          "taskBar": {
+            "position": 0,
+            "max": 2000
+          },
+          "queue": [],
+          "questMarker": "",
+          "questTag": 0,
+          "plots": [
+            {
+              "caption": "Prologue",
+              "completed": false
+            }
+          ]
+        },
+        "actCompleted": false
+      }
+    },
+    "prologue644": {
+      "loaded": {
+        "layout": "6.4.4",
+        "internalTask": "load",
+        "activity": "Loading...",
+        "taskBar": {
+          "position": 0,
+          "max": 2000
+        },
+        "queue": [
+          "task|10|Experiencing an enigmatic and foreboding night vision",
+          "task|6|Much is revealed about that wise old bastard you'd underestimated",
+          "task|6|A shocking series of events leaves you alone and bewildered, but resolute",
+          "task|4|Drawing upon an unexpected reserve of determination, you set out on a long and dangerous journey",
+          "plot|2|Loading"
+        ],
+        "questMarker": "",
+        "questTag": 0,
+        "plots": [
+          {
+            "caption": "Prologue",
+            "completed": false
+          }
+        ]
+      },
+      "finalQueueTransition": {
+        "state": {
+          "layout": "6.4.4",
+          "internalTask": "",
+          "activity": "Loading Act I...",
+          "taskBar": {
+            "position": 0,
+            "max": 2000
+          },
+          "queue": [],
+          "questMarker": "",
+          "questTag": 0,
+          "plots": [
+            {
+              "caption": "Prologue",
+              "completed": true
+            },
+            {
+              "caption": "Act I",
+              "completed": false
+            }
+          ],
+          "plotBar": {
+            "position": 0,
+            "max": 21600,
+            "hint": "Cutscene omitted"
+          }
+        },
+        "actCompleted": true
+      }
+    },
+    "questPlaceholder": {
+      "marker": "fQuest",
+      "tag": 1,
+      "monsters": [
+        "Synthetic Beast|3|token",
+        "Synthetic Wyrm|4|scale"
+      ],
+      "selectedMonster": "Synthetic Wyrm|4|scale"
+    },
+    "spellPatch": {
+      "before": [
+        "Innoculate",
+        "Innoculate",
+        "Tonsilectomy",
+        "Gyp",
+        "Shoelaces"
+      ],
+      "after": [
+        "Innoculate",
+        "Inoculate",
+        "Tonsillectomy",
+        "Gyp",
+        "Shoelaces"
+      ],
+      "firstRowPatched": false
+    }
+  }
+}

@@ -5,6 +5,23 @@ use thiserror::Error;
 use url::Url;
 
 use crate::{
+    compatibility::CompatibilityProfile,
+    desktop_eligibility::DesktopOnlineOperation,
+    desktop_profile::{
+        DesktopGuildOperation, DesktopGuildOutcome, DesktopGuildResponseRules,
+        apply_desktop_guild_action,
+    },
+    desktop_protocol::{
+        DesktopAccountAuthentication, DesktopReportOperation,
+        guild_request as desktop_guild_request, report as desktop_report,
+        report_for_snapshot as desktop_report_for_snapshot,
+    },
+    desktop_simulation::DesktopReportSnapshot,
+    desktop_transport::{
+        DesktopHttpResponse, DesktopTransportCredentials, DesktopTransportError,
+        VerifiedDesktopEndpoint, deliver_verified_desktop_request,
+        resolve_verified_desktop_endpoint,
+    },
     fixtures::{EnrollmentEvidenceError, validate_bundled_enrollment_evidence},
     guild::{GuildOutcome, GuildResponseRules},
     protocol::{self, ReportFields},
@@ -64,10 +81,25 @@ pub enum ReportingError {
     InvalidProfileText,
     #[error("online enrollment is incomplete; no local character was registered")]
     IncompleteEnrollment,
+    #[error(transparent)]
+    DesktopTransport(#[from] DesktopTransportError),
+    #[error("could not construct the desktop report")]
+    DesktopConstruction,
+    #[error(transparent)]
+    DesktopProfile(#[from] crate::desktop_profile::DesktopProfileError),
 }
 
 pub trait ReportTransport: Send {
     fn deliver(&self, request: Url) -> DeliveryOutcome;
+
+    fn deliver_desktop(
+        &self,
+        _target: &VerifiedDesktopEndpoint,
+        _encoded_query: &str,
+        _credentials: &DesktopTransportCredentials,
+    ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+        Err(DesktopTransportError::DeliveryFailed)
+    }
 }
 
 pub trait EnrollmentTransport: ReportTransport {
@@ -82,6 +114,15 @@ pub trait GuildTransport {
         submitted: &str,
         rules: &GuildResponseRules,
     ) -> GuildOutcome;
+
+    fn guild_desktop(
+        &self,
+        _target: &VerifiedDesktopEndpoint,
+        _encoded_query: &str,
+        _credentials: &DesktopTransportCredentials,
+    ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+        Err(DesktopTransportError::DeliveryFailed)
+    }
 }
 
 pub struct HttpsTransport;
@@ -114,6 +155,15 @@ impl GuildTransport for HttpsTransport {
             Err(_) => GuildOutcome::Indeterminate,
         }
     }
+
+    fn guild_desktop(
+        &self,
+        target: &VerifiedDesktopEndpoint,
+        encoded_query: &str,
+        credentials: &DesktopTransportCredentials,
+    ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+        deliver_verified_desktop_request(target, encoded_query, credentials)
+    }
 }
 
 impl ReportTransport for HttpsTransport {
@@ -123,6 +173,15 @@ impl ReportTransport for HttpsTransport {
             Ok(_) => DeliveryOutcome::EndpointRejected,
             Err(_) => DeliveryOutcome::DeliveryFailed,
         }
+    }
+
+    fn deliver_desktop(
+        &self,
+        target: &VerifiedDesktopEndpoint,
+        encoded_query: &str,
+        credentials: &DesktopTransportCredentials,
+    ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+        deliver_verified_desktop_request(target, encoded_query, credentials)
     }
 }
 
@@ -396,8 +455,11 @@ pub fn submit(
     id: &CharacterId,
     transport: &impl ReportTransport,
 ) -> Result<ReportResult, ReportingError> {
+    if store.compatibility_profile(id)? == CompatibilityProfile::Desktop644 {
+        return submit_desktop_manual(store, id, transport);
+    }
     validate_bundled_enrollment_evidence()?;
-    let target = store.online_action_target(id)?;
+    let target = store.online_action_target(id, DesktopOnlineOperation::ManualBrag, None)?;
     let mut state = target.state;
     crate::simulation::update_bestspell(&mut state);
     crate::simulation::update_beststat(&mut state);
@@ -438,6 +500,9 @@ pub fn set_motto(
     motto: &str,
     transport: &impl ReportTransport,
 ) -> Result<ReportResult, ReportingError> {
+    if store.compatibility_profile(id)? == CompatibilityProfile::Desktop644 {
+        return set_desktop_motto(store, id, motto, transport);
+    }
     set_motto_with_evidence(
         store,
         id,
@@ -458,6 +523,9 @@ pub fn set_guild(
     designation: &str,
     transport: &impl GuildTransport,
 ) -> Result<GuildResult, ReportingError> {
+    if store.compatibility_profile(id)? == CompatibilityProfile::Desktop644 {
+        return set_desktop_guild(store, id, designation, transport);
+    }
     set_guild_with_evidence(
         store,
         id,
@@ -478,7 +546,8 @@ fn set_guild_with_evidence(
         return Err(ReportingError::InvalidProfileText);
     }
     let rules = evidence?;
-    let target = store.online_action_target(id)?;
+    let target =
+        store.online_action_target(id, DesktopOnlineOperation::Guild, Some(designation))?;
     let state = &target.state;
     let host = state
         .online
@@ -519,7 +588,7 @@ fn set_motto_with_evidence(
         return Err(ReportingError::InvalidProfileText);
     }
     evidence?;
-    let target = store.online_action_target(id)?;
+    let target = store.online_action_target(id, DesktopOnlineOperation::Motto, Some(motto))?;
     let mut state = target.state;
     crate::simulation::update_bestspell(&mut state);
     crate::simulation::update_beststat(&mut state);
@@ -576,6 +645,7 @@ pub(crate) fn submit_event(
     ) {
         return Err(ReportingError::Construction);
     }
+
     validate_bundled_enrollment_evidence()?;
     let target = store.reporting_target_for_worker(id)?;
     let state = &event.snapshot.character;
@@ -610,6 +680,183 @@ pub(crate) fn submit_event(
     })
 }
 
+/// Enters the serialized desktop worker-report boundary after callback state
+/// has been committed. Desktop delivery remains closed until its independent
+/// evidence, eligibility, protocol, and transport contracts are implemented.
+pub(crate) fn submit_desktop_event(
+    store: &Store,
+    id: &CharacterId,
+    event: &DesktopReportSnapshot,
+    transport: &(impl ReportTransport + ?Sized),
+) -> Result<ReportResult, ReportingError> {
+    let operation = match event.trigger {
+        crate::desktop_simulation::DesktopReportTrigger::Level => {
+            DesktopOnlineOperation::AutomaticLevel
+        }
+        crate::desktop_simulation::DesktopReportTrigger::Act => {
+            DesktopOnlineOperation::AutomaticAct
+        }
+    };
+    let target = store.desktop_reporting_target_for_worker(id, operation, &event.state)?;
+    let authentication = DesktopAccountAuthentication::new(
+        &target.authentication.account,
+        &target.authentication.password,
+    );
+    let request = desktop_report_for_snapshot(
+        event,
+        &target.authentication.realm,
+        &target.profile.motto,
+        target.authentication.passkey,
+        &authentication,
+    )
+    .map_err(|_| ReportingError::DesktopConstruction)?;
+    let response =
+        deliver_desktop_report(transport, &target.authentication, request.encoded_query());
+    Ok(ReportResult {
+        identity: target.identity,
+        outcome: response,
+    })
+}
+
+fn submit_desktop_manual(
+    store: &Store,
+    id: &CharacterId,
+    transport: &impl ReportTransport,
+) -> Result<ReportResult, ReportingError> {
+    let target =
+        store.desktop_online_action_target(id, DesktopOnlineOperation::ManualBrag, None)?;
+    let authentication = DesktopAccountAuthentication::new(
+        &target.authentication.account,
+        &target.authentication.password,
+    );
+    let request = desktop_report(
+        &target.state,
+        DesktopReportOperation::Manual,
+        &target.authentication.realm,
+        &target.profile.motto,
+        target.authentication.passkey,
+        &authentication,
+    )
+    .map_err(|_| ReportingError::DesktopConstruction)?;
+    Ok(ReportResult {
+        identity: target.identity,
+        outcome: deliver_desktop_report(transport, &target.authentication, request.encoded_query()),
+    })
+}
+
+fn set_desktop_motto(
+    store: &mut Store,
+    id: &CharacterId,
+    motto: &str,
+    transport: &impl ReportTransport,
+) -> Result<ReportResult, ReportingError> {
+    let target =
+        store.desktop_online_action_target(id, DesktopOnlineOperation::Motto, Some(motto))?;
+    let mut profile = target.profile.clone();
+    profile.motto = motto.to_owned();
+    store.replace_profile(id, &profile)?;
+    let mut state = target.state;
+    state.profile.motto = motto.to_owned();
+    let authentication = DesktopAccountAuthentication::new(
+        &target.authentication.account,
+        &target.authentication.password,
+    );
+    let request = desktop_report(
+        &state,
+        DesktopReportOperation::Motto,
+        &target.authentication.realm,
+        motto,
+        target.authentication.passkey,
+        &authentication,
+    )
+    .map_err(|_| ReportingError::DesktopConstruction)?;
+    Ok(ReportResult {
+        identity: target.identity,
+        outcome: deliver_desktop_report(transport, &target.authentication, request.encoded_query()),
+    })
+}
+
+fn set_desktop_guild(
+    store: &mut Store,
+    id: &CharacterId,
+    designation: &str,
+    transport: &impl GuildTransport,
+) -> Result<GuildResult, ReportingError> {
+    let target =
+        store.desktop_online_action_target(id, DesktopOnlineOperation::Guild, Some(designation))?;
+    let authentication = DesktopAccountAuthentication::new(
+        &target.authentication.account,
+        &target.authentication.password,
+    );
+    let request = desktop_guild_request(
+        &target.state,
+        &target.authentication.realm,
+        designation,
+        target.authentication.passkey,
+        &authentication,
+    )
+    .map_err(|_| ReportingError::DesktopConstruction)?;
+    let endpoint = resolve_verified_desktop_endpoint(
+        &target.authentication.realm,
+        &target.authentication.endpoint,
+    )?;
+    let credentials = DesktopTransportCredentials::new(
+        &target.authentication.account,
+        &target.authentication.password,
+    );
+    let operation = if designation.is_empty() {
+        DesktopGuildOperation::Leave
+    } else {
+        DesktopGuildOperation::JoinOrChange
+    };
+    let rules = DesktopGuildResponseRules::production(&target.authentication.realm, operation)?;
+    let desktop_outcome = apply_desktop_guild_action(
+        &mut target.state.profile.clone(),
+        Some(designation),
+        |prior, submitted| {
+            transport
+                .guild_desktop(&endpoint, &request.encoded_query(), &credentials)
+                .map(|response| rules.classify(response.status, &response.body, prior, submitted))
+                .unwrap_or(DesktopGuildOutcome::Indeterminate)
+        },
+    )?;
+    let outcome = match desktop_outcome {
+        DesktopGuildOutcome::Accepted => GuildOutcome::Accepted,
+        DesktopGuildOutcome::Rejected => GuildOutcome::Rejected,
+        DesktopGuildOutcome::Indeterminate | DesktopGuildOutcome::Cancelled => {
+            GuildOutcome::Indeterminate
+        }
+    };
+    if outcome == GuildOutcome::Accepted {
+        let mut profile = target.profile;
+        profile.guild = designation.to_owned();
+        store.replace_profile(id, &profile)?;
+    }
+    Ok(GuildResult {
+        identity: target.identity,
+        outcome,
+    })
+}
+
+fn deliver_desktop_report(
+    transport: &(impl ReportTransport + ?Sized),
+    authentication: &crate::runtime::DesktopAuthentication,
+    encoded_query: String,
+) -> DeliveryOutcome {
+    let target =
+        match resolve_verified_desktop_endpoint(&authentication.realm, &authentication.endpoint) {
+            Ok(target) => target,
+            Err(_) => return DeliveryOutcome::DeliveryFailed,
+        };
+    let credentials =
+        DesktopTransportCredentials::new(&authentication.account, &authentication.password);
+    match transport.deliver_desktop(&target, &encoded_query, &credentials) {
+        Ok(response) if (200..300).contains(&response.status) => DeliveryOutcome::Delivered,
+        Ok(_) => DeliveryOutcome::EndpointRejected,
+        Err(_) => DeliveryOutcome::DeliveryFailed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -624,7 +871,7 @@ mod tests {
     use super::*;
     use crate::{
         checkpoint, newguy,
-        runtime::{Store, Worker},
+        runtime::{DesktopAuthentication, Store, Worker},
         save,
         simulation::{ReportTrigger, advance_with_trace},
     };
@@ -645,6 +892,33 @@ mod tests {
     struct FakeTransport {
         create: CreateDelivery,
         report: DeliveryOutcome,
+    }
+
+    struct DesktopRecordingTransport {
+        queries: RefCell<Vec<String>>,
+        response: RefCell<Option<DesktopHttpResponse>>,
+    }
+
+    impl ReportTransport for DesktopRecordingTransport {
+        fn deliver(&self, _request: Url) -> DeliveryOutcome {
+            panic!("browser delivery was used for a desktop request")
+        }
+
+        fn deliver_desktop(
+            &self,
+            target: &VerifiedDesktopEndpoint,
+            encoded_query: &str,
+            credentials: &DesktopTransportCredentials,
+        ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+            let debug = format!("{target:?} {credentials:?}");
+            assert!(!debug.contains("desktop-account"));
+            assert!(!debug.contains("desktop-password"));
+            self.queries.borrow_mut().push(encoded_query.to_owned());
+            self.response
+                .borrow_mut()
+                .take()
+                .ok_or(DesktopTransportError::DeliveryFailed)
+        }
     }
 
     impl ReportTransport for FakeTransport {
@@ -683,6 +957,31 @@ mod tests {
             self.0 = self.0.wrapping_add(1);
             Ok(value)
         }
+    }
+
+    #[test]
+    fn desktop_delivery_uses_the_verified_spoltog_transport_contract() {
+        let transport = DesktopRecordingTransport {
+            queries: RefCell::new(Vec::new()),
+            response: RefCell::new(Some(DesktopHttpResponse {
+                status: 200,
+                redirect: None,
+                body: Vec::new(),
+            })),
+        };
+        let authentication = DesktopAuthentication {
+            passkey: 42,
+            realm: "Spoltog".to_owned(),
+            endpoint: "http://progressquest.com/spoltog.php?".to_owned(),
+            account: "desktop-account".to_owned(),
+            password: "desktop-password".to_owned(),
+        };
+
+        assert_eq!(
+            deliver_desktop_report(&transport, &authentication, "cmd=b&rev=8&p=1".to_owned()),
+            DeliveryOutcome::Delivered
+        );
+        assert_eq!(transport.queries.borrow().as_slice(), ["cmd=b&rev=8&p=1"]);
     }
 
     struct RecordingTransport {

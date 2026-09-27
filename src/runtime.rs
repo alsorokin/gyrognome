@@ -23,6 +23,20 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
+    compatibility::{
+        CompatibilityProfile, CompatibilityState, DesktopAdvancementProvenance,
+        DesktopCanonicalState, DesktopImportMetadata, ImportMetadata, RandomContinuation,
+        SourceFormat, initialize_desktop_registration_random,
+    },
+    desktop_callback::{DesktopCallbackCheckpoint, DesktopCallbackObservation},
+    desktop_eligibility::{
+        DesktopEligibilityDecision, DesktopEligibilityInput, DesktopIneligibilityReason,
+        DesktopOnlineOperation, DesktopOperationEligibility, evaluate_desktop_eligibility,
+        production_desktop_evidence,
+    },
+    desktop_save::DesktopValidatedSave,
+    desktop_simulation::SourceDerivedDesktopHooks,
+    newguy::RandomSource,
     reporting::{HttpsTransport, ReportTransport},
     state::{Character, OnlineProfile},
 };
@@ -31,8 +45,8 @@ use rusqlite::OptionalExtension;
 use serde_json::Value;
 
 const DATABASE_FILENAME: &str = "characters.sqlite3";
-const DATABASE_SCHEMA_VERSION: i64 = 2;
-pub const CANONICAL_STATE_VERSION: u32 = 1;
+const DATABASE_SCHEMA_VERSION: i64 = 4;
+pub const CANONICAL_STATE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CharacterId(Uuid);
@@ -96,6 +110,190 @@ pub struct ManagedCharacter {
     pub state: Character,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RegisteredDesktopCharacter {
+    pub id: CharacterId,
+    pub identity: CharacterIdentity,
+    pub state_version: u32,
+    pub created_at_unix_ms: i64,
+    pub updated_at_unix_ms: i64,
+    pub state: DesktopCanonicalState,
+    pub compatibility: CompatibilityState,
+    pub import_metadata: DesktopImportMetadata,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedCompatibilityPresentation {
+    pub profile: CompatibilityProfile,
+    pub realm: Option<String>,
+    pub online_eligibility: Vec<DesktopOperationEligibility>,
+    pub unavailable_history: Option<crate::compatibility::DesktopUnavailableHistory>,
+    pub measured_since_import: Option<crate::compatibility::SinceImportCounters>,
+    pub advancement_provenance: Option<DesktopAdvancementProvenance>,
+    pub notice: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedCharacterSummary {
+    pub id: CharacterId,
+    pub identity: CharacterIdentity,
+    pub updated_at_unix_ms: i64,
+    pub compatibility: ManagedCompatibilityPresentation,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "stateProfile", content = "character", rename_all = "kebab-case")]
+pub enum ManagedInspectionState {
+    Browser(ManagedCharacter),
+    Desktop644(RegisteredDesktopCharacter),
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedInspection {
+    pub compatibility: ManagedCompatibilityPresentation,
+    pub state: ManagedInspectionState,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct DesktopAuthentication {
+    pub(crate) passkey: i32,
+    pub(crate) realm: String,
+    pub(crate) endpoint: String,
+    pub(crate) account: String,
+    pub(crate) password: String,
+}
+
+impl DesktopAuthentication {
+    fn has_online_origin(&self) -> bool {
+        self.passkey > 0
+    }
+}
+
+fn desktop_progress_reporting_evidence_available(
+    character: &RegisteredDesktopCharacter,
+    authentication: &DesktopAuthentication,
+) -> bool {
+    [
+        DesktopOnlineOperation::AutomaticLevel,
+        DesktopOnlineOperation::AutomaticAct,
+    ]
+    .into_iter()
+    .all(|operation| {
+        desktop_eligibility_decision(character, authentication, &character.state, operation, None)
+            == DesktopEligibilityDecision::Eligible
+    })
+}
+
+fn should_mark_desktop_local_only(
+    authentication: &DesktopAuthentication,
+    changed: bool,
+    progress_reporting_evidence_available: bool,
+) -> bool {
+    changed && authentication.has_online_origin() && !progress_reporting_evidence_available
+}
+
+fn ensure_desktop_online_eligible(
+    character: &RegisteredDesktopCharacter,
+    authentication: &DesktopAuthentication,
+    request_state: &DesktopCanonicalState,
+    operation: DesktopOnlineOperation,
+    submitted_text: Option<&str>,
+) -> Result<(), StorageError> {
+    match desktop_eligibility_decision(
+        character,
+        authentication,
+        request_state,
+        operation,
+        submitted_text,
+    ) {
+        DesktopEligibilityDecision::Eligible => Ok(()),
+        DesktopEligibilityDecision::Ineligible(
+            DesktopIneligibilityReason::FreshOfficialClientImportRequired,
+        ) => Err(StorageError::FreshDesktopImportRequired),
+        DesktopEligibilityDecision::Ineligible(reason) => {
+            Err(StorageError::DesktopOnlineIneligible(reason))
+        }
+    }
+}
+
+fn desktop_eligibility_decision(
+    character: &RegisteredDesktopCharacter,
+    authentication: &DesktopAuthentication,
+    request_state: &DesktopCanonicalState,
+    operation: DesktopOnlineOperation,
+    submitted_text: Option<&str>,
+) -> DesktopEligibilityDecision {
+    let evidence = production_desktop_evidence();
+    let input = DesktopEligibilityInput {
+        profile: character.compatibility.profile,
+        source_format: character.import_metadata.provenance.source_format,
+        layout: character.import_metadata.provenance.recognized_layout,
+        adaptations: &character.import_metadata.provenance.adaptations,
+        advancement: character.import_metadata.advancement_provenance,
+        passkey: authentication.passkey,
+        realm: &authentication.realm,
+        endpoint: &authentication.endpoint,
+        account: &authentication.account,
+        password: &authentication.password,
+        encoding_supported: desktop_request_text_is_ascii(
+            request_state,
+            authentication,
+            submitted_text,
+        ),
+        operation,
+    };
+    evaluate_desktop_eligibility(&input, evidence.as_ref())
+}
+
+fn desktop_request_text_is_ascii(
+    state: &DesktopCanonicalState,
+    authentication: &DesktopAuthentication,
+    submitted_text: Option<&str>,
+) -> bool {
+    let rows_are_ascii = |rows: &[crate::desktop_save::DesktopValidatedRow]| {
+        rows.iter()
+            .all(|row| row.caption.is_ascii() && row.subitems.iter().all(|value| value.is_ascii()))
+    };
+    [
+        &state.traits,
+        &state.stats,
+        &state.equipment,
+        &state.inventory,
+        &state.spells,
+        &state.plots,
+        &state.quests,
+    ]
+    .into_iter()
+    .all(|rows| rows_are_ascii(rows))
+        && state.current_task.is_ascii()
+        && state.activity.is_ascii()
+        && state.queue.iter().all(|command| command.caption.is_ascii())
+        && state.profile.motto.is_ascii()
+        && state.profile.guild.is_ascii()
+        && authentication.realm.is_ascii()
+        && authentication.endpoint.is_ascii()
+        && authentication.account.is_ascii()
+        && authentication.password.is_ascii()
+        && submitted_text.is_none_or(str::is_ascii)
+}
+
+impl std::fmt::Debug for DesktopAuthentication {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DesktopAuthentication")
+            .field("passkey", &"[redacted]")
+            .field("realm", &"[redacted]")
+            .field("endpoint", &"[redacted]")
+            .field("account", &"[redacted]")
+            .field("password", &"[redacted]")
+            .finish()
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("could not determine the invoking user's data directory")]
@@ -116,8 +314,20 @@ pub enum StorageError {
     AlreadyOwned(CharacterId),
     #[error("managed character is not eligible for reporting")]
     ReportingIneligible,
+    #[error("desktop online operation is unavailable: {0}")]
+    DesktopOnlineIneligible(DesktopIneligibilityReason),
+    #[error(
+        "desktop character advanced locally and requires a fresh official-client import for online use"
+    )]
+    FreshDesktopImportRequired,
     #[error("numeric value is outside SQLite's signed integer range: {0}")]
     IntegerOutOfRange(&'static str),
+    #[error("desktop canonical state is invalid: {0}")]
+    InvalidDesktopState(&'static str),
+    #[error("persisted compatibility state is invalid: {0}")]
+    InvalidCompatibilityState(&'static str),
+    #[error("desktop since-import counter overflowed: {0}")]
+    DesktopCounterOverflow(&'static str),
     #[cfg(test)]
     #[error("injected storage failure")]
     InjectedFailure,
@@ -157,6 +367,8 @@ pub struct Store {
     fail_next_profile_update: bool,
     #[cfg(test)]
     fail_next_remove: bool,
+    #[cfg(test)]
+    fail_next_desktop_registration: bool,
 }
 
 /// An advisory lock held for a managed character's worker lifetime.
@@ -176,6 +388,15 @@ pub(crate) struct ReportingTarget {
     _online_action_lock: OnlineActionLock,
 }
 
+#[allow(dead_code)]
+pub(crate) struct DesktopReportingTarget {
+    pub(crate) identity: CharacterIdentity,
+    pub(crate) state: DesktopCanonicalState,
+    pub(crate) profile: OnlineProfile,
+    pub(crate) authentication: DesktopAuthentication,
+    _online_action_lock: OnlineActionLock,
+}
+
 impl Store {
     pub fn open_default() -> Result<Self, StorageError> {
         Self::open_at(data_root()?)
@@ -191,7 +412,8 @@ impl Store {
         let mut connection = Connection::open(&database_path)?;
         restrict_permissions(&database_path, 0o600)?;
         connection.busy_timeout(Duration::from_secs(5))?;
-        initialize_schema(&mut connection)?;
+        initialize_schema(&mut connection, &data_root)?;
+        restrict_store_files(&data_root)?;
         Ok(Self {
             data_root,
             connection,
@@ -201,6 +423,8 @@ impl Store {
             fail_next_profile_update: false,
             #[cfg(test)]
             fail_next_remove: false,
+            #[cfg(test)]
+            fail_next_desktop_registration: false,
         })
     }
 
@@ -279,6 +503,16 @@ impl Store {
         let canonical_state = canonical_json(character)?;
         let original_document =
             serde_json::to_string(&character.document).map_err(StorageError::StateJson)?;
+        let compatibility = CompatibilityState {
+            profile: CompatibilityProfile::Browser,
+            random: RandomContinuation::Browser(character.seed),
+        };
+        let random_continuation =
+            serde_json::to_string(&compatibility.random).map_err(StorageError::StateJson)?;
+        let import_metadata = serde_json::to_string(&ImportMetadata::Browser {
+            source_format: SourceFormat::BrowserJson,
+        })
+        .map_err(StorageError::StateJson)?;
         let id = CharacterId::new();
         let identity = identity(character);
         let now = unix_millis();
@@ -290,8 +524,11 @@ impl Store {
             "INSERT INTO characters (
                 id, name, race, character_class, level, canonical_state,
                 canonical_state_version, original_document, motto, guild,
+                compatibility_profile, random_continuation, import_metadata,
                 created_at_unix_ms, updated_at_unix_ms
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+             )",
             params![
                 id.to_string(),
                 identity.name,
@@ -303,6 +540,9 @@ impl Store {
                 original_document,
                 character.profile.motto,
                 character.profile.guild,
+                "browser",
+                random_continuation,
+                import_metadata,
                 now,
                 now,
             ],
@@ -319,12 +559,331 @@ impl Store {
         })
     }
 
+    pub fn register_desktop(
+        &mut self,
+        save: &DesktopValidatedSave,
+        random_source: &mut impl RandomSource,
+    ) -> Result<RegisteredDesktopCharacter, StorageError> {
+        let state = DesktopCanonicalState::from(save);
+        let identity = desktop_identity(&state)?;
+        let random = initialize_desktop_registration_random(random_source)
+            .map_err(|_| StorageError::InvalidDesktopState("random initialization"))?;
+        let compatibility = CompatibilityState {
+            profile: CompatibilityProfile::Desktop644,
+            random: RandomContinuation::Desktop644(random),
+        };
+        let import_metadata = DesktopImportMetadata::from_validated(&save.adaptations);
+        let mut persisted_state = state.clone();
+        persisted_state.profile = crate::desktop_save::DesktopValidatedProfile {
+            motto: String::new(),
+            guild: String::new(),
+        };
+        let canonical_state =
+            serde_json::to_string(&persisted_state).map_err(StorageError::StateJson)?;
+        let random_continuation =
+            serde_json::to_string(&compatibility.random).map_err(StorageError::StateJson)?;
+        let persisted_metadata =
+            serde_json::to_string(&ImportMetadata::Desktop(import_metadata.clone()))
+                .map_err(StorageError::StateJson)?;
+        let id = CharacterId::new();
+        let now = unix_millis();
+
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        transaction.execute(
+            "INSERT INTO characters (
+                id, name, race, character_class, level, canonical_state,
+                canonical_state_version, original_document, motto, guild,
+                compatibility_profile, random_continuation, import_metadata,
+                created_at_unix_ms, updated_at_unix_ms
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'null', ?8, ?9, ?10, ?11, ?12, ?13, ?14
+             )",
+            params![
+                id.to_string(),
+                identity.name,
+                identity.race,
+                identity.class,
+                sqlite_integer(identity.level, "level")?,
+                canonical_state,
+                CANONICAL_STATE_VERSION,
+                state.profile.motto,
+                state.profile.guild,
+                "desktop-6.4.4",
+                random_continuation,
+                persisted_metadata,
+                now,
+                now,
+            ],
+        )?;
+        transaction.execute(
+            "INSERT INTO desktop_private (
+                character_id, passkey, realm, endpoint, account, password
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                id.to_string(),
+                save.private.passkey,
+                save.private.realm,
+                save.private.endpoint,
+                save.private.account,
+                save.private.password,
+            ],
+        )?;
+
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_desktop_registration) {
+            return Err(StorageError::InjectedFailure);
+        }
+
+        transaction.commit()?;
+        Ok(RegisteredDesktopCharacter {
+            id,
+            identity,
+            state_version: CANONICAL_STATE_VERSION,
+            created_at_unix_ms: now,
+            updated_at_unix_ms: now,
+            state,
+            compatibility,
+            import_metadata,
+        })
+    }
+
+    pub fn get_desktop(
+        &self,
+        id: &CharacterId,
+    ) -> Result<RegisteredDesktopCharacter, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT id, name, race, character_class, level, canonical_state,
+                        canonical_state_version, compatibility_profile,
+                        random_continuation, import_metadata, motto, guild,
+                        created_at_unix_ms, updated_at_unix_ms
+                 FROM characters
+                 WHERE id = ?1 AND compatibility_profile = 'desktop-6.4.4'",
+                [id.to_string()],
+                desktop_character_from_row,
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))
+    }
+
+    pub fn compatibility_profile(
+        &self,
+        id: &CharacterId,
+    ) -> Result<CompatibilityProfile, StorageError> {
+        let (profile, random) = self
+            .connection
+            .query_row(
+                "SELECT compatibility_profile, random_continuation
+                 FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let profile = match profile.as_str() {
+            "browser" => CompatibilityProfile::Browser,
+            "desktop-6.4.4" => CompatibilityProfile::Desktop644,
+            _ => {
+                return Err(StorageError::InvalidCompatibilityState(
+                    "unsupported compatibility profile",
+                ));
+            }
+        };
+        let random = serde_json::from_str(&random).map_err(StorageError::StateJson)?;
+        CompatibilityState { profile, random }
+            .validate()
+            .map(|compatibility| compatibility.profile)
+            .map_err(|_| {
+                StorageError::InvalidCompatibilityState(
+                    "profile and random continuation do not match",
+                )
+            })
+    }
+
+    pub fn identity(&self, id: &CharacterId) -> Result<CharacterIdentity, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT name, race, character_class, level
+                 FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| {
+                    let level = row.get::<_, i64>(3)?;
+                    Ok(CharacterIdentity {
+                        name: row.get(0)?,
+                        race: row.get(1)?,
+                        class: row.get(2)?,
+                        level: u64::try_from(level)
+                            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(3, level))?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))
+    }
+
+    pub fn replace_desktop_state(
+        &mut self,
+        id: &CharacterId,
+        state: &DesktopCanonicalState,
+    ) -> Result<(), StorageError> {
+        let identity = desktop_identity(state)?;
+        let mut canonical = state.clone();
+        canonical.profile = crate::desktop_save::DesktopValidatedProfile {
+            motto: String::new(),
+            guild: String::new(),
+        };
+        let canonical_state = serde_json::to_string(&canonical).map_err(StorageError::StateJson)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = transaction.execute(
+            "UPDATE characters
+             SET name = ?1, race = ?2, character_class = ?3, level = ?4,
+                 canonical_state = ?5, canonical_state_version = ?6,
+                 updated_at_unix_ms = ?7
+             WHERE id = ?8 AND compatibility_profile = 'desktop-6.4.4'",
+            params![
+                identity.name,
+                identity.race,
+                identity.class,
+                sqlite_integer(identity.level, "level")?,
+                canonical_state,
+                CANONICAL_STATE_VERSION,
+                unix_millis(),
+                id.to_string(),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::NotFound(id.clone()));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    fn replace_desktop_checkpoint(
+        &mut self,
+        id: &CharacterId,
+        checkpoint: &DesktopCallbackCheckpoint,
+        observation: DesktopCallbackObservation,
+        mark_local_only: bool,
+    ) -> Result<(), StorageError> {
+        let identity = desktop_identity(&checkpoint.state)?;
+        let mut canonical = checkpoint.state.clone();
+        canonical.profile = crate::desktop_save::DesktopValidatedProfile {
+            motto: String::new(),
+            guild: String::new(),
+        };
+        let canonical_state = serde_json::to_string(&canonical).map_err(StorageError::StateJson)?;
+        let random_continuation =
+            serde_json::to_string(&RandomContinuation::Desktop644(checkpoint.random))
+                .map_err(StorageError::StateJson)?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let persisted_metadata = transaction
+            .query_row(
+                "SELECT import_metadata FROM characters
+                 WHERE id = ?1 AND compatibility_profile = 'desktop-6.4.4'",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let ImportMetadata::Desktop(mut metadata) =
+            serde_json::from_str(&persisted_metadata).map_err(StorageError::StateJson)?
+        else {
+            return Err(StorageError::InvalidDesktopState(
+                "import metadata profile mismatch",
+            ));
+        };
+        metadata.measured_since_import.elapsed_milliseconds = metadata
+            .measured_since_import
+            .elapsed_milliseconds
+            .checked_add(observation.credited_milliseconds)
+            .ok_or(StorageError::DesktopCounterOverflow("elapsed milliseconds"))?;
+        if observation.completion_dispatched {
+            metadata.measured_since_import.tasks_completed = metadata
+                .measured_since_import
+                .tasks_completed
+                .checked_add(1)
+                .ok_or(StorageError::DesktopCounterOverflow("tasks completed"))?;
+        }
+        if mark_local_only {
+            metadata.advancement_provenance = DesktopAdvancementProvenance::LocalOnly;
+        }
+        let import_metadata = serde_json::to_string(&ImportMetadata::Desktop(metadata))
+            .map_err(StorageError::StateJson)?;
+
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_update) {
+            transaction.execute(
+                "UPDATE characters SET updated_at_unix_ms = ?1 WHERE id = ?2",
+                params![unix_millis(), id.to_string()],
+            )?;
+            return Err(StorageError::InjectedFailure);
+        }
+
+        let changed = transaction.execute(
+            "UPDATE characters
+             SET name = ?1, race = ?2, character_class = ?3, level = ?4,
+                 canonical_state = ?5, canonical_state_version = ?6,
+                 random_continuation = ?7, import_metadata = ?8,
+                 updated_at_unix_ms = ?9
+             WHERE id = ?10 AND compatibility_profile = 'desktop-6.4.4'",
+            params![
+                identity.name,
+                identity.race,
+                identity.class,
+                sqlite_integer(identity.level, "level")?,
+                canonical_state,
+                CANONICAL_STATE_VERSION,
+                random_continuation,
+                import_metadata,
+                unix_millis(),
+                id.to_string(),
+            ],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::NotFound(id.clone()));
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn desktop_authentication(
+        &self,
+        id: &CharacterId,
+    ) -> Result<DesktopAuthentication, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT passkey, realm, endpoint, account, password
+                 FROM desktop_private WHERE character_id = ?1",
+                [id.to_string()],
+                |row| {
+                    Ok(DesktopAuthentication {
+                        passkey: row.get(0)?,
+                        realm: row.get(1)?,
+                        endpoint: row.get(2)?,
+                        account: row.get(3)?,
+                        password: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))
+    }
+
     pub fn list(&self) -> Result<Vec<ManagedCharacter>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, name, race, character_class, level, canonical_state,
                     canonical_state_version, motto, guild, created_at_unix_ms,
                     updated_at_unix_ms
-             FROM characters ORDER BY created_at_unix_ms, id",
+             FROM characters
+             WHERE compatibility_profile = 'browser'
+             ORDER BY created_at_unix_ms, id",
         )?;
         let mut rows = statement.query([])?;
         let mut characters = Vec::new();
@@ -334,12 +893,147 @@ impl Store {
         Ok(characters)
     }
 
+    pub fn list_managed(&self) -> Result<Vec<ManagedCharacterSummary>, StorageError> {
+        let records = {
+            let mut statement = self.connection.prepare(
+                "SELECT id, name, race, character_class, level, updated_at_unix_ms
+                 FROM characters
+                 ORDER BY created_at_unix_ms, id",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get(5)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        records
+            .into_iter()
+            .map(|(id, name, race, class, level, updated_at_unix_ms)| {
+                let parsed_id =
+                    CharacterId::parse(&id).map_err(|_| StorageError::InvalidCharacterId(id))?;
+                let level =
+                    u64::try_from(level).map_err(|_| StorageError::IntegerOutOfRange("level"))?;
+                Ok(ManagedCharacterSummary {
+                    compatibility: self.managed_compatibility(&parsed_id)?,
+                    id: parsed_id,
+                    identity: CharacterIdentity {
+                        name,
+                        race,
+                        class,
+                        level,
+                    },
+                    updated_at_unix_ms,
+                })
+            })
+            .collect()
+    }
+
+    pub fn managed_compatibility(
+        &self,
+        id: &CharacterId,
+    ) -> Result<ManagedCompatibilityPresentation, StorageError> {
+        match self.compatibility_profile(id)? {
+            CompatibilityProfile::Browser => Ok(ManagedCompatibilityPresentation {
+                profile: CompatibilityProfile::Browser,
+                realm: None,
+                online_eligibility: Vec::new(),
+                unavailable_history: None,
+                measured_since_import: None,
+                advancement_provenance: None,
+                notice: None,
+            }),
+            CompatibilityProfile::Desktop644 => {
+                let character = self.get_desktop(id)?;
+                let authentication = self.desktop_authentication(id)?;
+                let operations = [
+                    DesktopOnlineOperation::AutomaticLevel,
+                    DesktopOnlineOperation::AutomaticAct,
+                    DesktopOnlineOperation::ManualBrag,
+                    DesktopOnlineOperation::Motto,
+                    DesktopOnlineOperation::Guild,
+                ];
+                let online_eligibility = operations
+                    .into_iter()
+                    .map(|operation| DesktopOperationEligibility {
+                        operation,
+                        decision: desktop_eligibility_decision(
+                            &character,
+                            &authentication,
+                            &character.state,
+                            operation,
+                            None,
+                        ),
+                    })
+                    .collect();
+                let provenance = character.import_metadata.advancement_provenance;
+                let notice = match provenance {
+                    DesktopAdvancementProvenance::LocalOnly => Some(
+                        "This desktop character is a local-only fork. Future online use requires a fresh official-client import."
+                            .to_owned(),
+                    ),
+                    DesktopAdvancementProvenance::Unadvanced
+                        if authentication.has_online_origin()
+                            && !desktop_progress_reporting_evidence_available(
+                                &character,
+                                &authentication,
+                            ) =>
+                    {
+                        Some(
+                            "Starting local advancement while classic reporting is gated will permanently make this managed character local-only. Future online use will require a fresh official-client import."
+                                .to_owned(),
+                        )
+                    }
+                    DesktopAdvancementProvenance::Unadvanced => None,
+                };
+                Ok(ManagedCompatibilityPresentation {
+                    profile: CompatibilityProfile::Desktop644,
+                    realm: Some(authentication.realm),
+                    online_eligibility,
+                    unavailable_history: Some(
+                        character.import_metadata.unavailable_history.clone(),
+                    ),
+                    measured_since_import: Some(
+                        character.import_metadata.measured_since_import.clone(),
+                    ),
+                    advancement_provenance: Some(provenance),
+                    notice,
+                })
+            }
+        }
+    }
+
+    pub fn managed_inspection(&self, id: &CharacterId) -> Result<ManagedInspection, StorageError> {
+        let compatibility = self.managed_compatibility(id)?;
+        let state = match compatibility.profile {
+            CompatibilityProfile::Browser => ManagedInspectionState::Browser(self.get(id)?),
+            CompatibilityProfile::Desktop644 => {
+                ManagedInspectionState::Desktop644(self.get_desktop(id)?)
+            }
+        };
+        Ok(ManagedInspection {
+            compatibility,
+            state,
+        })
+    }
+
+    pub fn start_warning(&self, id: &CharacterId) -> Result<Option<String>, StorageError> {
+        Ok(self.managed_compatibility(id)?.notice)
+    }
+
     pub fn get(&self, id: &CharacterId) -> Result<ManagedCharacter, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, name, race, character_class, level, canonical_state,
                     canonical_state_version, motto, guild, created_at_unix_ms,
                     updated_at_unix_ms
-             FROM characters WHERE id = ?1",
+             FROM characters
+             WHERE id = ?1 AND compatibility_profile = 'browser'",
         )?;
         let mut rows = statement.query([id.to_string()])?;
         match rows.next()? {
@@ -429,13 +1123,88 @@ impl Store {
         })
     }
 
+    pub(crate) fn desktop_reporting_target_for_worker(
+        &self,
+        id: &CharacterId,
+        operation: DesktopOnlineOperation,
+        request_state: &DesktopCanonicalState,
+    ) -> Result<DesktopReportingTarget, StorageError> {
+        let online_action_lock = self.acquire_online_action_lock(id)?;
+        let character = self.get_desktop(id)?;
+        let authentication = self.desktop_authentication(id)?;
+        ensure_desktop_online_eligible(
+            &character,
+            &authentication,
+            request_state,
+            operation,
+            None,
+        )?;
+        let profile = OnlineProfile {
+            motto: character.state.profile.motto.clone(),
+            guild: character.state.profile.guild.clone(),
+        };
+        Ok(DesktopReportingTarget {
+            identity: character.identity,
+            state: character.state,
+            profile,
+            authentication,
+            _online_action_lock: online_action_lock,
+        })
+    }
+
+    pub(crate) fn desktop_online_action_target(
+        &self,
+        id: &CharacterId,
+        operation: DesktopOnlineOperation,
+        submitted_text: Option<&str>,
+    ) -> Result<DesktopReportingTarget, StorageError> {
+        let online_action_lock = self.acquire_online_action_lock(id)?;
+        let character = self.get_desktop(id)?;
+        let authentication = self.desktop_authentication(id)?;
+        ensure_desktop_online_eligible(
+            &character,
+            &authentication,
+            &character.state,
+            operation,
+            submitted_text,
+        )?;
+        let profile = OnlineProfile {
+            motto: character.state.profile.motto.clone(),
+            guild: character.state.profile.guild.clone(),
+        };
+        Ok(DesktopReportingTarget {
+            identity: character.identity,
+            state: character.state,
+            profile,
+            authentication,
+            _online_action_lock: online_action_lock,
+        })
+    }
+
     /// Resolves an online credential while holding the short-lived online
     /// action lock, allowing explicit online actions during active simulation.
     pub(crate) fn online_action_target(
         &self,
         id: &CharacterId,
+        operation: DesktopOnlineOperation,
+        submitted_text: Option<&str>,
     ) -> Result<ReportingTarget, StorageError> {
         let online_action_lock = self.acquire_online_action_lock(id)?;
+        match self.compatibility_profile(id)? {
+            CompatibilityProfile::Browser => {}
+            CompatibilityProfile::Desktop644 => {
+                let character = self.get_desktop(id)?;
+                let authentication = self.desktop_authentication(id)?;
+                ensure_desktop_online_eligible(
+                    &character,
+                    &authentication,
+                    &character.state,
+                    operation,
+                    submitted_text,
+                )?;
+                return Err(StorageError::ReportingIneligible);
+            }
+        }
         let character = self.get(id)?;
         if character.state.online.is_none() {
             return Err(StorageError::ReportingIneligible);
@@ -473,9 +1242,13 @@ impl Store {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
 
+        transaction.execute(
+            "DELETE FROM desktop_private WHERE character_id = ?1",
+            [id.to_string()],
+        )?;
+
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_remove) {
-            transaction.execute("DELETE FROM characters WHERE id = ?1", [id.to_string()])?;
             return Err(StorageError::InjectedFailure);
         }
 
@@ -561,9 +1334,23 @@ impl Store {
     fn inject_next_remove_failure(&mut self) {
         self.fail_next_remove = true;
     }
+
+    #[cfg(test)]
+    fn inject_next_desktop_registration_failure(&mut self) {
+        self.fail_next_desktop_registration = true;
+    }
 }
 
-fn initialize_schema(connection: &mut Connection) -> Result<(), StorageError> {
+fn initialize_schema(connection: &mut Connection, data_root: &Path) -> Result<(), StorageError> {
+    let observed_version: i64 =
+        connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if observed_version > DATABASE_SCHEMA_VERSION {
+        return Err(StorageError::UnsupportedSchema(observed_version));
+    }
+    if observed_version > 0 && observed_version < DATABASE_SCHEMA_VERSION {
+        create_migration_backup(connection, data_root, observed_version)?;
+    }
+
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let version: i64 = transaction.pragma_query_value(None, "user_version", |row| row.get(0))?;
     if version > DATABASE_SCHEMA_VERSION {
@@ -586,43 +1373,135 @@ fn initialize_schema(connection: &mut Connection) -> Result<(), StorageError> {
                 original_document TEXT NOT NULL,
                 motto TEXT NOT NULL DEFAULT '',
                 guild TEXT NOT NULL DEFAULT '',
+                compatibility_profile TEXT NOT NULL,
+                random_continuation TEXT NOT NULL,
+                import_metadata TEXT NOT NULL,
                 created_at_unix_ms INTEGER NOT NULL,
                 updated_at_unix_ms INTEGER NOT NULL
             );",
         )?;
-    } else if version == 1 {
-        transaction.execute_batch(
-            "ALTER TABLE characters ADD COLUMN motto TEXT NOT NULL DEFAULT '';
-             ALTER TABLE characters ADD COLUMN guild TEXT NOT NULL DEFAULT '';",
-        )?;
-        let profiles = {
-            let mut statement =
-                transaction.prepare("SELECT id, original_document FROM characters")?;
-            let rows = statement.query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            rows.collect::<Result<Vec<_>, _>>()?
-        };
-        for (id, source) in profiles {
-            let document = serde_json::from_str::<serde_json::Value>(&source).ok();
-            let motto = document
-                .as_ref()
-                .and_then(|value| value.get("motto"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            let guild = document
-                .as_ref()
-                .and_then(|value| value.get("guild"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            transaction.execute(
-                "UPDATE characters SET motto = ?1, guild = ?2 WHERE id = ?3",
-                params![motto, guild, id],
+    } else {
+        if version == 1 {
+            transaction.execute_batch(
+                "ALTER TABLE characters ADD COLUMN motto TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE characters ADD COLUMN guild TEXT NOT NULL DEFAULT '';",
             )?;
+            let profiles = {
+                let mut statement =
+                    transaction.prepare("SELECT id, original_document FROM characters")?;
+                let rows = statement.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (id, source) in profiles {
+                let document = serde_json::from_str::<serde_json::Value>(&source).ok();
+                let motto = document
+                    .as_ref()
+                    .and_then(|value| value.get("motto"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let guild = document
+                    .as_ref()
+                    .and_then(|value| value.get("guild"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                transaction.execute(
+                    "UPDATE characters SET motto = ?1, guild = ?2 WHERE id = ?3",
+                    params![motto, guild, id],
+                )?;
+            }
         }
+        if version <= 2 {
+            transaction.execute_batch(
+                "ALTER TABLE characters
+                    ADD COLUMN compatibility_profile TEXT NOT NULL DEFAULT 'browser';
+                 ALTER TABLE characters
+                    ADD COLUMN random_continuation TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE characters
+                    ADD COLUMN import_metadata TEXT NOT NULL DEFAULT '';",
+            )?;
+            let browser_rows = {
+                let mut statement =
+                    transaction.prepare("SELECT id, canonical_state FROM characters")?;
+                let rows = statement.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()?
+            };
+            for (id, canonical_state) in browser_rows {
+                let character: Character =
+                    serde_json::from_str(&canonical_state).map_err(StorageError::StateJson)?;
+                let random = serde_json::to_string(&RandomContinuation::Browser(character.seed))
+                    .map_err(StorageError::StateJson)?;
+                let metadata = serde_json::to_string(&ImportMetadata::Browser {
+                    source_format: SourceFormat::BrowserJson,
+                })
+                .map_err(StorageError::StateJson)?;
+                transaction.execute(
+                    "UPDATE characters
+                     SET canonical_state_version = ?1, random_continuation = ?2,
+                         import_metadata = ?3
+                     WHERE id = ?4",
+                    params![CANONICAL_STATE_VERSION, random, metadata, id],
+                )?;
+            }
+        }
+    }
+    if version < 4 {
+        transaction.execute_batch(
+            "CREATE TABLE desktop_private (
+                character_id TEXT PRIMARY KEY NOT NULL,
+                passkey INTEGER NOT NULL,
+                realm TEXT NOT NULL,
+                endpoint TEXT NOT NULL,
+                account TEXT NOT NULL,
+                password TEXT NOT NULL,
+                FOREIGN KEY(character_id) REFERENCES characters(id)
+            );",
+        )?;
     }
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
+    Ok(())
+}
+
+fn create_migration_backup(
+    connection: &Connection,
+    data_root: &Path,
+    source_version: i64,
+) -> Result<(), StorageError> {
+    let backup = data_root.join(format!("{DATABASE_FILENAME}.pre-v{source_version}.backup"));
+    if !backup.exists() {
+        connection.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+    }
+    restrict_permissions(&backup, 0o600)
+}
+
+fn restrict_store_files(data_root: &Path) -> Result<(), StorageError> {
+    for name in [
+        DATABASE_FILENAME.to_owned(),
+        format!("{DATABASE_FILENAME}-journal"),
+        format!("{DATABASE_FILENAME}-wal"),
+        format!("{DATABASE_FILENAME}-shm"),
+    ] {
+        let path = data_root.join(name);
+        if path.exists() {
+            restrict_permissions(&path, 0o600)?;
+        }
+    }
+    for entry in fs::read_dir(data_root)? {
+        let path = entry?.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with(&format!("{DATABASE_FILENAME}.pre-v")) && name.ends_with(".backup")
+            })
+        {
+            restrict_permissions(&path, 0o600)?;
+        }
+    }
     Ok(())
 }
 
@@ -655,10 +1534,85 @@ fn managed_character_from_row(row: &rusqlite::Row<'_>) -> Result<ManagedCharacte
     })
 }
 
+fn desktop_character_from_row(
+    row: &rusqlite::Row<'_>,
+) -> Result<RegisteredDesktopCharacter, rusqlite::Error> {
+    desktop_character_from_row_inner(row).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(5, rusqlite::types::Type::Text, Box::new(error))
+    })
+}
+
+fn desktop_character_from_row_inner(
+    row: &rusqlite::Row<'_>,
+) -> Result<RegisteredDesktopCharacter, StorageError> {
+    let profile: String = row.get(7)?;
+    if profile != "desktop-6.4.4" {
+        return Err(StorageError::InvalidDesktopState(
+            "compatibility profile is not desktop-6.4.4",
+        ));
+    }
+    let mut state: DesktopCanonicalState =
+        serde_json::from_str(&row.get::<_, String>(5)?).map_err(StorageError::StateJson)?;
+    state.profile = crate::desktop_save::DesktopValidatedProfile {
+        motto: row.get(10)?,
+        guild: row.get(11)?,
+    };
+    let random: RandomContinuation =
+        serde_json::from_str(&row.get::<_, String>(8)?).map_err(StorageError::StateJson)?;
+    let compatibility = CompatibilityState {
+        profile: CompatibilityProfile::Desktop644,
+        random,
+    }
+    .validate()
+    .map_err(|_| StorageError::InvalidDesktopState("random continuation profile mismatch"))?;
+    let metadata: ImportMetadata =
+        serde_json::from_str(&row.get::<_, String>(9)?).map_err(StorageError::StateJson)?;
+    let ImportMetadata::Desktop(import_metadata) = metadata else {
+        return Err(StorageError::InvalidDesktopState(
+            "import metadata profile mismatch",
+        ));
+    };
+    Ok(RegisteredDesktopCharacter {
+        id: CharacterId::parse(&row.get::<_, String>(0)?)?,
+        identity: CharacterIdentity {
+            name: row.get(1)?,
+            race: row.get(2)?,
+            class: row.get(3)?,
+            level: u64::try_from(row.get::<_, i64>(4)?)
+                .map_err(|_| StorageError::IntegerOutOfRange("level"))?,
+        },
+        state_version: row.get(6)?,
+        created_at_unix_ms: row.get(12)?,
+        updated_at_unix_ms: row.get(13)?,
+        state,
+        compatibility,
+        import_metadata,
+    })
+}
+
 fn canonical_json(character: &Character) -> Result<String, StorageError> {
     let mut canonical = character.clone();
     canonical.profile = OnlineProfile::default();
     serde_json::to_string(&canonical).map_err(StorageError::StateJson)
+}
+
+fn desktop_identity(state: &DesktopCanonicalState) -> Result<CharacterIdentity, StorageError> {
+    let value = |index: usize, caption: &'static str| {
+        state
+            .traits
+            .get(index)
+            .filter(|row| row.caption == caption && row.subitems.len() == 1)
+            .and_then(|row| row.subitems.first())
+            .ok_or(StorageError::InvalidDesktopState("trait layout"))
+    };
+    Ok(CharacterIdentity {
+        name: value(0, "Name")?.clone(),
+        race: value(1, "Race")?.clone(),
+        class: value(2, "Class")?.clone(),
+        level: value(3, "Level")?
+            .parse()
+            .map_err(|_| StorageError::InvalidDesktopState("level"))?,
+    })
 }
 
 fn identity(character: &Character) -> CharacterIdentity {
@@ -688,6 +1642,8 @@ pub enum WorkerError {
     Storage(#[from] StorageError),
     #[error(transparent)]
     Simulation(#[from] crate::simulation::SimulationError),
+    #[error(transparent)]
+    DesktopCallback(#[from] crate::desktop_callback::DesktopCallbackError),
     #[error("worker interval must be greater than zero")]
     ZeroInterval,
     #[error("elapsed worker duration is too large to represent in milliseconds")]
@@ -718,6 +1674,7 @@ pub fn aligned_task_completion_duration(state: &Character) -> Duration {
 pub struct Worker {
     store: Store,
     id: CharacterId,
+    profile: CompatibilityProfile,
     _lock: CharacterLock,
     last_tick: Instant,
     transport: Box<dyn ReportTransport>,
@@ -727,10 +1684,11 @@ impl Worker {
     /// Takes ownership before reading any persisted character state.
     pub fn start(store: Store, id: CharacterId) -> Result<Self, WorkerError> {
         let lock = store.acquire_lock(&id)?;
-        store.get(&id)?;
+        let profile = store.compatibility_profile(&id)?;
         Ok(Self {
             store,
             id,
+            profile,
             _lock: lock,
             last_tick: Instant::now(),
             transport: Box::new(HttpsTransport),
@@ -755,21 +1713,83 @@ impl Worker {
             .as_millis()
             .try_into()
             .map_err(|_| WorkerError::ElapsedOverflow)?;
-        if elapsed_ms == 0 {
-            return Ok(());
-        }
-        let state = self.store.get(&self.id)?.state;
-        let trace = crate::simulation::advance_with_trace(
-            &state,
-            &crate::ruleset::BUNDLED,
-            elapsed_ms,
-            "",
-        )?;
-        self.store.replace_state(&self.id, &trace.state)?;
-        for event in &trace.events {
-            let _ = crate::reporting::submit_event(&self.store, &self.id, event, &*self.transport);
+        match self.profile {
+            CompatibilityProfile::Browser => {
+                if elapsed_ms == 0 {
+                    return Ok(());
+                }
+                let state = self.store.get(&self.id)?.state;
+                let trace = crate::simulation::advance_with_trace(
+                    &state,
+                    &crate::ruleset::BUNDLED,
+                    elapsed_ms,
+                    "",
+                )?;
+                self.store.replace_state(&self.id, &trace.state)?;
+                for event in &trace.events {
+                    let _ = crate::reporting::submit_event(
+                        &self.store,
+                        &self.id,
+                        event,
+                        &*self.transport,
+                    );
+                }
+            }
+            CompatibilityProfile::Desktop644 => {
+                let managed = self.store.get_desktop(&self.id)?;
+                let RandomContinuation::Desktop644(random) = managed.compatibility.random else {
+                    return Err(StorageError::InvalidDesktopState(
+                        "random continuation profile mismatch",
+                    )
+                    .into());
+                };
+                let authentication = self.store.desktop_authentication(&self.id)?;
+                let progress_reporting_evidence_available =
+                    desktop_progress_reporting_evidence_available(&managed, &authentication);
+                let mut checkpoint = DesktopCallbackCheckpoint {
+                    state: managed.state,
+                    random,
+                };
+                let mut hooks = SourceDerivedDesktopHooks::traced();
+                let elapsed_ms =
+                    i64::try_from(elapsed_ms).map_err(|_| WorkerError::ElapsedOverflow)?;
+                let observation = checkpoint.apply_progression_callback(elapsed_ms, &mut hooks)?;
+                let changed =
+                    observation.credited_milliseconds != 0 || observation.completion_dispatched;
+                let mark_local_only = should_mark_desktop_local_only(
+                    &authentication,
+                    changed,
+                    progress_reporting_evidence_available,
+                );
+                self.store.replace_desktop_checkpoint(
+                    &self.id,
+                    &checkpoint,
+                    observation,
+                    mark_local_only,
+                )?;
+                for report in hooks.reports() {
+                    let _ = crate::reporting::submit_desktop_event(
+                        &self.store,
+                        &self.id,
+                        report,
+                        &*self.transport,
+                    );
+                }
+            }
         }
         Ok(())
+    }
+
+    fn scheduled_duration(&self, interval: Duration) -> Result<Duration, WorkerError> {
+        match self.profile {
+            CompatibilityProfile::Browser => {
+                let state = self.store.get(&self.id)?.state;
+                Ok(aligned_task_completion_duration(&state).min(interval))
+            }
+            CompatibilityProfile::Desktop644 => Ok(Duration::from_millis(
+                crate::desktop_callback::MAX_CALLBACK_ELAPSED_MS as u64,
+            )),
+        }
     }
 
     /// Runs periodic updates from a monotonic clock until `stop` is requested.
@@ -781,8 +1801,7 @@ impl Worker {
             return Err(WorkerError::ZeroInterval);
         }
         while !stop.load(Ordering::Relaxed) {
-            let state = self.store.get(&self.id)?.state;
-            let scheduled = aligned_task_completion_duration(&state).min(interval);
+            let scheduled = self.scheduled_duration(interval)?;
             thread::sleep(scheduled);
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -807,13 +1826,23 @@ mod tests {
 
     use base64::{Engine, engine::general_purpose::STANDARD};
     use serde_json::json;
-    use std::sync::{Arc, Mutex, mpsc};
+    use std::sync::{Arc, Barrier, Mutex, mpsc};
     use url::Url;
 
     use super::*;
     use crate::{
         checkpoint,
-        reporting::{DeliveryOutcome, OFFICIAL_LEADERBOARD_ENDPOINT, ReportTransport},
+        desktop_save::{
+            DesktopAdaptations, DesktopQuestMarker, DesktopQueueCommand, DesktopQueueKind,
+            DesktopValidatedBar, DesktopValidatedBars, DesktopValidatedPrivateMetadata,
+            DesktopValidatedProfile, DesktopValidatedRow,
+        },
+        desktop_simulation::{DesktopReportSnapshot, DesktopReportTrigger},
+        guild::{GuildOutcome, GuildResponseRules},
+        reporting::{
+            DeliveryOutcome, GuildTransport, OFFICIAL_LEADERBOARD_ENDPOINT, ReportTransport,
+            ReportingError,
+        },
         save,
     };
 
@@ -838,6 +1867,155 @@ mod tests {
     fn fixture_character() -> Character {
         save::import_text(&STANDARD.encode(include_str!("../tests/fixtures/reference-save.json")))
             .unwrap()
+    }
+
+    fn desktop_fixture() -> DesktopValidatedSave {
+        let rows = |values: &[(&str, &str)]| {
+            values
+                .iter()
+                .map(|(caption, value)| DesktopValidatedRow {
+                    header: [0, -1, -1, 0, 1],
+                    caption: (*caption).to_owned(),
+                    subitems: vec![(*value).to_owned()],
+                })
+                .collect()
+        };
+        DesktopValidatedSave {
+            traits: rows(&[
+                ("Name", "Desktop Hero"),
+                ("Race", "Gyrognome"),
+                ("Class", "Robot Monk"),
+                ("Level", "2"),
+            ]),
+            stats: rows(&[
+                ("STR", "12"),
+                ("CON", "11"),
+                ("DEX", "10"),
+                ("INT", "9"),
+                ("WIS", "8"),
+                ("CHA", "7"),
+                ("HP Max", "20"),
+                ("MP Max", "15"),
+            ]),
+            equipment: rows(&[
+                ("Weapon", "Stick"),
+                ("Shield", "Plate"),
+                ("Helm", "Cap"),
+                ("Hauberk", "Burlap"),
+                ("Brassairts", "Cloth"),
+                ("Vambraces", "Cloth"),
+                ("Gauntlets", "Cloth"),
+                ("Gambeson", "Cloth"),
+                ("Cuisses", "Cloth"),
+                ("Greaves", "Cloth"),
+                ("Sollerets", "Cloth"),
+            ]),
+            inventory: rows(&[("Gold", "3")]),
+            spells: Vec::new(),
+            plots: Vec::new(),
+            quests: Vec::new(),
+            current_task: "load".to_owned(),
+            quest: DesktopQuestMarker::None,
+            queue: Vec::new(),
+            activity: "Loading...".to_owned(),
+            bars: DesktopValidatedBars {
+                experience: DesktopValidatedBar {
+                    position: 0,
+                    maximum: 100,
+                },
+                encumbrance: DesktopValidatedBar {
+                    position: 0,
+                    maximum: 50,
+                },
+                plot: DesktopValidatedBar {
+                    position: 0,
+                    maximum: 26,
+                },
+                quest: DesktopValidatedBar {
+                    position: 0,
+                    maximum: 0,
+                },
+                task: DesktopValidatedBar {
+                    position: 0,
+                    maximum: 2_000,
+                },
+            },
+            prized_equipment: 0,
+            game_style: 3,
+            profile: DesktopValidatedProfile {
+                motto: "Synthetic motto".to_owned(),
+                guild: "Synthetic Guild".to_owned(),
+            },
+            private: DesktopValidatedPrivateMetadata {
+                passkey: 4_242,
+                realm: "Synthetic Realm".to_owned(),
+                endpoint: "https://synthetic.invalid/".to_owned(),
+                account: "synthetic-account".to_owned(),
+                password: "synthetic-password".to_owned(),
+            },
+            adaptations: DesktopAdaptations {
+                legacy_prologue_62: false,
+                legacy_quest_placeholder: false,
+                spelling_patch_applied: false,
+            },
+        }
+    }
+
+    fn desktop_level_report_fixture() -> DesktopValidatedSave {
+        let mut save = desktop_fixture();
+        save.current_task = "kill|Rat|1|tail".to_owned();
+        save.activity = "Executing Rat...".to_owned();
+        save.bars.task = DesktopValidatedBar {
+            position: 6_000,
+            maximum: 6_000,
+        };
+        save.bars.experience.position = save.bars.experience.maximum;
+        save.queue = vec![DesktopQueueCommand {
+            kind: DesktopQueueKind::Task,
+            duration_seconds: 2,
+            caption: "Continue".to_owned(),
+        }];
+        save
+    }
+
+    fn evidenced_spoltog_desktop_fixture() -> DesktopValidatedSave {
+        let mut save = desktop_fixture();
+        save.private.realm = "Spoltog".to_owned();
+        save.private.endpoint = "http://progressquest.com/spoltog.php?".to_owned();
+        save.plots = vec![DesktopValidatedRow {
+            header: [0, -1, -1, 0, 1],
+            caption: "Act I".to_owned(),
+            subitems: vec!["0".to_owned()],
+        }];
+        save
+    }
+
+    struct Numbers(u32);
+
+    impl RandomSource for Numbers {
+        fn next_u32(&mut self) -> Result<u32, crate::newguy::NewGuyError> {
+            Ok(self.0)
+        }
+    }
+
+    struct RejectNetworkTransport;
+
+    impl ReportTransport for RejectNetworkTransport {
+        fn deliver(&self, _request: Url) -> DeliveryOutcome {
+            panic!("gated desktop operation attempted network delivery")
+        }
+    }
+
+    impl GuildTransport for RejectNetworkTransport {
+        fn guild(
+            &self,
+            _request: Url,
+            _prior: &str,
+            _submitted: &str,
+            _rules: &GuildResponseRules,
+        ) -> GuildOutcome {
+            panic!("gated desktop guild operation attempted network delivery")
+        }
     }
 
     fn create_version_one_database(
@@ -884,6 +2062,57 @@ mod tests {
                     original_document,
                     1_i64,
                     2_i64,
+                ],
+            )
+            .unwrap();
+        (id, canonical_state, original_document)
+    }
+
+    fn create_version_two_database(
+        data_root: &Path,
+        character: &Character,
+    ) -> (CharacterId, String, String) {
+        fs::create_dir_all(data_root).unwrap();
+        let connection = Connection::open(data_root.join(DATABASE_FILENAME)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE characters (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    name TEXT NOT NULL,
+                    race TEXT NOT NULL,
+                    character_class TEXT NOT NULL,
+                    level INTEGER NOT NULL,
+                    canonical_state TEXT NOT NULL,
+                    canonical_state_version INTEGER NOT NULL,
+                    original_document TEXT NOT NULL,
+                    motto TEXT NOT NULL DEFAULT '',
+                    guild TEXT NOT NULL DEFAULT '',
+                    created_at_unix_ms INTEGER NOT NULL,
+                    updated_at_unix_ms INTEGER NOT NULL
+                );
+                PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        let id = CharacterId::new();
+        let canonical_state = canonical_json(character).unwrap();
+        let original_document = serde_json::to_string(&character.document).unwrap();
+        connection
+            .execute(
+                "INSERT INTO characters (
+                    id, name, race, character_class, level, canonical_state,
+                    canonical_state_version, original_document, motto, guild,
+                    created_at_unix_ms, updated_at_unix_ms
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9, 1, 2)",
+                params![
+                    id.to_string(),
+                    character.traits.name,
+                    character.traits.race,
+                    character.traits.class,
+                    sqlite_integer(character.traits.level, "level").unwrap(),
+                    canonical_state,
+                    original_document,
+                    character.profile.motto,
+                    character.profile.guild,
                 ],
             )
             .unwrap();
@@ -994,6 +2223,324 @@ mod tests {
     }
 
     #[test]
+    fn migrates_schema_two_browser_rows_without_changing_state_or_credentials() {
+        let directory = TestDirectory::new("typed-profile-migration");
+        let character = fixture_character();
+        let expected_seed = character.seed;
+        let expected_profile = character.profile.clone();
+        let (id, canonical_state, original_document) =
+            create_version_two_database(&directory.0, &character);
+
+        let store = Store::open_at(&directory.0).unwrap();
+        let persisted: (String, String, String, String, i64, String, String) = store
+            .connection
+            .query_row(
+                "SELECT canonical_state, original_document, motto, guild,
+                        canonical_state_version, random_continuation, import_metadata
+                 FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+
+        assert_eq!(persisted.0, canonical_state);
+        assert_eq!(persisted.1, original_document);
+        assert_eq!(persisted.2, expected_profile.motto);
+        assert_eq!(persisted.3, expected_profile.guild);
+        assert_eq!(persisted.4, i64::from(CANONICAL_STATE_VERSION));
+        assert_eq!(
+            serde_json::from_str::<RandomContinuation>(&persisted.5).unwrap(),
+            RandomContinuation::Browser(expected_seed)
+        );
+        assert_eq!(
+            serde_json::from_str::<ImportMetadata>(&persisted.6).unwrap(),
+            ImportMetadata::Browser {
+                source_format: SourceFormat::BrowserJson
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&persisted.1).unwrap()["online"]["passkey"],
+            4242
+        );
+        assert_eq!(store.get(&id).unwrap().state.seed, expected_seed);
+
+        let backup_path = directory
+            .0
+            .join(format!("{DATABASE_FILENAME}.pre-v2.backup"));
+        assert_eq!(
+            fs::metadata(&backup_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let backup = Connection::open(backup_path).unwrap();
+        let backup_version: i64 = backup
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let backup_state: (String, String) = backup
+            .query_row(
+                "SELECT canonical_state, original_document FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(backup_version, 2);
+        assert_eq!(backup_state, (canonical_state, original_document));
+    }
+
+    #[test]
+    fn registers_desktop_state_atomically_without_persisting_private_metadata() {
+        let directory = TestDirectory::new("desktop-registration");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let save = desktop_fixture();
+        let original_save = save.clone();
+        let inspection = crate::save::inspect_desktop(&save);
+        assert_eq!(save, original_save);
+        assert_eq!(inspection.target_profile, CompatibilityProfile::Desktop644);
+        assert_eq!(
+            inspection.import_metadata.unavailable_history,
+            crate::compatibility::DesktopUnavailableHistory {
+                original_random_continuation: crate::compatibility::HistoricalValue::Unavailable,
+                birthday: crate::compatibility::HistoricalValue::Unavailable,
+                seed_history: crate::compatibility::HistoricalValue::Unavailable,
+                lifetime_tasks: crate::compatibility::HistoricalValue::Unavailable,
+                lifetime_elapsed: crate::compatibility::HistoricalValue::Unavailable,
+            }
+        );
+        assert_eq!(
+            inspection.import_metadata.measured_since_import,
+            crate::compatibility::SinceImportCounters {
+                tasks_completed: 0,
+                elapsed_milliseconds: 0,
+            }
+        );
+        assert_eq!(inspection.online_eligibility.len(), 5);
+        assert!(inspection.online_eligibility.iter().all(|eligibility| {
+            eligibility.decision
+                == DesktopEligibilityDecision::Ineligible(DesktopIneligibilityReason::RealmMismatch)
+        }));
+        let safe_inspection = serde_json::to_string(&inspection).unwrap();
+        for private in [
+            "4242",
+            "Synthetic Realm",
+            "synthetic.invalid",
+            "synthetic-account",
+            "synthetic-password",
+        ] {
+            assert!(!safe_inspection.contains(private));
+        }
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        assert_eq!(save, original_save);
+
+        assert_eq!(registered.identity.name, "Desktop Hero");
+        assert_eq!(
+            registered.compatibility.random,
+            RandomContinuation::Desktop644(crate::compatibility::DesktopRandomState(0xf00d_cafe))
+        );
+        assert!(store.list().unwrap().is_empty());
+        let restored = store.get_desktop(&registered.id).unwrap();
+        assert_eq!(restored.state, registered.state);
+        assert_eq!(restored.compatibility, registered.compatibility);
+        assert_eq!(restored.import_metadata, registered.import_metadata);
+        assert_eq!(
+            restored.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+        let authentication = store.desktop_authentication(&registered.id).unwrap();
+        assert_eq!(authentication.passkey, 4_242);
+        assert_eq!(authentication.realm, "Synthetic Realm");
+        assert_eq!(authentication.endpoint, "https://synthetic.invalid/");
+        assert_eq!(authentication.account, "synthetic-account");
+        assert_eq!(authentication.password, "synthetic-password");
+
+        let persisted: (String, String) = store
+            .connection
+            .query_row(
+                "SELECT canonical_state, original_document
+                 FROM characters WHERE id = ?1",
+                [registered.id.to_string()],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(persisted.1, "null");
+        for private in [
+            "4242",
+            "synthetic-account",
+            "synthetic-password",
+            "synthetic.invalid",
+        ] {
+            assert!(!persisted.0.contains(private));
+        }
+        let safe = serde_json::to_string(&registered).unwrap();
+        let debug = format!("{authentication:?}");
+        for private in [
+            "4242",
+            "Synthetic Realm",
+            "synthetic.invalid",
+            "synthetic-account",
+            "synthetic-password",
+        ] {
+            assert!(!safe.contains(private));
+            assert!(!debug.contains(private));
+        }
+
+        store.inject_next_desktop_registration_failure();
+        assert!(matches!(
+            store.register_desktop(&save, &mut Numbers(7)),
+            Err(StorageError::InjectedFailure)
+        ));
+        let count: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM characters", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn managed_presentations_include_desktop_profile_gates_without_private_metadata() {
+        let directory = TestDirectory::new("desktop-managed-presentation");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let browser = store.register(&fixture_character()).unwrap();
+        let desktop = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+
+        let listed = store.list_managed().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(
+            listed
+                .iter()
+                .find(|entry| entry.id == browser.id)
+                .unwrap()
+                .compatibility
+                .profile,
+            CompatibilityProfile::Browser
+        );
+        let desktop_summary = listed.iter().find(|entry| entry.id == desktop.id).unwrap();
+        assert_eq!(
+            desktop_summary.compatibility.profile,
+            CompatibilityProfile::Desktop644
+        );
+        assert_eq!(desktop_summary.compatibility.online_eligibility.len(), 5);
+        assert!(
+            desktop_summary
+                .compatibility
+                .notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("permanently")
+                    && notice.contains("fresh official-client"))
+        );
+
+        let inspection =
+            serde_json::to_string(&store.managed_inspection(&desktop.id).unwrap()).unwrap();
+        assert!(inspection.contains("desktop-6.4.4"));
+        assert!(inspection.contains("realm-mismatch"));
+        assert!(inspection.contains("unavailableHistory"));
+        assert!(inspection.contains("measuredSinceImport"));
+        for private in [
+            "4242",
+            "synthetic-account",
+            "synthetic-password",
+            "synthetic.invalid",
+        ] {
+            assert!(!inspection.contains(private));
+        }
+    }
+
+    #[test]
+    fn local_only_managed_presentation_requires_a_fresh_official_client_import() {
+        let directory = TestDirectory::new("desktop-local-only-presentation");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let desktop = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+        let mut metadata = desktop.import_metadata;
+        metadata.advancement_provenance = DesktopAdvancementProvenance::LocalOnly;
+        store
+            .connection
+            .execute(
+                "UPDATE characters SET import_metadata = ?1 WHERE id = ?2",
+                params![
+                    serde_json::to_string(&ImportMetadata::Desktop(metadata)).unwrap(),
+                    desktop.id.to_string()
+                ],
+            )
+            .unwrap();
+
+        let presentation = store.managed_compatibility(&desktop.id).unwrap();
+        assert!(presentation.notice.as_deref().is_some_and(
+            |notice| notice.contains("local-only") && notice.contains("fresh official-client")
+        ));
+        assert!(presentation.online_eligibility.iter().all(|eligibility| {
+            eligibility.decision
+                == DesktopEligibilityDecision::Ineligible(
+                    DesktopIneligibilityReason::FreshOfficialClientImportRequired,
+                )
+        }));
+    }
+
+    #[test]
+    fn desktop_profile_and_state_updates_preserve_private_authentication() {
+        let directory = TestDirectory::new("desktop-profile-state-independence");
+        let mut registration_store = Store::open_at(&directory.0).unwrap();
+        let registered = registration_store
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+        let expected_authentication = registration_store
+            .desktop_authentication(&registered.id)
+            .unwrap();
+
+        let profile = OnlineProfile {
+            motto: "Persist independently".to_owned(),
+            guild: "Desktop Gnomes".to_owned(),
+        };
+        let mut next = registered.state.clone();
+        next.activity = "Continuing locally".to_owned();
+
+        let barrier = Arc::new(Barrier::new(3));
+        let profile_path = directory.0.clone();
+        let profile_id = registered.id.clone();
+        let profile_barrier = Arc::clone(&barrier);
+        let profile_update = profile.clone();
+        let profile_thread = thread::spawn(move || {
+            let mut store = Store::open_at(profile_path).unwrap();
+            profile_barrier.wait();
+            store.replace_profile(&profile_id, &profile_update).unwrap();
+        });
+        let state_path = directory.0.clone();
+        let state_id = registered.id.clone();
+        let state_barrier = Arc::clone(&barrier);
+        let state_thread = thread::spawn(move || {
+            let mut store = Store::open_at(state_path).unwrap();
+            state_barrier.wait();
+            store.replace_desktop_state(&state_id, &next).unwrap();
+        });
+        barrier.wait();
+        profile_thread.join().unwrap();
+        state_thread.join().unwrap();
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        let restored = reopened.get_desktop(&registered.id).unwrap();
+        assert_eq!(restored.state.activity, "Continuing locally");
+        assert_eq!(restored.state.profile.motto, profile.motto);
+        assert_eq!(restored.state.profile.guild, profile.guild);
+        assert_eq!(
+            reopened.desktop_authentication(&registered.id).unwrap(),
+            expected_authentication
+        );
+    }
+
+    #[test]
     fn rejects_database_schemas_newer_than_supported() {
         let directory = TestDirectory::new("newer-schema");
         fs::create_dir_all(&directory.0).unwrap();
@@ -1036,7 +2583,9 @@ mod tests {
         let directory = TestDirectory::new("reporting-target");
         let mut store = Store::open_at(&directory.0).unwrap();
         let registered = store.register(&fixture_character()).unwrap();
-        let target = store.online_action_target(&registered.id).unwrap();
+        let target = store
+            .online_action_target(&registered.id, DesktopOnlineOperation::ManualBrag, None)
+            .unwrap();
         assert_eq!(target.identity, registered.identity);
         assert_eq!(target.state.document, Value::Null);
         drop(target);
@@ -1045,19 +2594,25 @@ mod tests {
         offline.online = None;
         let offline = store.register(&offline).unwrap();
         assert!(matches!(
-            store.online_action_target(&offline.id),
+            store.online_action_target(&offline.id, DesktopOnlineOperation::ManualBrag, None),
             Err(StorageError::ReportingIneligible)
         ));
 
         assert!(matches!(
-            store.online_action_target(&CharacterId::new()),
+            store.online_action_target(
+                &CharacterId::new(),
+                DesktopOnlineOperation::ManualBrag,
+                None
+            ),
             Err(StorageError::NotFound(_))
         ));
 
         let owned = store.register(&fixture_character()).unwrap();
         let worker =
             Worker::start(Store::open_at(&directory.0).unwrap(), owned.id.clone()).unwrap();
-        let target = store.online_action_target(&owned.id).unwrap();
+        let target = store
+            .online_action_target(&owned.id, DesktopOnlineOperation::ManualBrag, None)
+            .unwrap();
         assert_eq!(target.identity, owned.identity);
         assert!(store.is_owned(&owned.id).unwrap());
         drop(target);
@@ -1071,7 +2626,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.online_action_target(&registered.id),
+            store.online_action_target(&registered.id, DesktopOnlineOperation::ManualBrag, None),
             Err(StorageError::ReportingIneligible)
         ));
 
@@ -1083,7 +2638,7 @@ mod tests {
             )
             .unwrap();
         assert!(matches!(
-            store.online_action_target(&registered.id),
+            store.online_action_target(&registered.id, DesktopOnlineOperation::ManualBrag, None),
             Err(StorageError::StateJson(_))
         ));
     }
@@ -1215,6 +2770,70 @@ mod tests {
             store.original_document(&registered.id),
             Err(StorageError::NotFound(id)) if id == registered.id
         ));
+    }
+
+    #[test]
+    fn removes_desktop_canonical_and_private_rows_atomically() {
+        let directory = TestDirectory::new("desktop-remove");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+        assert!(store.desktop_authentication(&registered.id).is_ok());
+
+        store.remove(&registered.id).unwrap();
+
+        assert!(matches!(
+            store.get_desktop(&registered.id),
+            Err(StorageError::NotFound(id)) if id == registered.id
+        ));
+        assert!(matches!(
+            store.desktop_authentication(&registered.id),
+            Err(StorageError::NotFound(id)) if id == registered.id
+        ));
+    }
+
+    #[test]
+    fn failed_desktop_remove_keeps_canonical_and_private_rows() {
+        let directory = TestDirectory::new("desktop-remove-transaction");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+        store.inject_next_remove_failure();
+
+        assert!(matches!(
+            store.remove(&registered.id),
+            Err(StorageError::InjectedFailure)
+        ));
+        drop(store);
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        assert!(reopened.get_desktop(&registered.id).is_ok());
+        assert!(reopened.desktop_authentication(&registered.id).is_ok());
+    }
+
+    #[test]
+    fn reopening_restricts_sqlite_sidecar_permissions() {
+        let directory = TestDirectory::new("sidecar-permissions");
+        drop(Store::open_at(&directory.0).unwrap());
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let path = directory.0.join(format!("{DATABASE_FILENAME}{suffix}"));
+            fs::write(&path, b"synthetic sidecar").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+        }
+
+        drop(Store::open_at(&directory.0).unwrap());
+
+        for suffix in ["-journal", "-wal", "-shm"] {
+            let path = directory.0.join(format!("{DATABASE_FILENAME}{suffix}"));
+            if path.exists() {
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
     }
 
     #[test]
@@ -1548,6 +3167,622 @@ mod tests {
             select_worker_elapsed(delayed, next, interval),
             Duration::from_millis(100)
         );
+    }
+
+    #[test]
+    fn desktop_worker_uses_one_capped_callback_per_explicit_advance() {
+        let directory = TestDirectory::new("desktop-worker-callback");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.maximum = 6_000;
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+
+        assert_eq!(
+            worker.scheduled_duration(Duration::from_secs(1)).unwrap(),
+            Duration::from_millis(100)
+        );
+        worker.advance_elapsed(Duration::from_millis(250)).unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&registered.id)
+                .unwrap()
+                .state
+                .bars
+                .task
+                .position,
+            100
+        );
+        worker.advance_elapsed(Duration::from_millis(100)).unwrap();
+        let persisted = worker.store.get_desktop(&registered.id).unwrap();
+        assert_eq!(persisted.state.bars.task.position, 200);
+        assert_eq!(
+            persisted.import_metadata.measured_since_import,
+            crate::compatibility::SinceImportCounters {
+                tasks_completed: 0,
+                elapsed_milliseconds: 200,
+            }
+        );
+        assert_eq!(
+            persisted.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+    }
+
+    #[test]
+    fn desktop_worker_persists_full_bar_until_the_next_actual_callback() {
+        let directory = TestDirectory::new("desktop-worker-pending-completion");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.maximum = 6_000;
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let initial_task = registered.state.current_task;
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+
+        for _ in 0..60 {
+            worker.advance_elapsed(Duration::from_secs(5)).unwrap();
+        }
+        let pending = worker.store.get_desktop(&registered.id).unwrap();
+        assert_eq!(pending.state.bars.task.position, 6_000);
+        assert_eq!(pending.state.current_task, initial_task);
+
+        worker.advance_elapsed(Duration::from_millis(100)).unwrap();
+        let completed = worker.store.get_desktop(&registered.id).unwrap();
+        assert_eq!(completed.state.bars.task.position, 0);
+        assert_ne!(completed.state.current_task, initial_task);
+    }
+
+    #[test]
+    fn desktop_worker_restart_preserves_pending_completion_without_downtime() {
+        let directory = TestDirectory::new("desktop-worker-restart");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.position = 5_900;
+        save.bars.task.maximum = 6_000;
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let initial_task = registered.state.current_task;
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        worker.advance_elapsed(Duration::from_secs(10)).unwrap();
+        drop(worker);
+
+        thread::sleep(Duration::from_millis(5));
+        let pending = Store::open_at(&directory.0)
+            .unwrap()
+            .get_desktop(&registered.id)
+            .unwrap();
+        assert_eq!(pending.state.bars.task.position, 6_000);
+        assert_eq!(pending.state.current_task, initial_task);
+
+        let mut restarted =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        restarted.advance_elapsed(Duration::ZERO).unwrap();
+        let completed = restarted.store.get_desktop(&registered.id).unwrap();
+        assert_eq!(completed.state.bars.task.position, 0);
+        assert_ne!(completed.state.current_task, initial_task);
+    }
+
+    #[test]
+    fn desktop_worker_commits_before_serialized_report_and_does_not_replay() {
+        let directory = TestDirectory::new("desktop-worker-report-order");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_level_report_fixture(), &mut Numbers(0x1357_9bdf))
+            .unwrap();
+        let online_action = store.acquire_online_action_lock(&registered.id).unwrap();
+        let path = directory.0.clone();
+        let id = registered.id.clone();
+        let (sender, receiver) = mpsc::channel();
+        let reporting = thread::spawn(move || {
+            let mut worker = Worker::start(Store::open_at(path).unwrap(), id).unwrap();
+            let result = worker.advance_elapsed(Duration::ZERO);
+            sender.send(result).unwrap();
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let persisted = Store::open_at(&directory.0)
+                .unwrap()
+                .get_desktop(&registered.id)
+                .unwrap();
+            if persisted.identity.level == 3 {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "desktop callback was not persisted before report serialization"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+
+        store
+            .replace_profile(
+                &registered.id,
+                &OnlineProfile {
+                    motto: "Serialized before report".to_owned(),
+                    guild: "Desktop Gnomes".to_owned(),
+                },
+            )
+            .unwrap();
+        drop(online_action);
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        reporting.join().unwrap();
+
+        let persisted = Store::open_at(&directory.0)
+            .unwrap()
+            .get_desktop(&registered.id)
+            .unwrap();
+        assert_eq!(persisted.identity.level, 3);
+        assert_eq!(
+            persisted
+                .import_metadata
+                .measured_since_import
+                .tasks_completed,
+            1
+        );
+        assert_eq!(
+            persisted.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+        assert_eq!(persisted.state.profile.motto, "Serialized before report");
+        assert_eq!(persisted.state.profile.guild, "Desktop Gnomes");
+
+        let online_action = store.acquire_online_action_lock(&registered.id).unwrap();
+        let path = directory.0.clone();
+        let id = registered.id.clone();
+        let (sender, receiver) = mpsc::channel();
+        let resumed = thread::spawn(move || {
+            let mut worker = Worker::start(Store::open_at(path).unwrap(), id).unwrap();
+            sender
+                .send(worker.advance_elapsed(Duration::from_millis(100)))
+                .unwrap();
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("restart replayed an already-consumed report")
+            .unwrap();
+        drop(online_action);
+        resumed.join().unwrap();
+    }
+
+    #[test]
+    fn interrupted_desktop_callback_keeps_complete_checkpoint_and_emits_no_report() {
+        let directory = TestDirectory::new("desktop-worker-interrupted-update");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_level_report_fixture(), &mut Numbers(0x1357_9bdf))
+            .unwrap();
+        let original = store.get_desktop(&registered.id).unwrap();
+        let online_action = store.acquire_online_action_lock(&registered.id).unwrap();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        worker.store.inject_next_update_failure();
+
+        assert!(matches!(
+            worker.advance_elapsed(Duration::ZERO),
+            Err(WorkerError::Storage(StorageError::InjectedFailure))
+        ));
+        drop(online_action);
+        let restored = Store::open_at(&directory.0)
+            .unwrap()
+            .get_desktop(&registered.id)
+            .unwrap();
+        assert_eq!(restored.state, original.state);
+        assert_eq!(restored.compatibility.random, original.compatibility.random);
+        assert_eq!(restored.import_metadata, original.import_metadata);
+    }
+
+    #[test]
+    fn desktop_local_only_mark_requires_online_origin_and_actual_advancement() {
+        let directory = TestDirectory::new("desktop-local-only-boundary");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let online = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(1))
+            .unwrap();
+        let mut offline_save = desktop_fixture();
+        offline_save.private = DesktopValidatedPrivateMetadata {
+            passkey: 0,
+            realm: String::new(),
+            endpoint: String::new(),
+            account: String::new(),
+            password: String::new(),
+        };
+        let offline = store
+            .register_desktop(&offline_save, &mut Numbers(2))
+            .unwrap();
+
+        let mut online_worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), online.id.clone()).unwrap();
+        online_worker.advance_elapsed(Duration::ZERO).unwrap();
+        assert_eq!(
+            online_worker
+                .store
+                .get_desktop(&online.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+        online_worker
+            .advance_elapsed(Duration::from_millis(1))
+            .unwrap();
+        assert_eq!(
+            online_worker
+                .store
+                .get_desktop(&online.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+        drop(online_worker);
+
+        let mut offline_worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), offline.id.clone()).unwrap();
+        offline_worker
+            .advance_elapsed(Duration::from_millis(100))
+            .unwrap();
+        assert_eq!(
+            offline_worker
+                .store
+                .get_desktop(&offline.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+    }
+
+    #[test]
+    fn evidenced_spoltog_desktop_scope_stays_online_and_uses_desktop_delivery() {
+        let directory = TestDirectory::new("desktop-evidenced-online");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&evidenced_spoltog_desktop_fixture(), &mut Numbers(7))
+            .unwrap();
+        let inspection = store.managed_inspection(&registered.id).unwrap();
+        assert!(
+            inspection
+                .compatibility
+                .online_eligibility
+                .iter()
+                .all(|eligibility| eligibility.decision == DesktopEligibilityDecision::Eligible)
+        );
+
+        let transport = RejectNetworkTransport;
+        assert_eq!(
+            crate::reporting::submit(&store, &registered.id, &transport)
+                .unwrap()
+                .outcome,
+            DeliveryOutcome::DeliveryFailed
+        );
+        assert_eq!(
+            crate::reporting::set_motto(&mut store, &registered.id, "Evidenced motto", &transport,)
+                .unwrap()
+                .outcome,
+            DeliveryOutcome::DeliveryFailed
+        );
+        assert_eq!(
+            store.profile(&registered.id).unwrap().motto,
+            "Evidenced motto"
+        );
+        assert_eq!(
+            crate::reporting::set_guild(&mut store, &registered.id, "QoD", &transport)
+                .unwrap()
+                .outcome,
+            GuildOutcome::Indeterminate
+        );
+
+        let state = store.get_desktop(&registered.id).unwrap().state;
+        assert_eq!(
+            crate::reporting::submit_desktop_event(
+                &store,
+                &registered.id,
+                &DesktopReportSnapshot {
+                    trigger: DesktopReportTrigger::Level,
+                    state,
+                },
+                &transport,
+            )
+            .unwrap()
+            .outcome,
+            DeliveryOutcome::DeliveryFailed
+        );
+
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        worker.advance_elapsed(Duration::from_millis(1)).unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&registered.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+    }
+
+    #[test]
+    fn desktop_local_only_mark_is_monotonic_and_depends_only_on_progress_evidence() {
+        let authentication = DesktopAuthentication {
+            passkey: 42,
+            realm: "Synthetic Realm".to_owned(),
+            endpoint: "https://synthetic.invalid/".to_owned(),
+            account: "synthetic-account".to_owned(),
+            password: "synthetic-password".to_owned(),
+        };
+        assert!(should_mark_desktop_local_only(&authentication, true, false));
+        assert!(!should_mark_desktop_local_only(&authentication, true, true));
+        let unenrolled_authentication = DesktopAuthentication {
+            passkey: 0,
+            ..authentication.clone()
+        };
+        assert!(!should_mark_desktop_local_only(
+            &unenrolled_authentication,
+            true,
+            false
+        ));
+
+        let directory = TestDirectory::new("desktop-local-only-monotonic");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(3))
+            .unwrap();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        worker.advance_elapsed(Duration::from_millis(100)).unwrap();
+        let first = worker.store.get_desktop(&registered.id).unwrap();
+        assert_eq!(
+            first.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+
+        let RandomContinuation::Desktop644(random) = first.compatibility.random else {
+            panic!("desktop fixture lost desktop random continuation");
+        };
+        let checkpoint = DesktopCallbackCheckpoint {
+            state: first.state,
+            random,
+        };
+        worker
+            .store
+            .replace_desktop_checkpoint(
+                &registered.id,
+                &checkpoint,
+                DesktopCallbackObservation {
+                    credited_milliseconds: 0,
+                    completion_dispatched: false,
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&registered.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+    }
+
+    #[test]
+    fn local_only_desktop_record_rejects_every_online_operation_until_fresh_import() {
+        let directory = TestDirectory::new("desktop-fresh-import-required");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_level_report_fixture(), &mut Numbers(0x1357_9bdf))
+            .unwrap();
+        let transport = RejectNetworkTransport;
+        let mut worker = Worker::start_with_transport(
+            Store::open_at(&directory.0).unwrap(),
+            registered.id.clone(),
+            RejectNetworkTransport,
+        )
+        .unwrap();
+        worker.advance_elapsed(Duration::ZERO).unwrap();
+        drop(worker);
+
+        let assert_fresh_import = |result: Result<_, ReportingError>| {
+            assert!(matches!(
+                result,
+                Err(ReportingError::Storage(
+                    StorageError::FreshDesktopImportRequired
+                ))
+            ));
+        };
+        assert_fresh_import(crate::reporting::submit(&store, &registered.id, &transport));
+        assert_fresh_import(crate::reporting::set_motto(
+            &mut store,
+            &registered.id,
+            "Replacement motto",
+            &transport,
+        ));
+        assert!(matches!(
+            crate::reporting::set_guild(
+                &mut store,
+                &registered.id,
+                "Replacement guild",
+                &transport,
+            ),
+            Err(ReportingError::Storage(
+                StorageError::FreshDesktopImportRequired
+            ))
+        ));
+        let persisted = store.get_desktop(&registered.id).unwrap();
+        assert_eq!(persisted.state.profile.motto, "Synthetic motto");
+        assert_eq!(persisted.state.profile.guild, "Synthetic Guild");
+        assert!(matches!(
+            crate::reporting::submit_desktop_event(
+                &store,
+                &registered.id,
+                &DesktopReportSnapshot {
+                    trigger: DesktopReportTrigger::Level,
+                    state: persisted.state.clone(),
+                },
+                &transport,
+            ),
+            Err(ReportingError::Storage(
+                StorageError::FreshDesktopImportRequired
+            ))
+        ));
+
+        store
+            .connection
+            .execute(
+                "UPDATE desktop_private
+                 SET passkey = 9999, realm = 'Replacement Realm',
+                     endpoint = 'https://replacement.invalid/',
+                     account = 'replacement-account', password = 'replacement-password'
+                 WHERE character_id = ?1",
+                [registered.id.to_string()],
+            )
+            .unwrap();
+        assert_fresh_import(crate::reporting::submit(&store, &registered.id, &transport));
+        assert_eq!(
+            store
+                .get_desktop(&registered.id)
+                .unwrap()
+                .import_metadata
+                .advancement_provenance,
+            DesktopAdvancementProvenance::LocalOnly
+        );
+
+        let fresh = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(0x2468_ace0))
+            .unwrap();
+        assert_eq!(
+            fresh.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+        let assert_outside_evidenced_realm = |result: Result<_, ReportingError>| {
+            assert!(matches!(
+                result,
+                Err(ReportingError::Storage(
+                    StorageError::DesktopOnlineIneligible(
+                        DesktopIneligibilityReason::RealmMismatch
+                    )
+                ))
+            ));
+        };
+        assert_outside_evidenced_realm(crate::reporting::submit(&store, &fresh.id, &transport));
+        assert_outside_evidenced_realm(crate::reporting::set_motto(
+            &mut store,
+            &fresh.id,
+            "Still local",
+            &transport,
+        ));
+        assert!(matches!(
+            crate::reporting::set_guild(&mut store, &fresh.id, "Still local", &transport),
+            Err(ReportingError::Storage(
+                StorageError::DesktopOnlineIneligible(DesktopIneligibilityReason::RealmMismatch)
+            ))
+        ));
+        assert!(matches!(
+            crate::reporting::submit_desktop_event(
+                &store,
+                &fresh.id,
+                &DesktopReportSnapshot {
+                    trigger: DesktopReportTrigger::Act,
+                    state: fresh.state.clone(),
+                },
+                &transport,
+            ),
+            Err(ReportingError::Storage(
+                StorageError::DesktopOnlineIneligible(DesktopIneligibilityReason::RealmMismatch)
+            ))
+        ));
+        let persisted = store.get_desktop(&fresh.id).unwrap();
+        assert_eq!(persisted.state.profile.motto, "Synthetic motto");
+        assert_eq!(persisted.state.profile.guild, "Synthetic Guild");
+        assert!(matches!(
+            crate::reporting::set_motto(&mut store, &fresh.id, "Gnomé", &transport),
+            Err(ReportingError::Storage(
+                StorageError::DesktopOnlineIneligible(
+                    DesktopIneligibilityReason::UnsupportedEncoding
+                )
+            ))
+        ));
+    }
+
+    #[test]
+    fn desktop_worker_rejects_profile_random_mismatch_without_browser_fallback() {
+        let directory = TestDirectory::new("desktop-worker-profile-mismatch");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let browser_random =
+            serde_json::to_string(&RandomContinuation::Browser(fixture_character().seed)).unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE characters SET random_continuation = ?1 WHERE id = ?2",
+                params![browser_random, registered.id.to_string()],
+            )
+            .unwrap();
+        let error =
+            match Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()) {
+                Ok(_) => panic!("mismatched desktop continuation unexpectedly started"),
+                Err(error) => error,
+            };
+        assert!(
+            matches!(
+                error,
+                WorkerError::Storage(StorageError::InvalidCompatibilityState(
+                    "profile and random continuation do not match"
+                ))
+            ),
+            "{error:?}"
+        );
+        assert!(matches!(
+            Store::open_at(&directory.0)
+                .unwrap()
+                .get(&registered.id),
+            Err(StorageError::NotFound(id)) if id == registered.id
+        ));
+    }
+
+    #[test]
+    fn browser_worker_rejects_profile_random_mismatch_without_desktop_fallback() {
+        let directory = TestDirectory::new("browser-worker-profile-mismatch");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let desktop_random = serde_json::to_string(&RandomContinuation::Desktop644(
+            crate::compatibility::DesktopRandomState(0xf00d_cafe),
+        ))
+        .unwrap();
+        store
+            .connection
+            .execute(
+                "UPDATE characters SET random_continuation = ?1 WHERE id = ?2",
+                params![desktop_random, registered.id.to_string()],
+            )
+            .unwrap();
+
+        assert!(matches!(
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id),
+            Err(WorkerError::Storage(
+                StorageError::InvalidCompatibilityState(
+                    "profile and random continuation do not match"
+                )
+            ))
+        ));
     }
 
     #[test]

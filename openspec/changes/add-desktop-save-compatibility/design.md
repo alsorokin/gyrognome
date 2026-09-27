@@ -18,7 +18,8 @@ The supplied 6.4.4 executable has SHA-256
 `fca7602ed8212bcdafa96d5f35c619142c54396ac54e659c156b967edaeba17c`;
 its spell and monster tables match the tagged resources. Its stale Windows
 version resource is not the application version: the operator confirmed 6.4.4
-on its welcome screen. The earlier `v6.2` source tag is useful comparative
+on its welcome screen. The executable hash was reverified without launching it
+on September 25, 2026. The earlier `v6.2` source tag is useful comparative
 evidence but is not an independently established exact binary match.
 
 No executable was launched and no server experiment was performed during
@@ -48,32 +49,37 @@ numeric execution or classic server acceptance.
 
 ## Decisions
 
-### 1. Make independent desktop evidence the first implementation milestone
+### 1. Make source-derived desktop evidence the first implementation milestone
 
-Use a developer-only, network-blocked oracle around pinned desktop source and
-the actual desktop runtime, not the Rust port. Drive synthetic states with
-known random state and controlled callback inputs. Capture semantic checkpoints
-and unsigned report observations. Compare selected load, timer, and report
-transitions with the supplied official executable in an isolated offline
-environment when execution is separately authorized. Keep proprietary compiler
-components and executables outside the repository.
+Use a developer-only reference harness derived from the pinned desktop 6.4.4
+source, separately authored from the Rust production implementation. Drive
+synthetic states with known random state and controlled callback inputs.
+Capture semantic checkpoints and unsigned report observations, then compare
+the production implementation against those fixtures. Separately approved,
+network-blocked execution of the verified official executable may corroborate
+selected load, timer, numeric, and report transitions, but it is not a
+prerequisite for local implementation. Keep proprietary compiler components
+and executables outside the repository.
 
-The initial oracle work must establish Delphi bounded `Random`, `Random64`,
-overflow/range behavior, weighted-stat sampling, integer division, floating
-precision/`Round` at XP thresholds, and byte encoding. A different Pascal
-compiler or a second Rust/JavaScript transcription is not automatically an
-equivalent runtime. If faithful tooling or independent observations cannot be
-obtained, the affected milestone is blocked; do not certify the approximation.
+The initial reference work must cover source-observed bounded `Random`,
+`Random64`, overflow/range behavior, weighted-stat sampling, integer division,
+floating precision/`Round` at XP thresholds, and byte encoding. A second
+Rust/JavaScript transcription does not prove exact Delphi compiler/runtime
+equivalence, so fixture metadata and user-facing documentation must identify
+unverified numeric/random edge behavior. That limitation does not block local
+continuation, but it cannot enable classic online operations or support an
+unqualified exact-runtime claim.
 
-Pin oracle source/build and observation fingerprints in sanitized JSON
-metadata. Record actual and expected callback sequences, not just aggregate
-durations. Preserve existing browser fixture shapes and use a separate desktop
-fixture schema. Extend the existing bridge only at its explicit developer
-boundary; normal builds must not expose fixture injection or synthetic reporting.
+Pin source/build and observation fingerprints in sanitized JSON metadata.
+Record actual and expected callback sequences, not just aggregate durations.
+Preserve existing browser fixture shapes and use a separate desktop fixture
+schema. Extend the existing bridge only at its explicit developer boundary;
+normal builds must not expose fixture injection or synthetic reporting.
 
-Alternative rejected: implementing plausible desktop rules first and treating
-agreement between two ports as proof. It misses the exact runtime assumptions
-that matter for leaderboard compatibility.
+Alternative rejected: treating source-derived agreement as proof of exact
+Delphi runtime equivalence or classic leaderboard compatibility. Local support
+may use the source-derived contract, but online enablement remains independently
+gated.
 
 ### 2. Decode bytes into a narrow validated desktop import model
 
@@ -183,7 +189,8 @@ Capture `l` immediately after level-up effects and before later completion
 effects. Capture `a` within CompleteAct, before dequeue removes the plot command
 and selects the next loading task. Do not reuse the final canonical state as a
 substitute for an intermediate report snapshot. Desktop cinematic/loading
-durations and legacy queues come from the oracle, not browser convenience.
+durations and legacy queues come from pinned source-derived evidence and
+fixtures, not browser convenience.
 
 Schedule desktop workers at their evidenced 100 ms callback cadence rather than
 browser boundary-aligned catch-up. Use actual monotonic elapsed time capped at
@@ -210,6 +217,17 @@ returns safe reason categories, never credentials. Keep existing browser
 gates unchanged and add desktop gates for profile/build identity, adaptation,
 realm, endpoint, credential mode, encoding, operation, and advancement provenance.
 
+Classify adaptations by their effect on the post-load state used by reporting,
+not merely by whether an importer recorded an adaptation. The source-derived
+6.4.4 spelling loop deterministically changes `Innoculate` to `Inoculate` and
+`Tonsilectomy` to `Tonsillectomy` after loading. Treat that
+`load-spelling-patch` marker as equivalent to an already-canonical spelling
+only when differential tests prove identical canonical state and desktop
+request construction after load. The marker remains visible in provenance.
+Do not extend this equivalence to legacy prologue or quest-placeholder
+adaptations, which affect progression state or transitions and remain
+separately evidence-gated. Unknown or combined adaptations fail closed.
+
 Per the operator's explicit decision, local advancement is allowed while
 classic progress reporting is gated. Atomically mark the first such advancement
 as a local-only fork. The mark is monotonic for that managed import. Registration
@@ -217,6 +235,24 @@ or inspection without advancement does not set it. Missing guild-only evidence
 does not by itself fork progress when all required progression evidence passes.
 An ordinary one-shot network failure under passing evidence is not the same
 as gated progression and keeps the existing best-effort policy.
+One-shot identity is the exact persisted request intent, not the broad action
+kind. The live conformance harness may permit a separately approved, bounded
+second motto value after an inconclusive first observation, but it must never
+resend either exact request intent. This diagnostic exception does not add
+automatic retries to production motto handling.
+
+The live handoff's "fresh" requirement means a newly created level-one
+official-client character, not a byte-for-byte untouched initial save. A
+bounded amount of official-client plot progress needed to establish and verify
+the approved control state is acceptable; higher level, extended plot history,
+or multiple quest-history entries remain outside the disposable experiment.
+
+During the bounded normal-time progression stage, every distinct naturally
+generated level report before the first act report is part of the approved
+trace. A later level report is not a retry of an earlier level request because
+its transition snapshot and intent digest differ. The first act report ends the
+required progression trace; neither an exact level intent nor the act intent may
+be replayed.
 
 When evidence becomes available, a fork cannot regain eligibility by toggling
 a flag, reenrolling, replacing credentials, or replaying missed events. Require
@@ -247,10 +283,11 @@ delivery, never proof of normal leaderboard classification.
 
 ### 6. Separate local completion from approval-dependent online enablement
 
-The local milestone includes decoder, profile migration, independently verified
-desktop continuation, safe UI, and a closed-by-default delivery gate. It can be
-useful without any production request. README/help must call it local desktop
-support while classic operations remain unavailable.
+The local milestone includes decoder, profile migration, source-derived desktop
+continuation, safe UI, and a closed-by-default delivery gate. It can be useful
+without any production request. README/help must call it local desktop support,
+disclose that exact Delphi numeric/random edge equivalence is unverified, and
+state that classic operations remain unavailable.
 
 The live milestone requires new explicit approval of realm, disposable
 account/character, operations, real-time bounds, and cleanup. The official
@@ -258,8 +295,9 @@ desktop client creates the disposable identity; stop it before native handoff.
 Do not use existing player saves or run both reporters simultaneously. Match
 real-time progression and observe authentication, operation outcomes, and
 normal-versus-cheater population with bounded polling. Unknown classification,
-ambiguous guild fingerprints, incomplete cleanup, or an unverified import
-adaptation fails the relevant gate.
+ambiguous guild fingerprints, incomplete cleanup, or an adaptation without
+either matching live evidence or an established canonical/protocol equivalence
+fails the relevant gate.
 
 Store only sanitized evidence: source/build identity, field names and unsigned
 synthetic representations, outcome categories, normalized fingerprints, and
@@ -270,9 +308,10 @@ them complete because a dry run succeeds.
 
 ## Risks / Trade-offs
 
-- Unknown Delphi numeric/compiler behavior -> require independent runtime
-  vectors before certifying affected continuation; explicitly block missing
-  evidence instead of selecting a convenient approximation.
+- Unknown Delphi numeric/compiler behavior -> derive local behavior from the
+  pinned source and synthetic differential fixtures, disclose unverified edge
+  equivalence, and never use source-derived agreement to enable classic online
+  operations.
 - Ambiguous legacy load state -> support only evidenced adaptations, including
   default omissions and migration quirks; reject unsupported states safely.
 - No embedded writer version -> separate provenance and target profile;
@@ -292,7 +331,7 @@ them complete because a dry run succeeds.
 
 ## Migration Plan
 
-1. Establish synthetic oracle and browser regression baselines.
+1. Establish source-derived synthetic desktop and browser regression baselines.
 2. Add decoder, typed profile state, transactional browser-store migration,
    and safe projections with all desktop online gates closed.
 3. Enable supported local desktop continuation only after local conformance;
@@ -300,8 +339,10 @@ them complete because a dry run succeeds.
 4. Implement revision-8 request/transport adapters behind scoped gates. Run
    network-blocked negative-path tests before any live experiment.
 5. Obtain separate live approval; enable only operations/import paths backed by
-   matching sanitized passing evidence. If approval or evidence is missing,
-   retain the local milestone and report the online milestone as blocked.
+   matching sanitized passing evidence or a narrowly established
+   canonical/protocol-equivalent load normalization. If approval or evidence is
+   missing, retain the local milestone and report the online milestone as
+   blocked.
 6. For rollback, stop workers and use a user-private pre-migration backup for
    the older binary. Warn that newer progress is absent from that backup.
    Never automatically overwrite current state or coerce desktop characters
@@ -309,9 +350,10 @@ them complete because a dry run succeeds.
 
 ## Open Questions
 
-- Which faithful Delphi tooling and offline observation path is available for
-  the oracle? A missing tool blocks the corresponding evidence task; it does
-  not change the compatibility contract.
+- Which separately approved offline path, if any, should be used to corroborate
+  selected source-derived observations against the verified official
+  executable? Missing corroboration does not block local support, but remains
+  visible as an evidence limitation.
 - Which classic realms and credential modes can demonstrate an acceptable
   HTTPS authentication contract? None is enabled until verified individually.
 - Which response fingerprints and bounded classification observations are

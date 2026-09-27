@@ -1,0 +1,305 @@
+{
+  "format": "gyrognome-desktop-callback-reward-vectors/v1",
+  "source": {
+    "tag": "v6.4.4",
+    "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+    "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24"
+  },
+  "runtimeEquivalence": {
+    "status": "unverified",
+    "officialExecutableCorroboration": "not-run",
+    "localContinuationOnly": true,
+    "classicOnlineEligible": false
+  },
+  "observations": {
+    "callbacks": {
+      "initialTask": {
+        "position": 0,
+        "max": 6000
+      },
+      "clamping": [
+        {
+          "elapsedMs": -50,
+          "result": {
+            "position": 0,
+            "creditedMs": 0,
+            "completionDispatched": false
+          }
+        },
+        {
+          "elapsedMs": 0,
+          "result": {
+            "position": 0,
+            "creditedMs": 0,
+            "completionDispatched": false
+          }
+        },
+        {
+          "elapsedMs": 10000,
+          "result": {
+            "position": 100,
+            "creditedMs": 100,
+            "completionDispatched": false
+          }
+        }
+      ],
+      "fullBarSequence": {
+        "elapsedMsPerCallback": 100,
+        "advancementCallbacks": 60,
+        "afterSixty": {
+          "position": 6000,
+          "creditedMs": 100,
+          "completionDispatched": false
+        },
+        "callbackSixtyOne": {
+          "position": 6000,
+          "creditedMs": 0,
+          "completionDispatched": true
+        }
+      }
+    },
+    "fractionalCredits": [
+      {
+        "taskMaxMs": 5114,
+        "kill": {
+          "credit": 5,
+          "experience": 5,
+          "quest": 5,
+          "plot": 5
+        },
+        "market": {
+          "credit": 5,
+          "experience": 0,
+          "quest": 0,
+          "plot": 5
+        }
+      },
+      {
+        "taskMaxMs": 5508,
+        "kill": {
+          "credit": 5,
+          "experience": 5,
+          "quest": 5,
+          "plot": 5
+        },
+        "market": {
+          "credit": 5,
+          "experience": 0,
+          "quest": 0,
+          "plot": 5
+        }
+      },
+      {
+        "taskMaxMs": 6295,
+        "kill": {
+          "credit": 6,
+          "experience": 6,
+          "quest": 6,
+          "plot": 6
+        },
+        "market": {
+          "credit": 6,
+          "experience": 0,
+          "quest": 0,
+          "plot": 6
+        }
+      }
+    ],
+    "levelUp": {
+      "state": {
+        "level": 2,
+        "stats": {
+          "STR": 12,
+          "CON": 11,
+          "DEX": 10,
+          "INT": 10,
+          "WIS": 8,
+          "CHA": 7,
+          "HP Max": 25,
+          "MP Max": 23
+        },
+        "spells": [
+          {
+            "name": "Slime Finger",
+            "rank": 1
+          }
+        ],
+        "experience": {
+          "position": 0,
+          "max": 1279
+        }
+      },
+      "events": [
+        {
+          "type": "level",
+          "value": 2
+        },
+        {
+          "type": "stat",
+          "name": "HP Max",
+          "amount": 5
+        },
+        {
+          "type": "stat",
+          "name": "MP Max",
+          "amount": 7
+        },
+        {
+          "type": "stat",
+          "name": "INT",
+          "amount": 1
+        },
+        {
+          "type": "stat",
+          "name": "MP Max",
+          "amount": 1
+        },
+        {
+          "type": "spell",
+          "name": "Slime Finger"
+        },
+        {
+          "type": "experience-reset",
+          "position": 0,
+          "max": 1279
+        },
+        {
+          "type": "report",
+          "trigger": "l"
+        }
+      ],
+      "randomSeed": "592146772"
+    },
+    "actTwo": {
+      "state": {
+        "level": 8,
+        "plots": [
+          {
+            "caption": "Prologue",
+            "completed": true
+          },
+          {
+            "caption": "Act I",
+            "completed": true
+          },
+          {
+            "caption": "Act II",
+            "completed": false
+          }
+        ],
+        "plotBar": {
+          "position": 0,
+          "max": 39600,
+          "hint": "Cutscene omitted"
+        },
+        "inventory": [
+          {
+            "name": "Gold",
+            "quantity": 0
+          },
+          {
+            "name": "Ancient Orb of Continuity",
+            "quantity": 1
+          }
+        ],
+        "equipment": [
+          "Stick",
+          "Plate",
+          "Burlap"
+        ],
+        "prizedEquipment": 0
+      },
+      "events": [
+        {
+          "type": "plot-completed",
+          "caption": "Act I"
+        },
+        {
+          "type": "plot-added",
+          "caption": "Act II"
+        },
+        {
+          "type": "item",
+          "name": "Ancient Orb of Continuity"
+        },
+        {
+          "type": "report",
+          "trigger": "a"
+        }
+      ],
+      "randomSeed": "2428528508"
+    },
+    "actThree": {
+      "state": {
+        "level": 8,
+        "plots": [
+          {
+            "caption": "Prologue",
+            "completed": true
+          },
+          {
+            "caption": "Act I",
+            "completed": true
+          },
+          {
+            "caption": "Act II",
+            "completed": true
+          },
+          {
+            "caption": "Act III",
+            "completed": false
+          }
+        ],
+        "plotBar": {
+          "position": 0,
+          "max": 57600,
+          "hint": "Cutscene omitted"
+        },
+        "inventory": [
+          {
+            "name": "Gold",
+            "quantity": 0
+          },
+          {
+            "name": "Ancient Orb of Continuity",
+            "quantity": 1
+          },
+          {
+            "name": "Ancient Orb of Testing",
+            "quantity": 1
+          }
+        ],
+        "equipment": [
+          "Stick",
+          "+2 Banded Studded Buckler",
+          "Burlap"
+        ],
+        "prizedEquipment": 1
+      },
+      "events": [
+        {
+          "type": "plot-completed",
+          "caption": "Act II"
+        },
+        {
+          "type": "plot-added",
+          "caption": "Act III"
+        },
+        {
+          "type": "item",
+          "name": "Ancient Orb of Testing"
+        },
+        {
+          "type": "equipment",
+          "position": 1,
+          "name": "+2 Banded Studded Buckler"
+        },
+        {
+          "type": "report",
+          "trigger": "a"
+        }
+      ],
+      "randomSeed": "4134269969"
+    }
+  }
+}

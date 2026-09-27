@@ -18,12 +18,19 @@ continuation and reporting contract, not just a binary decoder.
   desktop random primitives, callback timing, and report-boundary snapshots.
   Treat 6.2-to-6.4.4 adaptation as an explicitly evidenced migration; reject
   unsupported ambiguous states rather than silently using browser behavior.
-- Establish an independent, network-blocked desktop oracle and synthetic
-  conformance fixtures before implementing the production continuation.
+- Establish source-derived desktop conformance fixtures from the pinned 6.4.4
+  source before implementing production continuation. Use synthetic
+  cross-implementation differential tests, and treat separately approved,
+  network-blocked execution of the verified official executable as optional
+  corroboration rather than a prerequisite for local support.
 - Add revision-8 request construction and allowlisted classic-realm delivery
   with private account authentication where required. Keep each desktop online
   operation disabled until matching local and separately approved disposable
-  live conformance evidence passes. Alpaquil evidence cannot enable it.
+  live conformance evidence passes. Permit a source-derived deterministic load
+  normalization, such as the desktop spelling corrections, to share that
+  operation scope only when equivalence tests prove it produces the same
+  canonical post-load and protocol state. Substantive legacy migrations remain
+  separately gated. Alpaquil evidence cannot enable classic reporting.
 - Allow local advancement while classic reporting is gated. Once advanced in
   that state, an online-originated import remains local-only; later online use
   requires a fresh official-client import rather than accumulated reporting.
@@ -52,8 +59,9 @@ creating an online identity, or sending reports.
   retain the browser contract and add a distinct desktop callback contract.
 - `local-character-runtime`: Atomically register and resume desktop state,
   schedule profile-specific advancement, and gate desktop online delivery.
-- `leaderboard-conformance`: Add independent desktop local and live evidence
-  scoped to source identity, migration path, realm, authentication, and operation.
+- `leaderboard-conformance`: Add source-derived desktop local evidence and
+  separate live evidence scoped to source identity, migration path, realm,
+  authentication, and operation.
 - `opt-in-leaderboard-reporting`: Select protocol and eligibility by profile,
   retaining one-shot delivery, confirmation, and online-action serialization.
 - `online-character-profile`: Import desktop motto/guild values and apply
@@ -71,10 +79,14 @@ must preserve older browser records and private original JSON.
 Desktop decoding needs a bounded zlib dependency and a narrowly scoped Delphi
 stream/list-record reader. A separate developer-only desktop oracle and
 sanitized fixtures complement, rather than replace, the existing browser
-Playwright harness. README/help, fixture-safety checks, simulation/runtime
-tests, and reporting/profile tests must cover the new profile.
+Playwright harness. The local oracle may be source-derived; optional execution
+of the verified official executable can corroborate selected behavior but does
+not block local implementation. README/help, fixture-safety checks,
+simulation/runtime tests, and reporting/profile tests must cover the new
+profile and disclose unverified Delphi numeric/random edge equivalence.
 
 Classic server acceptance, account authentication over HTTPS, Delphi runtime
-numeric behavior, and difficult legacy transitions remain evidence milestones,
-not assumptions that may be marked passing. Production desktop reporting stays
-closed when a milestone or required live approval is unavailable.
+numeric edge equivalence, and difficult legacy transitions remain explicit
+limitations or evidence milestones, not assumptions that may be marked
+passing. Production desktop reporting stays closed when a required live
+milestone or approval is unavailable.
