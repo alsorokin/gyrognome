@@ -17,6 +17,10 @@ name = "gyro"
 path = "src/main.rs"
 
 [[bin]]
+name = "gyrognome"
+path = "src/bin/gyrognome.rs"
+
+[[bin]]
 name = "desktop-live-conformance"
 path = "src/bin/desktop_live_conformance.rs"
 required-features = ["desktop-live-conformance"]

@@ -250,6 +250,8 @@ The service manager must be available for the logged-in user, and
 `gyro` must resolve from its service environment. If it does not, replace
 the unit's `ExecStart=gyro` command with the absolute path to the installed
 binary, reload the user units, and retry.
+The installed `gyrognome` compatibility executable remains available for older
+service files and drop-in overrides; use `gyro` for interactive commands.
 
 Use the CLI lifecycle commands rather than invoking the unit directly; they
 first validate the local character identifier and then delegate to

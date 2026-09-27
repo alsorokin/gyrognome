@@ -70,6 +70,20 @@ fn normal_cli_build_does_not_expose_the_test_only_browser_bridge() {
 }
 
 #[test]
+fn legacy_executable_remains_compatible_with_installed_user_services() {
+    let help = Command::new(env!("CARGO_BIN_EXE_gyrognome"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    assert!(
+        String::from_utf8(help.stdout)
+            .unwrap()
+            .starts_with("Offline Progress Quest compatibility tools\n\nUsage: gyrognome ")
+    );
+}
+
+#[test]
 fn enrollment_activation_is_limited_to_the_interactive_new_guy_command() {
     for source in [
         "src/newguy.rs",
