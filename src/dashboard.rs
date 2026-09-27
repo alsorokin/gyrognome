@@ -1712,9 +1712,9 @@ fn left_pane_constraints(visibility: &PaneVisibility, height: u16) -> [Constrain
 
 fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(format!("Character ID: {}", character.id)),
+        Line::from(format!("ID: {}", character.id)),
         Line::from(format!(
-            "Character age: {}",
+            "Last task elapsed: {}",
             format_elapsed(character.activity.elapsed)
         )),
     ];
@@ -1741,7 +1741,7 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     }
     if let Some(counters) = character.compatibility.measured_since_import {
         lines.push(Line::from(format!(
-            "Measured since import: {} tasks, {} elapsed",
+            "Since import: {} tasks, {} elapsed",
             counters.tasks_completed,
             format_elapsed(counters.elapsed_milliseconds / 1_000)
         )));
@@ -2451,7 +2451,7 @@ mod tests {
                         .iter()
                         .map(|cell| cell.symbol())
                         .collect();
-                    assert!(output.contains("Character ID:"));
+                    assert!(output.contains("ID:"));
                     assert!(output.contains("Last task elapsed:"));
                     assert_eq!(output.contains("Motto:"), !motto.is_empty());
                     assert_eq!(output.contains("Guild:"), !guild.is_empty());
@@ -2504,7 +2504,7 @@ mod tests {
         ));
         assert!(!details.contains("AutomaticLevel:"));
         assert!(!details.contains("Desktop history:"));
-        assert!(details.contains("Measured since import: 3 tasks, 4s elapsed"));
+        assert!(details.contains("Since import: 3 tasks, 4s elapsed"));
         assert!(details.contains("fresh official-client import"));
         assert!(!details.contains("Advancement provenance:"));
         for private in [

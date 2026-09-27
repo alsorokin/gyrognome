@@ -461,7 +461,7 @@ zero units SHALL be omitted and a zero duration SHALL render as `0s`.
 #### Scenario: Viewing online profile details
 
 - **WHEN** a managed character has both a motto and guild designation
-- **THEN** Details displays Character ID, formatted Last task elapsed, Motto,
+- **THEN** Details displays ID, formatted Last task elapsed, Motto,
   and Guild without displaying Quest target
 
 #### Scenario: Viewing one populated profile value
