@@ -10,39 +10,61 @@ simulation.
 
 ### Requirement: Local character registration and persistence
 
-The system SHALL import a valid browser save into a local managed-character
-store and persist its canonical character state, credential-safe online
-profile metadata, original save document, and runtime metadata under the
-invoking user's data directory. Each managed character SHALL have a stable
-local identifier. Profile metadata SHALL be independently updateable without
-overwriting concurrent canonical simulation progress. Invalid imports SHALL
-leave no partially registered character, and a failed state or profile update
-SHALL retain the previous complete persisted value.
+The system SHALL import a valid supported browser or desktop save into the
+invoking user's local managed-character store with a stable identifier. It
+SHALL atomically persist canonical state, compatibility profile, random
+continuation, safe online profile metadata, private credentials, import
+provenance, reporting eligibility history, and runtime metadata. Browser
+registration SHALL continue retaining the original JSON document. Desktop
+registration SHALL retain validated data needed for continuation and
+authentication without retaining a raw binary save or fabricating browser DNA.
+Profile metadata SHALL remain independently updateable without overwriting
+concurrent simulation progress.
+
+Existing browser records SHALL migrate to the browser profile without changing
+their state, random continuation, original JSON, credentials, or identifiers.
+Unknown persisted profile/schema versions SHALL fail explicitly. Invalid
+imports SHALL leave no partial registration; failed updates SHALL retain the
+previous complete value. Desktop private data SHALL receive the same
+user-private storage protections as browser credentials and SHALL be removed
+with the character.
 
 #### Scenario: Registering a valid browser save
 
 - **WHEN** a user registers a valid browser `.pqw` save
-- **THEN** the system creates one managed character with a stable identifier
-  and makes its credential-safe canonical and online profile state available
-  for local inspection
+- **THEN** one managed character with a stable identifier and browser profile
+  is created and its safe canonical/profile state is inspectable
 
 #### Scenario: Rejecting an invalid browser save
 
-- **WHEN** a user attempts to register malformed or invalid browser save data
-- **THEN** the system reports the import error and does not create a managed
-  character or modify an existing one
+- **WHEN** a user registers malformed or invalid browser save data
+- **THEN** an import error is reported without creating or modifying a
+  character
 
 #### Scenario: Recovering after an interrupted update
 
-- **WHEN** runtime persistence is interrupted while recording an advancement
-- **THEN** the managed character remains readable at either its complete
-  pre-advancement state or its complete post-advancement state
+- **WHEN** persistence is interrupted while recording advancement
+- **THEN** the character retains either its complete pre-advancement state or
+  complete post-advancement state, including random continuation and eligibility
 
 #### Scenario: Recovering after an interrupted profile update
 
-- **WHEN** persistence is interrupted while changing motto or guild metadata
-- **THEN** the managed character retains either the complete previous profile
-  or the complete requested profile without corrupting simulation state
+- **WHEN** persistence is interrupted while changing motto or guild
+- **THEN** the complete previous or requested profile remains, without
+  corrupting simulation state
+
+#### Scenario: Registering desktop private data atomically
+
+- **WHEN** a supported desktop save includes online authentication
+- **THEN** state, desktop profile, continuation, and private credentials are
+  stored atomically and safe inspection omits credentials and raw properties
+
+#### Scenario: Migrating an existing browser store
+
+- **WHEN** a pre-profile database is opened by the new runtime
+- **THEN** existing records receive the browser profile without changing their
+  previous simulation, export, or online behavior
+
 ### Requirement: Safe managed-character removal
 
 The local managed-character store SHALL remove every persisted record and
@@ -63,90 +85,85 @@ atomically. It SHALL not remove a character while a local runtime owns it.
 - **WHEN** character removal encounters a storage failure before completion
 - **THEN** the system reports the failure and retains a complete readable
   managed character rather than a partial record
+
 ### Requirement: Controlled offline advancement
 
 The system SHALL advance a running managed character using elapsed time
-measured only by its active local runtime process and SHALL durably record each
-successful resulting state. It SHALL invoke the deterministic simulation
-contract with explicit elapsed durations measured from a monotonic clock. For
-each scheduled update, it SHALL cap contributed elapsed time at the configured
-worker interval and discard excess scheduler-delay time without applying it
-later. Time while the runtime is stopped SHALL NOT be applied as catch-up
-advancement.
+measured only by its active runtime and SHALL durably record each successful
+result. It SHALL supply explicit monotonic elapsed inputs to the selected
+profile. Time while stopped SHALL NOT be applied as catch-up.
 
-The runtime SHALL schedule each update to occur at the earlier of its
-configured worker interval and the completion of the character's active task,
-so that a completed task is durably recorded when it completes rather than at
-the end of the enclosing interval. Each such advancement duration SHALL be a
-whole multiple of the deterministic simulation's bounded tick duration and
-SHALL be at least one such tick, so that the sequence of ticks supplied to the
-simulation, and therefore the resulting canonical state and random
-continuation, are unchanged by this scheduling. The configured worker interval
-SHALL remain an upper bound on any single advancement, and this scheduling
-SHALL NOT increase the total simulated time advanced per unit of real time.
+For browser characters, each update SHALL cap elapsed time at the configured
+worker interval and discard excess scheduler delay permanently. Updates SHALL
+occur at the earlier of the interval and task completion, in whole bounded
+simulation ticks and at least one tick. The interval SHALL remain the maximum
+single advancement. Task-aligned scheduling SHALL preserve total simulated
+time and the browser's canonical/random continuation compared with equivalent
+whole-interval advancement.
+
+For desktop characters, each actual callback SHALL supply at most 100
+milliseconds, discard excess delay, and preserve the full-bar-then-complete
+callback boundary. The runtime SHALL NOT synthesize missed callbacks or
+accelerate callback frequency to drain a full task. Restart SHALL reestablish
+the timing baseline while retaining pending completion. Time spent delayed by
+online delivery SHALL NOT become catch-up advancement.
 
 #### Scenario: Advancing while the runtime is active
 
-- **WHEN** a managed character runtime remains active across one or more
-  advancement intervals
-- **THEN** the system persists each resulting canonical state and exposes the
-  accumulated progression through local inspection
+- **WHEN** a character runtime remains active across advancement intervals
+- **THEN** each successful resulting state is persisted and locally inspectable
 
 #### Scenario: Restarting a stopped runtime
 
-- **WHEN** a managed character runtime is stopped and later started
-- **THEN** the system resumes from the most recently persisted state without
-  applying elapsed downtime
+- **WHEN** a stopped runtime is started later
+- **THEN** it resumes the last persisted profile-specific state without downtime
 
 #### Scenario: Simulation cannot advance a state
 
-- **WHEN** deterministic simulation reports an unsupported transition or other
-  error
-- **THEN** the runtime reports the failure, retains the last successful state,
-  and does not fabricate an advancement result
+- **WHEN** simulation reports an unsupported transition or other error
+- **THEN** the runtime reports it, retains the last successful state, and does
+  not fabricate advancement
 
 #### Scenario: Delayed scheduled update
 
-- **WHEN** a worker callback occurs later than its configured interval because
-  of scheduler delay or machine suspension
-- **THEN** the worker advances by no more than one configured interval and does
-  not apply the discarded excess on a later callback
+- **WHEN** scheduler delay or suspension postpones a callback
+- **THEN** elapsed contribution is capped to the browser worker interval or
+  desktop 100-millisecond cap, with no later repayment
 
 #### Scenario: Unrepresentable elapsed duration
 
-- **WHEN** an explicit worker advancement duration cannot be represented in
-  milliseconds
-- **THEN** the runtime reports an elapsed-duration error and retains the last
-  successfully persisted state
+- **WHEN** an explicit worker duration cannot be represented in milliseconds
+- **THEN** an elapsed-duration error leaves the last successful state intact
 
 #### Scenario: Recording a task completion when it occurs
 
-- **WHEN** the active task would complete before the configured worker interval
-  elapses
-- **THEN** the runtime advances only as far as that task's completion and
-  durably records the resulting state, so the next persisted state reflects the
-  following task rather than the completed one
+- **WHEN** a browser task completes before the worker interval elapses
+- **THEN** the runtime advances to that completion and durably records the
+  following task rather than waiting for the enclosing interval
 
 #### Scenario: Advancing a task longer than the worker interval
 
-- **WHEN** the active task would not complete within the configured worker
-  interval
-- **THEN** the runtime advances by one configured interval and leaves the task
-  active
+- **WHEN** a browser task does not complete within the worker interval
+- **THEN** the runtime advances one interval and leaves the task active
 
 #### Scenario: Preserving progression under boundary-aligned scheduling
 
-- **WHEN** a runtime advances a character across one or more task completions
-  using task-aligned scheduling, and the same starting state is advanced across
-  the same total duration using only whole worker intervals
-- **THEN** both produce the same canonical state and random continuation
+- **WHEN** a browser character advances across task completions with
+  task-aligned scheduling and separately for the same total in whole intervals
+- **THEN** canonical state and random continuation match
 
 #### Scenario: Active task with no remaining time
 
-- **WHEN** the active task is already complete or its remaining time is shorter
-  than the simulation's bounded tick duration
-- **THEN** the runtime still advances by at least one whole tick rather than
+- **WHEN** a browser task is already full or has less than one bounded tick left
+- **THEN** the runtime still supplies at least one whole tick rather than
   scheduling a zero-duration update
+
+#### Scenario: Persisting a full desktop bar
+
+- **WHEN** a desktop callback fills its task bar
+- **THEN** that pending-completion state is durable and only the next actual
+  callback dispatches completion
+
 ### Requirement: Exclusive character ownership
 
 The system SHALL ensure that no more than one local runtime process owns a
@@ -167,6 +184,7 @@ database repair.
 - **WHEN** the owning runtime process exits unexpectedly
 - **THEN** a later start can acquire ownership and resume from the last
   successfully persisted state
+
 ### Requirement: User-service lifecycle controls
 
 The system SHALL provide command-line operations to start, stop, inspect
@@ -192,59 +210,84 @@ character or user service cannot be managed.
 - **WHEN** a user requests a managed character's runtime status
 - **THEN** the system reports its identifier, persisted character identity, and
   whether its local runtime service currently owns it
+
 ### Requirement: Local-only runtime boundary
 
 The runtime SHALL store and operate character data locally, except that an
-active online managed character SHALL make one best-effort request to the
-official leaderboard endpoint for each persisted browser-equivalent level-up
-or act-completion report event. Each automatic report SHALL include the
-character's currently persisted motto. The runtime SHALL persist the
-corresponding canonical state before attempting delivery, SHALL serialize the
-delivery with other online actions for that character, SHALL not queue or
-retry a failed automatic delivery, and SHALL continue advancing after a
-delivery failure. Offline characters SHALL never report. Commands and
-diagnostic output SHALL NOT expose browser save passkeys or raw unrecognized
-save fields.
+eligible active online character SHALL attempt one request to its verified
+official endpoint for each persisted profile-equivalent level-up or
+act-completion event. Each report SHALL use its exact transition snapshot and
+the current persisted motto. State SHALL be persisted before delivery, online
+actions SHALL be serialized, failed delivery SHALL NOT be queued or retried,
+and local advancement SHALL continue after failure. Offline and gated desktop
+characters SHALL never report. Commands and diagnostics SHALL NOT expose
+passkeys, account logins/passwords, authenticated URLs, or raw save fields.
 
 #### Scenario: Reporting persisted online progression
 
-- **WHEN** an active online managed character persists an advancement that
-  emits a level-up or act-completion report event
-- **THEN** the runtime sends one corresponding browser-compatible report with
-  the current persisted motto to the official leaderboard endpoint after the
-  state is persisted
+- **WHEN** an eligible online runtime persists a level-up or act-completion
+  event
+- **THEN** it attempts one profile-compatible report with the current motto
+  after persistence
 
 #### Scenario: Changing a motto near an automatic report
 
-- **WHEN** a foreground motto action and an automatic report contend for the
-  same character's online-action boundary
-- **THEN** their requests are sent in acquisition order and the later request
-  uses the profile state established before its snapshot
+- **WHEN** a motto action and automatic report contend for the online boundary
+- **THEN** requests follow acquisition order and the later request uses the
+  profile state established before its snapshot
 
 #### Scenario: Running a managed online character
 
-- **WHEN** a user starts a locally managed character that originated from an
-  online browser save
-- **THEN** the runtime advances it locally, sends only its persisted level-up
-  and act-completion reports, and does not display its passkey
+- **WHEN** a user starts an eligible character imported from an online save
+- **THEN** it advances locally and sends only persisted level/act reports,
+  without displaying credentials
 
 #### Scenario: Running a managed offline character
 
-- **WHEN** a user starts a locally managed character without an online
-  credential
-- **THEN** the runtime advances it locally without making a network request or
-  displaying a passkey
+- **WHEN** a user starts a character without online credentials
+- **THEN** it advances locally with no network requests or credential exposure
 
 #### Scenario: Failing automatic report delivery
 
-- **WHEN** an automatic report cannot be delivered or is rejected by the
-  endpoint
-- **THEN** the runtime preserves the persisted progression and profile,
-  does not retry or queue the report, and continues later advancement
+- **WHEN** delivery fails or is rejected
+- **THEN** persisted progress/profile state remains intact, no report is queued
+  or retried, and later local advancement continues
 
 #### Scenario: Invoking an explicit report submission
 
-- **WHEN** an operator invokes a supported foreground report or online profile
-  action for an eligible managed character
-- **THEN** that action may contact the official leaderboard endpoint without
-  stopping an active runtime or exposing credentials
+- **WHEN** an operator invokes a supported report or profile action for an
+  eligible character
+- **THEN** it can contact the verified official endpoint without stopping the
+  runtime or exposing credentials
+
+### Requirement: Durable desktop local-only advancement provenance
+
+An online-originated desktop import SHALL be allowed to advance locally while
+required classic progress-reporting evidence is unavailable. Its first
+successful advancement under that gate SHALL atomically and durably mark it as
+local-only. This restriction SHALL survive restart and later evidence updates
+and SHALL disable every online operation for that managed import. Inspection,
+registration, and startup without advancement SHALL NOT themselves mark a fork.
+
+Later online use SHALL require a fresh supported official-client import under
+matching passing evidence. The existing advanced record SHALL NOT be reset,
+reenrolled, or made eligible by replacing credentials or clearing a flag.
+Reports accumulated during gated advancement SHALL never be submitted.
+
+#### Scenario: Advancing before classic evidence passes
+
+- **WHEN** an online desktop character first advances while progress reporting
+  is gated
+- **THEN** its new state and local-only provenance are committed together and
+  no request is sent
+
+#### Scenario: Installing evidence after local advancement
+
+- **WHEN** matching evidence becomes available for a previously forked import
+- **THEN** it remains local-only and the operator is told to use a fresh
+  official-client import rather than report its accumulated state
+
+#### Scenario: Inspecting without advancing
+
+- **WHEN** a desktop save is inspected or registered but never advanced
+- **THEN** no local-only fork is recorded solely because evidence is absent

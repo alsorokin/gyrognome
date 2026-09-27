@@ -84,6 +84,7 @@ character is not registered.
   collapsed
 - **THEN** Adventure displays only the non-bold current quest with the
   `Current quest:` label
+
 ### Requirement: Recent task update indicator
 
 The dashboard SHALL display character stats in its header alongside the
@@ -133,6 +134,7 @@ completion interval.
   content on one row
 - **THEN** it renders stats on a second header row while retaining the recent
   task update indicator
+
 ### Requirement: Collapsible dashboard panes
 
 The full dashboard SHALL let the user independently collapse and expand the
@@ -210,6 +212,7 @@ view for terminals that do not use the full layout.
 
 - **WHEN** the terminal is below the full-layout width threshold
 - **THEN** the dashboard continues to render its compact character view
+
 ### Requirement: Predicted current-task progress
 
 The dashboard SHALL display a predicted position for the current task progress
@@ -286,6 +289,7 @@ percentages it did not draw.
   for
 - **THEN** the dashboard displays the currently predicted percentage instead of
   replaying the intermediate percentages
+
 ### Requirement: Live persisted-state refresh
 
 The dashboard SHALL refresh its displayed managed-character state, online
@@ -354,6 +358,7 @@ online-profile interface while leaving simulation ownership unchanged.
   prediction was already anchored to
 - **THEN** the dashboard continues to display a full task bar and separates its
   next triggered read from the previous one by at least the settling interval
+
 ### Requirement: Lifecycle controls
 
 The dashboard SHALL expose keyboard actions to start, stop, and recover the
@@ -374,6 +379,7 @@ failures in the dashboard without exiting.
   unavailable or the runtime cannot start
 - **THEN** the dashboard displays the error and preserves the most recently
   displayed credential-safe character state
+
 ### Requirement: Terminal-safe interaction
 
 The dashboard SHALL provide visible keyboard help and let the user quit through
@@ -391,60 +397,56 @@ interrupted lifecycle action.
 - **WHEN** terminal setup, input, or rendering fails after interactive mode was
   entered
 - **THEN** the system restores the terminal before reporting the error
+
 ### Requirement: Credential-safe local-only presentation
 
-The dashboard SHALL never display browser passkeys, raw browser save documents,
-raw endpoint response bodies, or unrecognized raw save fields. It SHALL provide
-an immediate manual-brag action and editable motto and guild actions for an
-eligible managed character through the official leaderboard endpoint. Motto
-and guild editors SHALL show the current persisted value, accept printable
-non-control Unicode text, use Enter to submit, and use Escape to cancel.
-Submitting an empty guild editor value SHALL request leaving the current guild;
-there SHALL be no separate guild-leave action. The dashboard SHALL show only
-credential-safe categorized outcomes. Dashboard refresh, navigation, rendering,
-and lifecycle actions SHALL NOT independently make HTTP requests or report
-leaderboard progress.
+The dashboard SHALL never display passkeys, account logins/passwords, raw save
+documents/properties, signed/authenticated endpoint URLs, raw responses, or
+unrecognized raw fields. It SHALL provide immediate manual brag and editable
+motto/guild actions for an eligible character through its approved official
+endpoint. Editors SHALL show current persisted values, accept printable
+non-control Unicode input, use Enter to submit, and Escape to cancel. Profile
+encoding restrictions SHALL be enforced before persistence or transport.
+Empty guild input SHALL request leaving; no separate leave action is needed.
+Only safe categorized outcomes SHALL be shown. Refresh, navigation, rendering,
+and lifecycle actions SHALL NOT independently issue HTTP requests.
 
 #### Scenario: Bragging from the dashboard
 
-- **WHEN** an operator invokes the dashboard manual-brag action for an eligible
-  inactive managed character
-- **THEN** the dashboard immediately sends one browser-compatible manual-brag
-  report and displays a credential-safe delivery outcome
+- **WHEN** an operator invokes manual brag for an eligible inactive character
+- **THEN** one profile-compatible manual report is immediately attempted and a
+  safe delivery outcome is displayed
 
 #### Scenario: Changing a motto from the dashboard
 
-- **WHEN** an operator opens the motto editor, changes or clears its value, and
-  submits it for an eligible character
-- **THEN** the dashboard performs one motto-change action, refreshes the
-  displayed profile, and shows a credential-safe outcome
+- **WHEN** an eligible character's valid motto edit is submitted or cleared
+- **THEN** one motto action is performed, the displayed profile is refreshed,
+  and a safe outcome is shown
 
 #### Scenario: Submitting a guild designation from the dashboard
 
-- **WHEN** an operator submits a non-empty or empty guild designation for an
-  eligible character
-- **THEN** the dashboard performs one guild action, refreshes the displayed
-  profile, and shows a credential-safe categorized outcome
+- **WHEN** valid empty or non-empty guild input is submitted for an eligible
+  character
+- **THEN** one guild action is performed, the displayed profile is refreshed,
+  and a safe category is shown
 
 #### Scenario: Cancelling a profile editor
 
-- **WHEN** an operator presses Escape while editing a motto or guild
-- **THEN** the dashboard closes the editor without changing state or sending a
-  request
+- **WHEN** an operator presses Escape in a motto or guild editor
+- **THEN** it closes without state changes or requests
 
 #### Scenario: Viewing an online-originated character
 
-- **WHEN** a user opens the dashboard for a character imported from an online
-  browser save
-- **THEN** the dashboard shows only its credential-safe canonical state,
-  profile metadata, and local service status without exposing the passkey or
-  making a network request until the operator invokes an explicit online action
+- **WHEN** a character imported from an online browser or desktop save is opened
+- **THEN** only safe canonical/profile state and local status are shown,
+  without credentials or any request until an explicit online action
 
 #### Scenario: Refreshing without bragging
 
-- **WHEN** the dashboard refreshes, renders, navigates, or executes a lifecycle
-  action without the operator invoking an explicit online action
+- **WHEN** the dashboard refreshes, renders, navigates, or performs a lifecycle
+  action without an explicit online action
 - **THEN** it sends no leaderboard request
+
 ### Requirement: Concise profile and timing details
 
 The full dashboard Details pane SHALL omit the Quest target line. It SHALL
@@ -481,3 +483,26 @@ zero units SHALL be omitted and a zero duration SHALL render as `0s`.
 
 - **WHEN** Last task elapsed is zero
 - **THEN** the dashboard displays `0s`
+
+### Requirement: Visible compatibility and eligibility
+
+The dashboard SHALL display the persisted continuation profile and safe
+online-operation eligibility, including the reason for classic conformance
+gating or local-only provenance and the fresh-import recovery instruction.
+It SHALL distinguish unavailable desktop history from counters measured since
+import. Profile selection SHALL come from persisted state, not display labels.
+Task-bar prediction SHALL NOT dispatch completion, create report eligibility,
+or replace a pending desktop full-bar state with an assumed next task.
+
+#### Scenario: Viewing a desktop local-only fork
+
+- **WHEN** an online-originated desktop import has advanced while reporting
+  was gated
+- **THEN** the dashboard shows local-only status, disables online actions, and
+  explains that later online use requires a fresh official-client import
+
+#### Scenario: Rendering a pending desktop completion
+
+- **WHEN** a desktop task is full but its completion callback is not persisted
+- **THEN** the display holds the full bar without fabricating rewards, task
+  counts, next activity, or reports
