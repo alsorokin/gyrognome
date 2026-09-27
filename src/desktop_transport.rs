@@ -5,6 +5,7 @@ use thiserror::Error;
 use url::Url;
 
 const MAX_RESPONSE_BYTES: u64 = 16 * 1024;
+const MAX_PUBLIC_PROFILE_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopTransportError {
@@ -117,6 +118,70 @@ fn resolve_from_mappings(
         endpoint,
         authentication,
     })
+}
+
+pub fn fetch_verified_desktop_public_profile(
+    target: &VerifiedDesktopEndpoint,
+    name: &str,
+) -> Result<String, DesktopTransportError> {
+    fetch_verified_desktop_public_profile_with(target, name, |endpoint| {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .https_only(true)
+            .max_redirects(0)
+            .http_status_as_error(false)
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
+            .into();
+        let mut response = agent
+            .get(endpoint.as_str())
+            .call()
+            .map_err(|_| DesktopTransportError::DeliveryFailed)?;
+        let status = response.status().as_u16();
+        let redirect = if (300..400).contains(&status) {
+            response
+                .headers()
+                .get("location")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| Url::parse(value).ok())
+        } else {
+            None
+        };
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .as_reader()
+            .take(MAX_PUBLIC_PROFILE_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| DesktopTransportError::DeliveryFailed)?;
+        Ok(DesktopHttpResponse {
+            status,
+            redirect,
+            body,
+        })
+    })
+}
+
+fn fetch_verified_desktop_public_profile_with(
+    target: &VerifiedDesktopEndpoint,
+    name: &str,
+    fetch_once: impl FnOnce(&Url) -> Result<DesktopHttpResponse, DesktopTransportError>,
+) -> Result<String, DesktopTransportError> {
+    let mut endpoint = target.endpoint.clone();
+    endpoint.query_pairs_mut().append_pair("name", name);
+    let response = fetch_once(&endpoint)?;
+    if response.redirect.is_some() || !(200..300).contains(&response.status) {
+        return Err(
+            if response.redirect.is_some() || (300..400).contains(&response.status) {
+                DesktopTransportError::RedirectRejected
+            } else {
+                DesktopTransportError::DeliveryFailed
+            },
+        );
+    }
+    if response.body.len() as u64 > MAX_PUBLIC_PROFILE_BYTES {
+        return Err(DesktopTransportError::DeliveryFailed);
+    }
+    String::from_utf8(response.body).map_err(|_| DesktopTransportError::DeliveryFailed)
 }
 
 pub struct DesktopHttpRequest<'a> {
@@ -430,5 +495,63 @@ mod tests {
             assert!(!credentials_debug.contains(sensitive));
             assert!(!error.contains(sensitive));
         }
+    }
+
+    #[test]
+    fn public_profile_fetch_is_credential_free_bounded_and_redirect_closed() {
+        let target =
+            resolve_from_mappings(VERIFIED.realm, VERIFIED.saved_endpoint, &[VERIFIED]).unwrap();
+        let body = b"<table>public profile</table>".to_vec();
+        assert_eq!(
+            fetch_verified_desktop_public_profile_with(&target, "Kenja bob", |endpoint| {
+                assert!(endpoint.username().is_empty());
+                assert!(endpoint.password().is_none());
+                assert_eq!(
+                    endpoint
+                        .query_pairs()
+                        .find(|(key, _)| key == "name")
+                        .unwrap()
+                        .1,
+                    "Kenja bob"
+                );
+                Ok(DesktopHttpResponse {
+                    status: 200,
+                    redirect: None,
+                    body: body.clone(),
+                })
+            })
+            .unwrap(),
+            "<table>public profile</table>"
+        );
+
+        assert_eq!(
+            fetch_verified_desktop_public_profile_with(&target, "Kenjabob", |_| {
+                Ok(DesktopHttpResponse {
+                    status: 200,
+                    redirect: None,
+                    body: vec![b'x'; MAX_PUBLIC_PROFILE_BYTES as usize + 1],
+                })
+            })
+            .unwrap_err(),
+            DesktopTransportError::DeliveryFailed
+        );
+        assert_eq!(
+            fetch_verified_desktop_public_profile_with(&target, "Kenjabob", |_| {
+                Ok(DesktopHttpResponse {
+                    status: 302,
+                    redirect: Some(Url::parse("https://other.synthetic.invalid/profile").unwrap()),
+                    body: Vec::new(),
+                })
+            })
+            .unwrap_err(),
+            DesktopTransportError::RedirectRejected
+        );
+        assert_eq!(
+            fetch_verified_desktop_public_profile_with(&target, "Kenjabob", |_| {
+                Err(DesktopTransportError::DeliveryFailed)
+            })
+            .unwrap_err(),
+            DesktopTransportError::DeliveryFailed
+        );
     }
 }

@@ -23,6 +23,10 @@ use crate::{
     },
     desktop_callback::DesktopCallbackCheckpoint,
     desktop_evidence::DESKTOP_ONLINE_IMPLEMENTATION_ID,
+    desktop_fingerprint::{
+        DESKTOP_RESPONSE_FINGERPRINT_VERSION, DesktopGuildFingerprintValues,
+        normalized_response_fingerprint,
+    },
     desktop_protocol::{
         DesktopAccountAuthentication, DesktopReportOperation, guild_request, report,
         report_for_snapshot,
@@ -139,6 +143,7 @@ struct EvidencePayload {
     observed_on: String,
     source_identity: SourceIdentity,
     implementation_identity: String,
+    response_fingerprint_normalization: String,
     target_profile: CompatibilityProfile,
     import_path: DesktopImportMetadata,
     realm: String,
@@ -784,7 +789,7 @@ fn deliver_guild(
 ) -> Result<(), DesktopLiveExperimentError> {
     let response = deliver(context, &query)?;
     let fingerprint =
-        response_fingerprint(context, &response.body, &[prior_designation, designation]);
+        guild_response_fingerprint(context, &response.body, prior_designation, designation);
     let response_category = response_category(response.status, &response.body);
     if !(200..=299).contains(&response.status) {
         context.observations.push(OperationObservation {
@@ -1073,7 +1078,7 @@ fn response_fingerprint(context: &LiveContext, body: &[u8], submitted_values: &[
         context.authorization.as_str(),
         passkey.as_str(),
     ];
-    normalized_fingerprint(
+    normalized_response_fingerprint(
         body,
         sensitive_values
             .into_iter()
@@ -1081,18 +1086,23 @@ fn response_fingerprint(context: &LiveContext, body: &[u8], submitted_values: &[
     )
 }
 
-fn normalized_fingerprint<'a>(
+fn guild_response_fingerprint(
+    context: &LiveContext,
     body: &[u8],
-    sensitive_values: impl IntoIterator<Item = &'a str>,
+    prior_guild: &str,
+    submitted_guild: &str,
 ) -> String {
-    let text = String::from_utf8_lossy(body);
-    let normalized = sensitive_values
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .fold(text.into_owned(), |value, sensitive| {
-            value.replace(sensitive, "<redacted>")
-        });
-    sha256(normalized.as_bytes())
+    let passkey = context.save.private.passkey.to_string();
+    DesktopGuildFingerprintValues {
+        character_name: &context.name,
+        account: &context.save.private.account,
+        password: &context.save.private.password,
+        authorization: &context.authorization,
+        passkey: &passkey,
+        prior_guild,
+        submitted_guild,
+    }
+    .fingerprint(body)
 }
 
 fn write_evidence(
@@ -1111,6 +1121,7 @@ fn write_evidence(
             config_dfm_sha256: CONFIG_DFM_SHA256.to_owned(),
         },
         implementation_identity: DESKTOP_ONLINE_IMPLEMENTATION_ID.to_owned(),
+        response_fingerprint_normalization: DESKTOP_RESPONSE_FINGERPRINT_VERSION.to_owned(),
         target_profile: CompatibilityProfile::Desktop644,
         import_path: DesktopImportMetadata::from_validated(&context.save.adaptations),
         realm: REALM.to_owned(),
@@ -1264,9 +1275,12 @@ mod tests {
 
     #[test]
     fn guild_fingerprint_removes_designations() {
-        let first = normalized_fingerprint(b"Accepted Old Guild Panda!", ["Old Guild", "Panda!"]);
-        let second =
-            normalized_fingerprint(b"Accepted Other Guild Other!", ["Other Guild", "Other!"]);
+        let first =
+            normalized_response_fingerprint(b"Accepted Old Guild Panda!", ["Old Guild", "Panda!"]);
+        let second = normalized_response_fingerprint(
+            b"Accepted Other Guild Other!",
+            ["Other Guild", "Other!"],
+        );
         assert_eq!(first, second);
     }
 
@@ -1322,7 +1336,7 @@ mod tests {
 
     #[test]
     fn response_metadata_is_sanitized_and_coarse() {
-        let fingerprint = normalized_fingerprint(
+        let fingerprint = normalized_response_fingerprint(
             b"Accepted SecretMotto for SecretCharacter",
             ["SecretMotto", "SecretCharacter"],
         );

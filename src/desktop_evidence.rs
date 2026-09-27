@@ -13,6 +13,7 @@ use crate::{
     desktop_eligibility::{
         DesktopCredentialMode, DesktopEligibilityEvidence, DesktopOnlineOperation,
     },
+    desktop_fingerprint::DESKTOP_RESPONSE_FINGERPRINT_VERSION,
     desktop_rules::{CONFIG_DFM_SHA256, MAIN_PAS_SHA256, SOURCE_COMMIT, SOURCE_TAG},
     fixtures::validate_fixture,
 };
@@ -20,7 +21,7 @@ use crate::{
 pub const DESKTOP_EVIDENCE_FORMAT: &str = "gyrognome-desktop-live-evidence/v2";
 pub const DESKTOP_ONLINE_IMPLEMENTATION_ID: &str = "desktop-online-contract/v1";
 pub const PRODUCTION_DESKTOP_EVIDENCE_INTEGRITY: &str =
-    "09e5fc9e2de14635851208b5a085ecebf9404242ffd1d6ed268f16001096a1de";
+    "edd7f9aa16b5be4f4a695a12d417e3505e55aeb5d5d68b180b8d41f16a3860f1";
 const PRODUCTION_DESKTOP_EVIDENCE: &str =
     include_str!("../tests/fixtures/desktop-online-evidence.json");
 
@@ -129,6 +130,7 @@ struct DesktopEvidenceImportPath {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct DesktopGuildResponseEvidence {
+    normalization: String,
     join_accepted_fingerprint_sha256: String,
     rejected_fingerprint_sha256: String,
     leave_accepted_fingerprint_sha256: String,
@@ -194,6 +196,7 @@ pub fn validate_desktop_evidence(
     }
     if envelope.payload.operations.is_empty()
         || envelope.payload.operations.len() > 5
+        || envelope.payload.guild_responses.normalization != DESKTOP_RESPONSE_FINGERPRINT_VERSION
         || ![
             &envelope
                 .payload
@@ -251,8 +254,9 @@ pub(crate) fn production_desktop_evidence_is_valid() -> bool {
 }
 
 pub(crate) fn production_guild_response_fingerprints()
--> Option<(&'static str, &'static str, &'static str)> {
+-> Option<(&'static str, &'static str, &'static str, &'static str)> {
     production_desktop_evidence_is_valid().then_some((
+        DESKTOP_RESPONSE_FINGERPRINT_VERSION,
         "f5a48b1c0f296b4e391d0f26736ee902b56daed589064898dd7c2f9279d6c115",
         "3d01c41d894571762aed5d08d4427e2b4d33a9f4a15e8153c72f1c3152984b71",
         "8dd3a69a69f617062731571d8dace6974aecd303eb4320af84d2308fd75d4667",
@@ -352,6 +356,7 @@ mod tests {
             credential_mode: DesktopCredentialMode::AccountPassword,
             operations: vec![DesktopOnlineOperation::ManualBrag],
             guild_responses: DesktopGuildResponseEvidence {
+                normalization: DESKTOP_RESPONSE_FINGERPRINT_VERSION.to_owned(),
                 join_accepted_fingerprint_sha256: "1".repeat(64),
                 rejected_fingerprint_sha256: "2".repeat(64),
                 leave_accepted_fingerprint_sha256: "3".repeat(64),

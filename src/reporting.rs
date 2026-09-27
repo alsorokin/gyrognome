@@ -1,5 +1,6 @@
 //! Credential-safe leaderboard report delivery.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -7,9 +8,10 @@ use url::Url;
 use crate::{
     compatibility::CompatibilityProfile,
     desktop_eligibility::DesktopOnlineOperation,
+    desktop_fingerprint::DesktopGuildFingerprintValues,
     desktop_profile::{
         DesktopGuildOperation, DesktopGuildOutcome, DesktopGuildResponseRules,
-        apply_desktop_guild_action,
+        apply_desktop_guild_action, public_guild,
     },
     desktop_protocol::{
         DesktopAccountAuthentication, DesktopReportOperation,
@@ -20,7 +22,7 @@ use crate::{
     desktop_transport::{
         DesktopHttpResponse, DesktopTransportCredentials, DesktopTransportError,
         VerifiedDesktopEndpoint, deliver_verified_desktop_request,
-        resolve_verified_desktop_endpoint,
+        fetch_verified_desktop_public_profile, resolve_verified_desktop_endpoint,
     },
     fixtures::{EnrollmentEvidenceError, validate_bundled_enrollment_evidence},
     guild::{GuildOutcome, GuildResponseRules},
@@ -123,6 +125,14 @@ pub trait GuildTransport {
     ) -> Result<DesktopHttpResponse, DesktopTransportError> {
         Err(DesktopTransportError::DeliveryFailed)
     }
+
+    fn desktop_public_guild(
+        &self,
+        _target: &VerifiedDesktopEndpoint,
+        _name: &str,
+    ) -> Result<Option<String>, DesktopTransportError> {
+        Err(DesktopTransportError::DeliveryFailed)
+    }
 }
 
 pub struct HttpsTransport;
@@ -163,6 +173,15 @@ impl GuildTransport for HttpsTransport {
         credentials: &DesktopTransportCredentials,
     ) -> Result<DesktopHttpResponse, DesktopTransportError> {
         deliver_verified_desktop_request(target, encoded_query, credentials)
+    }
+
+    fn desktop_public_guild(
+        &self,
+        target: &VerifiedDesktopEndpoint,
+        name: &str,
+    ) -> Result<Option<String>, DesktopTransportError> {
+        let page = fetch_verified_desktop_public_profile(target, name)?;
+        public_guild(&page, name).ok_or(DesktopTransportError::DeliveryFailed)
     }
 }
 
@@ -804,6 +823,14 @@ fn set_desktop_guild(
         &target.authentication.account,
         &target.authentication.password,
     );
+    let authorization = format!(
+        "Basic {}",
+        STANDARD.encode(format!(
+            "{}:{}",
+            target.authentication.account, target.authentication.password
+        ))
+    );
+    let passkey = target.authentication.passkey.to_string();
     let operation = if designation.is_empty() {
         DesktopGuildOperation::Leave
     } else {
@@ -814,12 +841,25 @@ fn set_desktop_guild(
         &mut target.state.profile.clone(),
         Some(designation),
         |prior, submitted| {
+            let dynamic_values = DesktopGuildFingerprintValues {
+                character_name: &target.identity.name,
+                account: &target.authentication.account,
+                password: &target.authentication.password,
+                authorization: &authorization,
+                passkey: &passkey,
+                prior_guild: prior,
+                submitted_guild: submitted,
+            };
             transport
                 .guild_desktop(&endpoint, &request.encoded_query(), &credentials)
-                .map(|response| rules.classify(response.status, &response.body, prior, submitted))
+                .map(|response| rules.classify(response.status, &response.body, &dynamic_values))
                 .unwrap_or(DesktopGuildOutcome::Indeterminate)
         },
     )?;
+    let (desktop_outcome, reconciled_guild) =
+        reconcile_desktop_guild_outcome(desktop_outcome, designation, || {
+            transport.desktop_public_guild(&endpoint, &target.identity.name)
+        });
     let outcome = match desktop_outcome {
         DesktopGuildOutcome::Accepted => GuildOutcome::Accepted,
         DesktopGuildOutcome::Rejected => GuildOutcome::Rejected,
@@ -829,13 +869,38 @@ fn set_desktop_guild(
     };
     if outcome == GuildOutcome::Accepted {
         let mut profile = target.profile;
-        profile.guild = designation.to_owned();
+        profile.guild = reconciled_guild.unwrap_or_else(|| designation.to_owned());
         store.replace_profile(id, &profile)?;
     }
     Ok(GuildResult {
         identity: target.identity,
         outcome,
     })
+}
+
+fn reconcile_desktop_guild_outcome(
+    outcome: DesktopGuildOutcome,
+    submitted: &str,
+    observe_public_guild: impl FnOnce() -> Result<Option<String>, DesktopTransportError>,
+) -> (DesktopGuildOutcome, Option<String>) {
+    if outcome != DesktopGuildOutcome::Indeterminate {
+        return (outcome, None);
+    }
+    let Ok(observed) = observe_public_guild() else {
+        return (outcome, None);
+    };
+    let matches = match &observed {
+        Some(guild) => !submitted.is_empty() && guild.eq_ignore_ascii_case(submitted),
+        None => submitted.is_empty(),
+    };
+    matches
+        .then(|| {
+            (
+                DesktopGuildOutcome::Accepted,
+                Some(observed.unwrap_or_default()),
+            )
+        })
+        .unwrap_or((outcome, None))
 }
 
 fn deliver_desktop_report(
@@ -860,7 +925,7 @@ fn deliver_desktop_report(
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::RefCell,
+        cell::{Cell, RefCell},
         fs,
         path::{Path, PathBuf},
     };
@@ -1069,6 +1134,75 @@ mod tests {
                 CreateOutcome::Incomplete
             );
         }
+    }
+
+    #[test]
+    fn indeterminate_desktop_guild_outcomes_use_public_verification_once() {
+        let mutation_calls = Cell::new(0);
+        let public_calls = Cell::new(0);
+        let mut profile = crate::desktop_save::DesktopValidatedProfile {
+            motto: String::new(),
+            guild: "Old Guild".to_owned(),
+        };
+        let response_outcome =
+            apply_desktop_guild_action(&mut profile, Some("beerguild"), |prior, submitted| {
+                mutation_calls.set(mutation_calls.get() + 1);
+                assert_eq!(prior, "Old Guild");
+                assert_eq!(submitted, "beerguild");
+                DesktopGuildOutcome::Indeterminate
+            })
+            .unwrap();
+        let (outcome, canonical_guild) =
+            reconcile_desktop_guild_outcome(response_outcome, "beerguild", || {
+                public_calls.set(public_calls.get() + 1);
+                Ok(Some("BEERguild".to_owned()))
+            });
+        assert_eq!(outcome, DesktopGuildOutcome::Accepted);
+        profile.guild = canonical_guild.unwrap();
+        assert_eq!(profile.guild, "BEERguild");
+        assert_eq!(mutation_calls.get(), 1);
+        assert_eq!(public_calls.get(), 1);
+
+        assert_eq!(
+            reconcile_desktop_guild_outcome(DesktopGuildOutcome::Indeterminate, "", || Ok(None)),
+            (DesktopGuildOutcome::Accepted, Some(String::new()))
+        );
+        assert_eq!(
+            reconcile_desktop_guild_outcome(
+                DesktopGuildOutcome::Indeterminate,
+                "Other Guild",
+                || Ok(Some("BEERguild".to_owned()))
+            ),
+            (DesktopGuildOutcome::Indeterminate, None)
+        );
+        assert_eq!(
+            reconcile_desktop_guild_outcome(
+                DesktopGuildOutcome::Indeterminate,
+                "BEERguild",
+                || { Ok(None) }
+            ),
+            (DesktopGuildOutcome::Indeterminate, None)
+        );
+        assert_eq!(
+            reconcile_desktop_guild_outcome(
+                DesktopGuildOutcome::Indeterminate,
+                "BEERguild",
+                || Err(DesktopTransportError::DeliveryFailed)
+            ),
+            (DesktopGuildOutcome::Indeterminate, None)
+        );
+        assert_eq!(
+            reconcile_desktop_guild_outcome(DesktopGuildOutcome::Rejected, "BEERguild", || {
+                panic!("definitive response attempted public verification")
+            }),
+            (DesktopGuildOutcome::Rejected, None)
+        );
+        assert_eq!(
+            reconcile_desktop_guild_outcome(DesktopGuildOutcome::Accepted, "BEERguild", || {
+                panic!("accepted response attempted public verification")
+            }),
+            (DesktopGuildOutcome::Accepted, None)
+        );
     }
 
     #[test]

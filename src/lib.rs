@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod desktop_callback;
 pub mod desktop_eligibility;
 pub mod desktop_evidence;
+mod desktop_fingerprint;
 #[cfg(feature = "desktop-live-conformance")]
 pub mod desktop_live_conformance;
 pub mod desktop_profile;

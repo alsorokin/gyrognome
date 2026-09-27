@@ -938,6 +938,7 @@ pub fn run<P: DashboardProvider>(
 
 struct DashboardState {
     current: DashboardSnapshot,
+    action_message: Option<(String, Instant)>,
     updates: RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     editor: Option<ProfileEditor>,
@@ -952,6 +953,7 @@ impl DashboardState {
         let task_anchor = TaskAnchor::from_snapshot(&current, now);
         Self {
             current,
+            action_message: None,
             updates: RecentTaskUpdates::default(),
             confirmation: None,
             editor: None,
@@ -1001,6 +1003,14 @@ impl DashboardState {
     }
 
     fn refresh<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
+        let action_message = self
+            .action_message
+            .as_ref()
+            .filter(|(_, expires_at)| now < *expires_at)
+            .map(|(message, _)| message.clone());
+        if action_message.is_none() {
+            self.action_message = None;
+        }
         match provider.refresh(id) {
             Ok(next) => {
                 let DashboardSnapshot {
@@ -1012,13 +1022,20 @@ impl DashboardState {
                 self.replace_character(character, now);
                 self.current.service = service;
                 self.current.runtime_owned = runtime_owned;
-                self.current.message = message;
+                self.current.message = message.or(action_message);
             }
             Err(error) => {
                 self.current.message = Some(format!("Could not refresh dashboard: {error}"))
             }
         }
         self.next_combined_refresh = now.checked_add(self.refresh_interval).unwrap_or(now);
+    }
+
+    fn set_action_message(&mut self, message: String, now: Instant) {
+        const VISIBILITY: Duration = Duration::from_secs(5);
+        let expires_at = now.checked_add(VISIBILITY).unwrap_or(now);
+        self.current.message = Some(message.clone());
+        self.action_message = Some((message, expires_at));
     }
 
     fn read_state<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
@@ -1119,7 +1136,7 @@ impl DashboardState {
                     };
                     if let Some(message) = online_action_blocked(&self.current.character, operation)
                     {
-                        self.current.message = Some(message);
+                        self.set_action_message(message, now);
                         return false;
                     }
                     let message = match editor.field {
@@ -1133,10 +1150,11 @@ impl DashboardState {
                         },
                     };
                     self.refresh(provider, id, now);
-                    self.current.message = Some(match self.current.message.take() {
+                    let message = match self.current.message.take() {
                         Some(refresh_message) => format!("{message} {refresh_message}"),
                         None => message,
-                    });
+                    };
+                    self.set_action_message(message, now);
                 }
                 _ => {}
             }
@@ -1153,7 +1171,7 @@ impl DashboardState {
                     &self.current.character,
                     DesktopOnlineOperation::ManualBrag,
                 ) {
-                    self.current.message = Some(message);
+                    self.set_action_message(message, now);
                     return false;
                 }
                 let message = match provider.brag(id) {
@@ -1167,7 +1185,7 @@ impl DashboardState {
                     Err(error) => format!("Could not submit leaderboard report: {error}"),
                 };
                 self.refresh(provider, id, now);
-                self.current.message = Some(message);
+                self.set_action_message(message, now);
                 false
             }
             Command::Confirm(action) => {
@@ -1181,7 +1199,7 @@ impl DashboardState {
                     ProfileField::Guild => DesktopOnlineOperation::Guild,
                 };
                 if let Some(message) = online_action_blocked(&self.current.character, operation) {
-                    self.current.message = Some(message);
+                    self.set_action_message(message, now);
                     return false;
                 }
                 self.editor = Some(ProfileEditor {
@@ -1206,12 +1224,16 @@ impl DashboardState {
                     match provider.lifecycle(action, id) {
                         Ok(()) => {
                             self.refresh(provider, id, now);
-                            self.current.message =
-                                Some(format!("Requested {} successfully.", action.label()));
+                            self.set_action_message(
+                                format!("Requested {} successfully.", action.label()),
+                                now,
+                            );
                         }
                         Err(error) => {
-                            self.current.message =
-                                Some(format!("Could not {}: {error}", action.label()));
+                            self.set_action_message(
+                                format!("Could not {}: {error}", action.label()),
+                                now,
+                            );
                         }
                     }
                 }
@@ -3806,6 +3828,25 @@ mod tests {
             state.current.message.as_deref(),
             Some("Requested start successfully.")
         );
+    }
+
+    #[test]
+    fn action_messages_survive_automatic_refresh_long_enough_to_read() {
+        let id = CharacterId::new();
+        let initial = sample();
+        let provider = fake_provider(vec![Ok(initial.clone()), Ok(initial.clone())], Vec::new());
+        let now = Instant::now();
+        let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+        state.set_action_message("Guild outcome indeterminate.".to_owned(), now);
+
+        state.refresh(&provider, &id, now + Duration::from_secs(1));
+        assert_eq!(
+            state.current.message.as_deref(),
+            Some("Guild outcome indeterminate.")
+        );
+
+        state.refresh(&provider, &id, now + Duration::from_secs(5));
+        assert_eq!(state.current.message, None);
     }
 
     #[test]

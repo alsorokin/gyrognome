@@ -27,6 +27,7 @@
       "guild"
     ],
     "guildResponses": {
+      "normalization": "desktop-response-redaction-sha256/v1",
       "joinAcceptedFingerprintSha256": "f5a48b1c0f296b4e391d0f26736ee902b56daed589064898dd7c2f9279d6c115",
       "rejectedFingerprintSha256": "3d01c41d894571762aed5d08d4427e2b4d33a9f4a15e8153c72f1c3152984b71",
       "leaveAcceptedFingerprintSha256": "8dd3a69a69f617062731571d8dace6974aecd303eb4320af84d2308fd75d4667"
@@ -36,5 +37,5 @@
     "observedOn": "2026-09-27",
     "validThrough": "2027-09-27"
   },
-  "integritySha256": "09e5fc9e2de14635851208b5a085ecebf9404242ffd1d6ed268f16001096a1de"
+  "integritySha256": "edd7f9aa16b5be4f4a695a12d417e3505e55aeb5d5d68b180b8d41f16a3860f1"
 }

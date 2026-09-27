@@ -458,6 +458,10 @@ Last task elapsed SHALL be formatted as a compact decomposition into days,
 hours, minutes, and seconds rather than as one raw count of seconds. Leading
 zero units SHALL be omitted and a zero duration SHALL render as `0s`.
 
+Confirmed profile and lifecycle action outcomes SHALL remain visible across
+automatic refreshes for at least five seconds so an operator can read the
+result.
+
 #### Scenario: Viewing online profile details
 
 - **WHEN** a managed character has both a motto and guild designation
