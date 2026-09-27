@@ -757,6 +757,7 @@ enum Command {
     Quit,
     Refresh,
     Brag,
+    ToggleLifecycle,
     Confirm(LifecycleAction),
     ConfirmAction,
     Cancel,
@@ -857,8 +858,7 @@ fn command(event: Event) -> Command {
         KeyCode::Char('b') => Command::Brag,
         KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
         KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
-        KeyCode::Char('s') => Command::Confirm(LifecycleAction::Start),
-        KeyCode::Char('x') => Command::Confirm(LifecycleAction::Stop),
+        KeyCode::Char('s') => Command::ToggleLifecycle,
         KeyCode::Char('c') => Command::Confirm(LifecycleAction::Recover),
         KeyCode::Enter => Command::ConfirmAction,
         KeyCode::Esc => Command::Cancel,
@@ -1188,6 +1188,15 @@ impl DashboardState {
                 self.set_action_message(message, now);
                 false
             }
+            Command::ToggleLifecycle => {
+                self.confirmation = Some(match self.current.service {
+                    Some(ServiceState::Active) => LifecycleAction::Stop,
+                    Some(ServiceState::Inactive | ServiceState::Failed) | None => {
+                        LifecycleAction::Start
+                    }
+                });
+                false
+            }
             Command::Confirm(action) => {
                 self.confirmation = Some(action);
                 false
@@ -1401,11 +1410,11 @@ fn render(
         }
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
         None if full_layout => {
-            "q quit | r refresh | b brag | m motto | g guild | s start | x stop | c recover"
-                .to_owned()
+            "q quit | r refresh | b brag | m motto | g guild | s start/stop | c recover".to_owned()
         }
-        None => "q quit | r refresh | b brag\nm motto | g guild\ns start | x stop | c recover"
-            .to_owned(),
+        None => {
+            "q quit | r refresh | b brag\nm motto | g guild\ns start/stop | c recover".to_owned()
+        }
     };
     frame.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::ALL).title("Keys")),
@@ -3725,13 +3734,13 @@ mod tests {
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 's'
             )))),
-            Command::Confirm(LifecycleAction::Start)
+            Command::ToggleLifecycle
         );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 'x'
             )))),
-            Command::Confirm(LifecycleAction::Stop)
+            Command::None
         );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
@@ -3828,6 +3837,28 @@ mod tests {
             state.current.message.as_deref(),
             Some("Requested start successfully.")
         );
+    }
+
+    #[test]
+    fn lifecycle_toggle_confirms_stop_when_active_and_start_otherwise() {
+        let id = CharacterId::new();
+        let now = Instant::now();
+
+        for (service, expected) in [
+            (Some(ServiceState::Active), LifecycleAction::Stop),
+            (Some(ServiceState::Inactive), LifecycleAction::Start),
+            (Some(ServiceState::Failed), LifecycleAction::Start),
+            (None, LifecycleAction::Start),
+        ] {
+            let mut snapshot = sample();
+            snapshot.service = service;
+            let provider = fake_provider(Vec::new(), Vec::new());
+            let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+
+            assert!(!state.apply(&provider, &id, Command::ToggleLifecycle, now));
+            assert_eq!(state.confirmation, Some(expected));
+            assert!(provider.actions.borrow().is_empty());
+        }
     }
 
     #[test]

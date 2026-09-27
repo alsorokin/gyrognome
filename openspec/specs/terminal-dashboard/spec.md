@@ -361,16 +361,24 @@ online-profile interface while leaving simulation ownership unchanged.
 
 ### Requirement: Lifecycle controls
 
-The dashboard SHALL expose keyboard actions to start, stop, and recover the
-selected character's local runtime through the existing user-service lifecycle
-interface. Before executing a lifecycle action, it SHALL request confirmation.
-It SHALL report successful actions and actionable service-manager or runtime
-failures in the dashboard without exiting.
+The dashboard SHALL expose one keyboard action that starts an inactive or
+failed selected character runtime and stops an active one, plus a separate
+recovery action, through the existing user-service lifecycle interface. Before
+executing a lifecycle action, it SHALL request confirmation. It SHALL report
+successful actions and actionable service-manager or runtime failures in the
+dashboard without exiting.
 
 #### Scenario: Starting an inactive runtime
 
 - **WHEN** a user confirms the dashboard start action for an inactive character
 - **THEN** the dashboard starts the character through the local user-service
+  lifecycle interface and refreshes the displayed status
+
+#### Scenario: Stopping an active runtime
+
+- **WHEN** a user confirms the same dashboard lifecycle action for an active
+  character
+- **THEN** the dashboard stops the character through the local user-service
   lifecycle interface and refreshes the displayed status
 
 #### Scenario: Handling a lifecycle failure

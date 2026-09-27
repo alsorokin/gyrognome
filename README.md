@@ -306,9 +306,9 @@ callback remains at 100%; display prediction never invents completion rewards,
 a new activity, or a report.
 
 Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
-manual Brag report, `m` to edit the motto, `g` to edit the guild, `s` to start,
-`x` to stop, or `c` to recover the selected service. Brag has no confirmation
-overlay and shows only delivered,
+manual Brag report, `m` to edit the motto, `g` to edit the guild, `s` to start
+an inactive service or stop an active one, or `c` to recover the selected
+service. Brag has no confirmation overlay and shows only delivered,
 endpoint-rejected, or delivery-failed outcomes. Start, stop, and recover
 require `Enter` confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit
 through the same terminal-restoration path. The same logged-in-user systemd
