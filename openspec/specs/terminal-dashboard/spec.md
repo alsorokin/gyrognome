@@ -89,6 +89,7 @@ character is not registered.
 
 The dashboard SHALL display character stats in its header alongside the
 character identity, rather than in an additional pane or the Adventure pane.
+Adjacent stats SHALL be separated by ` | `.
 When the header has sufficient width, stats SHALL occupy the right side of the
 identity row. When it does not, stats SHALL occupy a second header row. When a
 refreshed persisted state records one or more completed tasks since the
@@ -148,7 +149,7 @@ remaining space. When expanded in the full dashboard layout, Activity SHALL
 occupy exactly four terminal rows, consisting of two border rows and two
 inner-content rows. Expanded Details SHALL fill all remaining left-column
 height after allocating Activity, Progress, and the capped Equipment pane,
-with at least six total rows when space permits. Collapsed Details SHALL
+with at least eight total rows when space permits. Collapsed Details SHALL
 occupy only its two border rows. Progress SHALL occupy
 exactly seven terminal rows, consisting of two border rows and five inner
 progress-bar rows. Equipment SHALL receive flexible space when available but
@@ -183,7 +184,7 @@ view for terminals that do not use the full layout.
 
 - **WHEN** Details is expanded in the full dashboard layout
 - **THEN** it fills all remaining left-column height after allocating the other
-  panes, reserving at least six total rows when space permits
+  panes, reserving at least eight total rows when space permits
 - **AND** no unused vertical space remains below Details
 
 #### Scenario: Collapsing Details
@@ -458,9 +459,9 @@ and lifecycle actions SHALL NOT independently issue HTTP requests.
 ### Requirement: Concise profile and timing details
 
 The full dashboard Details pane SHALL omit the Quest target line. It SHALL
-display the character identifier and Last task elapsed. It SHALL display Motto
-and Guild lines independently only when the corresponding persisted value is
-non-empty.
+display the character identifier, Last task elapsed, and Realm. It SHALL
+display Motto and Guild lines independently only when the corresponding
+persisted value is non-empty.
 
 Last task elapsed SHALL be formatted as a compact decomposition into days,
 hours, minutes, and seconds rather than as one raw count of seconds. Leading
@@ -474,7 +475,7 @@ result.
 
 - **WHEN** a managed character has both a motto and guild designation
 - **THEN** Details displays ID, formatted Last task elapsed, Motto,
-  and Guild without displaying Quest target
+  Guild, and Realm without displaying Quest target
 
 #### Scenario: Viewing one populated profile value
 

@@ -98,8 +98,15 @@ impl From<Attributes> for DashboardAttributes {
 impl DashboardCharacter {
     fn from_browser(
         character: ManagedCharacter,
-        compatibility: ManagedCompatibilityPresentation,
+        mut compatibility: ManagedCompatibilityPresentation,
     ) -> Self {
+        if compatibility.realm.is_none() {
+            compatibility.realm = character
+                .state
+                .online
+                .as_ref()
+                .map(|online| online.realm.clone());
+        }
         Self {
             id: character.id,
             identity: character.identity,
@@ -1534,14 +1541,14 @@ fn header_stats_text(stats: &DashboardAttributes) -> String {
         .into_iter()
         .map(|(label, value)| format!("{label}:{value}"))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" | ")
 }
 
 fn header_stats_line(stats: &DashboardAttributes, updates: &RecentTaskUpdates) -> Line<'static> {
     let mut spans = Vec::new();
     for (index, (label, value)) in attribute_values(stats).into_iter().enumerate() {
         if index > 0 {
-            spans.push(Span::raw(" "));
+            spans.push(Span::raw(" | "));
         }
         spans.push(styled_value(
             format!("{label}:{value}"),
@@ -1719,7 +1726,10 @@ fn left_pane_constraints(visibility: &PaneVisibility, height: u16) -> [Constrain
     };
     let activity = pane_height(Pane::Activity, 4);
     let progress = pane_height(Pane::Progress, 7);
-    let details_min = pane_height(Pane::Details, 6);
+    let details_min = pane_height(
+        Pane::Details,
+        height.saturating_sub(activity + progress + 2).clamp(6, 8),
+    );
     let equipment = pane_height(
         Pane::Equipment,
         height
@@ -2484,6 +2494,7 @@ mod tests {
                         .collect();
                     assert!(output.contains("ID:"));
                     assert!(output.contains("Last task elapsed:"));
+                    assert!(output.contains("Realm: Alpaquil"));
                     assert_eq!(output.contains("Motto:"), !motto.is_empty());
                     assert_eq!(output.contains("Guild:"), !guild.is_empty());
                     assert!(!output.contains("Quest target"));
@@ -2813,7 +2824,7 @@ mod tests {
                 profile: character.profile,
                 compatibility: ManagedCompatibilityPresentation {
                     profile: CompatibilityProfile::Browser,
-                    realm: None,
+                    realm: character.online.map(|online| online.realm),
                     online_eligibility: Vec::new(),
                     unavailable_history: None,
                     measured_since_import: None,
@@ -3055,6 +3066,16 @@ mod tests {
             select_character(Vec::new(), &interrupted),
             Err(DashboardError::NoManagedCharacters)
         ));
+    }
+
+    #[test]
+    fn header_separates_stats_with_vertical_bars() {
+        let character = sample().character;
+        let text = header_stats_text(&character.stats);
+        let line = header_stats_line(&character.stats, &RecentTaskUpdates::default()).to_string();
+
+        assert_eq!(text.matches(" | ").count(), 7);
+        assert_eq!(line, text);
     }
 
     fn selector_entry(
@@ -3478,7 +3499,7 @@ mod tests {
         let snapshot = sample();
         let updates = RecentTaskUpdates::default();
 
-        let wide_backend = TestBackend::new(120, 40);
+        let wide_backend = TestBackend::new(140, 40);
         let mut wide_terminal = Terminal::new(wide_backend).unwrap();
         wide_terminal
             .draw(|frame| {
@@ -3493,8 +3514,8 @@ mod tests {
             })
             .unwrap();
         let wide_content = wide_terminal.backend().buffer().content();
-        let identity = text_position(wide_content, 120, &snapshot.character.identity.name);
-        let stats = text_position(wide_content, 120, "STR:");
+        let identity = text_position(wide_content, 140, &snapshot.character.identity.name);
+        let stats = text_position(wide_content, 140, "STR:");
         assert_eq!(identity.1, stats.1);
         assert!(identity.0 < stats.0);
 
