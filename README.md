@@ -11,13 +11,14 @@ crates.io, AUR, `.deb`, or `.rpm` package. The Node.js manifest is for
 conformance tests only. For a locally prepared candidate archive, see
 [Linux install and upgrade instructions](docs/linux-release-install.md); they
 describe x86_64 and aarch64 glibc 2.35-or-newer builds, checksum verification,
-user-local installation, and the optional `systemd --user` unit. Publication remains blocked pending the final privacy and artifact review.
+user-local installation, and the optional `systemd --user` unit. Publication
+remains blocked pending a final pre-publication privacy review and explicit
+owner authorization.
+
 Gyrognome-authored code is MIT licensed; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for the upstream source and the
 owner's porting rationale. Existing source-checkout commands below remain
 available for developers with Rust installed.
-
-<img width="1920" height="1054" alt="image" src="https://github.com/user-attachments/assets/da674c42-1eff-4997-8871-8f1dc16378ce" />
 
 ## Current support
 

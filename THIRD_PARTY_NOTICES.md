@@ -18,8 +18,7 @@ replace the rights or notices of upstream works incorporated into the project.
   as the basis for porting the browser data. This documents that assessment,
   not a separate authorization from the original author for every browser
   revision or other third-party material.
-- The README screenshot is owner-created and owner-reviewed for privacy.
-  Browser/desktop conformance evidence records synthetic and source-derived
+- Browser/desktop conformance evidence records synthetic and source-derived
   observations; no real saves or signed requests should be distributed.
 
 Neither upstream notice alone clears the repository for publication; see
