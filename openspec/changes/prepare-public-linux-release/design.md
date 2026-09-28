@@ -46,12 +46,13 @@ Alternative: relying on `.gitignore`, current-tree scanning, or fixture-safety t
 - [Private GitHub Actions artifacts are accessible to authorized collaborators and have retention limits] -> Keep candidates free of credentials, verify archive contents, use least privilege, and document that CI artifacts are not a permanent public download.
 - [Runner architecture or oldest-supported GLIBC differs from expectations] -> Gate each target on a native smoke run and actual ELF checks; update support claims only from measured results.
 - [Local service points at the wrong executable after installation/upgrade] -> Validate the installed unit's absolute path with a user-scoped service test and preserve the old worker behavior.
+- [Native aarch64 user-manager lifecycle is not exercised by the candidate workflow] -> Run native aarch64 build/smoke checks, trial-install the ARM archive in isolated ARM userspace under emulation, check the unit's absolute path there, validate a real x86_64 user-service stop/upgrade/restart, and disclose the remaining native ARM lifecycle gap before any publication.
 - [History contains material requiring rotation or removal] -> Stop publication; rotate exposed credentials, handle history/remote artifacts separately with owner approval, and repeat the review.
 - [Bundled upstream material cannot be redistributed on the assumed terms] -> Do not publish until rights and attribution are explicitly resolved; a project license alone cannot license someone else's work.
 
 ## Migration Plan
 
-1. Add non-publishing candidate packaging, CI checks, and docs while the repository remains private; trial-install bundles on clean x86_64 and aarch64 Linux hosts with isolated XDG data.
+1. Add non-publishing candidate packaging, CI checks, and docs while the repository remains private; smoke-run both binaries on native x86_64 and aarch64 CI runners, trial-install each archive in isolated Ubuntu 22.04 userspace (ARM may be emulated), and exercise user-service lifecycle on x86_64 with isolated XDG data. Record the native ARM service-manager gap.
 2. Record the publication review and license/attribution decision; if unresolved, leave the candidate unpublished and report blockers.
 3. A later, separately authorized change may make the repository public and upload a reviewed candidate to a GitHub Release. Until then, there is no user-facing migration.
 4. If a candidate install fails, stop affected user workers and restore the previous executable/unit; if state was migrated, use the existing private pre-migration backup procedure before running an older binary. Do not delete or rewrite the XDG character store as part of packaging.

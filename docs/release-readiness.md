@@ -27,7 +27,9 @@ each later publication action.
   Cargo/npm metadata consistent only after this decision.
 - [ ] Inspect both native Linux candidate builds, SHA-256 checks, architecture
   and measured GLIBC floor, smoke checks, and user-local install/service and
-  backup/rollback exercises. Record platform limitations accurately.
+  backup/rollback exercises. Record platform limitations accurately: the ARM
+  install trial used emulation and native ARM user-service lifecycle has not
+  been exercised.
 - [ ] Record approvals and blockers in a **private**, redacted review record
   outside version control. Never put credential values into a review artifact.
 

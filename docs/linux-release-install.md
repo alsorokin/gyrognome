@@ -7,12 +7,16 @@ Do not redistribute a candidate until the maintainer has approved the project
 license, upstream-derived material, and the publication review.
 
 The candidate names its Linux architecture (`x86_64` or `aarch64`) and targets
-glibc 2.35 or newer. It is built on an Ubuntu 22.04 native runner; support for
+glibc 2.35 or newer. Native Ubuntu 22.04 candidate builds required at most
+GLIBC 2.34 on both architectures; compatibility was trialed on glibc 2.35.
+Support for
 older glibc releases, musl distributions, and non-Linux systems is not claimed.
 Check your machine with `uname -m` and `getconf GNU_LIBC_VERSION` before
 selecting the matching archive. The build process rejects binaries that
 require GLIBC versions newer than 2.35; a working install on your distribution
-also requires a compatible Linux userland.
+also requires a compatible Linux userland. ARM installation was trialed under
+emulation after a native ARM build and executable smoke check; its
+`systemd --user` lifecycle has **not** yet been trialed on a native ARM host.
 
 ## Install without Rust or root access
 

@@ -21,6 +21,7 @@ The release preparation process SHALL build separately labeled Linux x86_64 and 
 ### Requirement: Toolchain-free installation and safe upgrade
 
 The distribution instructions SHALL enable an unprivileged Linux user to verify and install a compatible bundle without Rust or Node.js, find the interactive `gyro` command, and configure the installed user service to invoke that same binary by a reliable absolute path. The instructions SHALL explain service-manager prerequisites, a direct worker option when `systemd --user` is unavailable, how to upgrade or roll back a binary while preserving the existing XDG character store, and when a database backup is required.
+The instructions SHALL distinguish verified native service lifecycle coverage from architecture-specific installation trials under emulation.
 
 #### Scenario: Installing as an ordinary user
 - **WHEN** a user follows the bundle's installation instructions on a documented compatible host
@@ -29,6 +30,10 @@ The distribution instructions SHALL enable an unprivileged Linux user to verify 
 #### Scenario: Upgrading a managed installation
 - **WHEN** an existing user prepares to replace a Gyrognome binary
 - **THEN** the documented steps preserve the XDG store and explain stopping/restarting active workers, backing up data, and the limits of restoring an older binary after a schema migration
+
+#### Scenario: Reading ARM support claims
+- **WHEN** a user checks validation coverage for the aarch64 bundle
+- **THEN** the instructions disclose whether its user-service lifecycle has been exercised on a native ARM host, separately from binary smoke tests and emulated installation
 
 ### Requirement: Non-publishing release verification
 

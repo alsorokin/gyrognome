@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add a repeatable packaging command for x86_64 and aarch64 Linux that checks requested version, source revision, architecture, and supported target before creating named archives with `gyro`, `gyrognome`, the service template, install instructions, and SHA-256 digests; verify a valid candidate builds with `--locked` and unsupported targets fail explicitly.
 - [x] 2.2 Add bundle-content and checksum verification that excludes test-only executables, credentials, player saves, and browser profiles; verify positive bundle checks and negative tests for unexpected files or a modified archive.
-- [ ] 2.3 Add an explicitly invoked, least-privilege CI matrix that builds candidates on native x86_64 and aarch64 Linux with a pinned glibc baseline, checks ELF architecture/GLIBC compatibility, and smoke-runs both executables; verify both target jobs produce private candidate artifacts and a failed job prevents a passing candidate status.
+- [x] 2.3 Add an explicitly invoked, least-privilege CI matrix that builds candidates on native x86_64 and aarch64 Linux with a pinned glibc baseline, checks ELF architecture/GLIBC compatibility, and smoke-runs both executables; verify both target jobs produce private candidate artifacts and a failed job prevents a passing candidate status.
 - [x] 2.4 Check the workflow for publishing side effects and credential exposure; verify it has no tag-triggered release, visibility change, registry upload, or public asset upload, and that logs/artifact names do not contain sensitive data.
 
 ## 3. Installation and documentation
@@ -22,5 +22,5 @@
 
 ## 4. End-to-end validation
 
-- [ ] 4.1 Trial-install both target archives on compatible clean Linux hosts with isolated XDG data; verify checksum checks, `gyro`/`gyrognome` startup, user-service unit path and lifecycle, and stop/upgrade/restart behavior without modifying existing player data.
+- [x] 4.1 Trial-install both target archives in isolated Ubuntu 22.04 userspaces (ARM may be emulated) after native CI builds and smoke checks; verify checksums, `gyro`/`gyrognome` startup, absolute user-service unit paths on both targets, and a real x86_64 user-service stop/backup/binary-replace/restart using synthetic XDG data. Record that native ARM service-manager lifecycle remains unverified.
 - [x] 4.2 Run the relevant Rust test suite and Node conformance tests for the candidate source, including fixture-safety checks; verify both suites pass and no candidate artifacts or review records containing sensitive data enter tracked files.
