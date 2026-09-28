@@ -2,7 +2,7 @@
 name = "gyrognome"
 version = "1.0.0"
 edition = "2024"
-description = "Linux-native Progress Quest client with local character management"
+description = "Linux-native console Progress Quest client"
 repository = "https://github.com/alsorokin/gyrognome"
 readme = "README.md"
 license = "MIT"
