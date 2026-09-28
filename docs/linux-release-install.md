@@ -4,7 +4,11 @@ These instructions describe a **candidate artifact**, not a published download.
 No GitHub Release, npm package, crates.io crate, AUR package, `.deb`, or `.rpm`
 is available yet. `package.json` is solely a Node.js conformance-test harness.
 Do not redistribute a candidate until the maintainer has approved the project
-license, upstream-derived material, and the publication review.
+license, upstream-derived material, and the publication review. The owner
+approved MIT for Gyrognome-authored code and documented their assessment of
+the original site's browser porting permission. The archive includes a project
+license and both official upstream notices. Privacy and public artifact checks
+still block publication.
 
 The candidate names its Linux architecture (`x86_64` or `aarch64`) and targets
 glibc 2.35 or newer. Native Ubuntu 22.04 candidate builds required at most

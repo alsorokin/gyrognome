@@ -17,7 +17,9 @@ TARGETS = {
     "aarch64-unknown-linux-gnu": ("aarch64", "AArch64"),
 }
 MAX_GLIBC = (2, 35)
-CONTENTS = ("gyro", "gyrognome", "gyrognome@.service", "INSTALL.md")
+CONTENTS = ("gyro", "gyrognome", "gyrognome@.service", "INSTALL.md", "LICENSE",
+            "THIRD_PARTY_NOTICES.md", "ProgressQuest-Desktop.txt",
+            "ProgressQuest-Site.txt")
 
 
 def run(*args, cwd=ROOT):
@@ -97,6 +99,10 @@ def main():
         "gyrognome": (binary_dir / "gyrognome").read_bytes(),
         "gyrognome@.service": (ROOT / "systemd/user/gyrognome@.service").read_bytes(),
         "INSTALL.md": guide,
+        "LICENSE": (ROOT / "LICENSE").read_bytes(),
+        "THIRD_PARTY_NOTICES.md": (ROOT / "THIRD_PARTY_NOTICES.md").read_bytes(),
+        "ProgressQuest-Desktop.txt": (ROOT / "licenses/ProgressQuest-Desktop.txt").read_bytes(),
+        "ProgressQuest-Site.txt": (ROOT / "licenses/ProgressQuest-Site.txt").read_bytes(),
     }
     args.output.mkdir(parents=True, exist_ok=True)
     archive = args.output / f"gyrognome-{version}-{args.target}.tar.gz"
