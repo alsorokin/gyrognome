@@ -3,6 +3,19 @@
 Gyrognome is a Linux-native Progress Quest client with a Rust compatibility
 core and online leaderboard reporting for eligible characters (Alpaquil and Spoltog realms for now).
 
+## Distribution status
+
+The repository currently prepares **private Linux release candidates**, not
+public downloads. There is no published GitHub Release or installable npm,
+crates.io, AUR, `.deb`, or `.rpm` package. The Node.js manifest is for
+conformance tests only. For a locally prepared candidate archive, see
+[Linux install and upgrade instructions](docs/linux-release-install.md); they
+describe x86_64 and aarch64 glibc 2.35-or-newer builds, checksum verification,
+user-local installation, and the optional `systemd --user` unit. Publication
+remains blocked until a maintainer resolves licensing, upstream redistribution
+rights, and privacy review. Existing source-checkout commands below remain
+available for developers with Rust installed.
+
 <img width="1920" height="1054" alt="image" src="https://github.com/user-attachments/assets/da674c42-1eff-4997-8871-8f1dc16378ce" />
 
 ## Current support

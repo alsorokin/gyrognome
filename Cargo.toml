@@ -2,6 +2,10 @@
 name = "gyrognome"
 version = "1.0.0"
 edition = "2024"
+description = "Linux-native Progress Quest client with local character management"
+repository = "https://github.com/alsorokin/gyrognome"
+readme = "README.md"
+publish = false
 autobins = false
 default-run = "gyro"
 
