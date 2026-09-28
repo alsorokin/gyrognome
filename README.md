@@ -1,7 +1,7 @@
 # Gyrognome
 
 Gyrognome is a Linux-native Progress Quest client with a Rust compatibility
-core and opt-in online leaderboard reporting for eligible managed characters.
+core and online leaderboard reporting for eligible characters (Alpaquil and Spoltog realms for now).
 
 <img width="1920" height="1054" alt="image" src="https://github.com/user-attachments/assets/da674c42-1eff-4997-8871-8f1dc16378ce" />
 
