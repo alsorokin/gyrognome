@@ -66,14 +66,21 @@ procedure SHALL compare browser and Gyrognome report histories across initial
 load, pause, restart, delayed callbacks, task completion, level-up, act
 completion, manual bragging, and motto change. It SHALL additionally exercise
 an accepted non-empty guild-designation submission, an accepted empty
-guild-designation submission, and a deliberately invalid designation
-through the official browser, record their request shape and sanitized
-accepted or rejected outcome categories, and restore the disposable
-character to no guild before completion. It SHALL
-record only credential-free observations and SHALL require evidence that the
-Gyrognome character appears in the normal leaderboard population rather than
-the cheater population. Native `newguy` character-generation support is not
-required.
+guild-designation submission, and a deliberately invalid designation through
+the official browser, record their request shape and sanitized accepted or
+rejected outcome categories, and restore the disposable character to no guild
+before completion.
+
+Guild-response evidence generation and production classification SHALL use one
+versioned normalization and fingerprint contract. The contract SHALL replace
+the same ordered set of dynamic identity, authentication, passkey, and
+prior/submitted guild values with the same placeholder before hashing.
+Credential-free cross-path vectors SHALL prove that a fingerprint emitted by
+the evidence path is accepted by the production classifier. The procedure
+SHALL record only credential-free observations and SHALL require evidence that
+the Gyrognome character appears in the normal leaderboard population rather
+than the cheater population. Native `newguy` character-generation support is
+not required.
 
 #### Scenario: Running an external conformance experiment
 
@@ -90,9 +97,15 @@ required.
   empty designation
 - **THEN** the evidence records sanitized request field names, operation order,
   safe accepted or rejected categories, and normalized response fingerprints
-  that remove the current and submitted designations before hashing, without
-  recording either designation when it would identify a private guild, the
-  passkey, signed URL, or raw response body
+  produced by the shared versioned contract, without recording a private guild
+  designation, passkey, credential, signed URL, or raw response body
+
+#### Scenario: Replaying an evidence fingerprint in production
+
+- **WHEN** a credential-free response vector is fingerprinted by the live
+  evidence path and classified by the production guild path with corresponding
+  dynamic values
+- **THEN** both paths produce the same fingerprint and classification
 
 #### Scenario: Guild response fingerprints are ambiguous
 

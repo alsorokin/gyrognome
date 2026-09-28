@@ -1,8 +1,7 @@
 {
   "name": "gyrognome",
   "version": "1.0.0",
-  "description": "Gyrognome is a Linux-native Progress Quest client. This initial release provides its offline-only Rust compatibility core.",
-  "main": "index.js",
+  "description": "Node.js conformance-test harness for the Linux-native Gyrognome Rust client",
   "directories": {
     "doc": "docs",
     "test": "tests"
@@ -16,7 +15,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
     "url": "https://github.com/alsorokin/gyrognome/issues"
@@ -24,5 +23,6 @@
   "homepage": "https://github.com/alsorokin/gyrognome#readme",
   "devDependencies": {
     "playwright": "^1.63.0"
-  }
+  },
+  "private": true
 }
