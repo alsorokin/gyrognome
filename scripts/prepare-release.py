@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify private Linux release candidates without publishing them."""
+"""Build and verify Linux release candidates without publishing a release."""
 
 import argparse
 import hashlib
@@ -116,7 +116,7 @@ def main():
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     archive.with_name(archive.name + ".sha256").write_text(f"{digest}  {archive.name}\n")
     check_archive(archive, args.target, version)
-    print(f"Private candidate: {archive} ({revision[:12]}, glibc <= 2.35)")
+    print(f"Release candidate: {archive} ({revision[:12]}, glibc <= 2.35)")
     if args.allow_dirty:
         print("WARNING: dirty local trial; NOT release-ready")
 

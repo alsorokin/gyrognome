@@ -1,4 +1,4 @@
-name: Prepare private Linux candidate
+name: Prepare Linux release candidate
 
 on:
   workflow_dispatch:
@@ -34,7 +34,7 @@ jobs:
             --revision "$GITHUB_SHA"
           cd target/release-candidates
           sha256sum -c "gyrognome-1.0.0-${{ matrix.target }}.tar.gz.sha256"
-      - name: Retain private candidate for review
+      - name: Retain candidate for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-candidate-${{ matrix.target }}

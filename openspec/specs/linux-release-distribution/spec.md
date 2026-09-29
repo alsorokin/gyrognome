@@ -37,11 +37,11 @@ The instructions SHALL distinguish verified native service lifecycle coverage fr
 
 ### Requirement: Non-publishing release verification
 
-The repository SHALL offer a repeatable, explicitly invoked release-preparation workflow that checks the version/target labels, builds the proposed bundles and checksums, verifies their contents, runs an executable smoke check on each supported target, and retains artifacts privately for review. It SHALL NOT change repository visibility, create a public GitHub Release, or publish to any package registry.
+The repository SHALL offer a repeatable, explicitly invoked release-preparation workflow that checks the version/target labels, builds the proposed bundles and checksums, verifies their contents, runs an executable smoke check on each supported target, and retains temporary artifacts for review. Documentation SHALL disclose that artifacts from a public repository are available to signed-in users with read access and distinguish them from durable release downloads. The workflow SHALL NOT change repository visibility, create a GitHub Release, or publish to any package registry.
 
 #### Scenario: Successful candidate build
 - **WHEN** a maintainer invokes the release-preparation workflow on a supported source revision
-- **THEN** the workflow produces reviewable bundles and checksum files without making them publicly available
+- **THEN** the workflow produces temporary reviewable bundles and checksum files without creating a durable GitHub Release or package publication
 
 #### Scenario: Failed candidate verification
 - **WHEN** a required target build, checksum, contents check, or executable smoke check fails

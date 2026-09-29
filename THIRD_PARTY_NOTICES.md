@@ -21,8 +21,8 @@ replace the rights or notices of upstream works incorporated into the project.
 - Browser/desktop conformance evidence records synthetic and source-derived
   observations; no real saves or signed requests should be distributed.
 
-Neither upstream notice alone clears the repository for publication; see
-[release readiness](docs/release-readiness.md) for the remaining privacy and
-artifact checks.
+The project owner reviewed the repository's provenance, privacy, and
+redistribution posture before publication and chose to rely on the notices and
+porting rationale documented above.
 
 No Progress Quest trademark endorsement or affiliation is implied.

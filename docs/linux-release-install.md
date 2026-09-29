@@ -1,14 +1,15 @@
-# Private Linux candidate: install and upgrade
+# Linux release candidate: install and upgrade
 
 These instructions describe a **candidate artifact**, not a published download.
 No GitHub Release, npm package, crates.io crate, AUR package, `.deb`, or `.rpm`
 is available yet. `package.json` is solely a Node.js conformance-test harness.
-Do not redistribute a candidate until the maintainer has approved the project
-license, upstream-derived material, and the publication review. The owner
-approved MIT for Gyrognome-authored code and documented their assessment of
-the original site's browser porting permission. The archive includes a project
-license and both official upstream notices. Privacy and public artifact checks
-still block publication.
+Candidate archives produced by the manual GitHub Actions workflow are
+temporary artifacts of this public repository: signed-in users with read
+access can download them for seven days. They are review builds, not durable
+release assets. The owner approved MIT for Gyrognome-authored code, completed
+the privacy and publication review, and documented their assessment of the
+original site's browser porting permission. The archive includes the project
+license and both official upstream notices.
 
 The candidate names its Linux architecture (`x86_64` or `aarch64`) and targets
 glibc 2.35 or newer. Native Ubuntu 22.04 candidate builds required at most
