@@ -4,12 +4,7 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-
-- Refresh Prime Stat from current attributes when advancing managed state or
-  preparing leaderboard reports, retaining browser stat order on ties.
-
-## [1.0.0] - 2026-09-23
+## [1.0.0] - 2026-09-30
 
 The first feature-complete release of Gyrognome, a Linux-native Progress Quest
 client with browser-compatible simulation, local character management, and

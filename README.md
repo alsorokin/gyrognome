@@ -8,17 +8,15 @@ core and online leaderboard reporting for eligible characters (Alpaquil and Spol
 
 ## Distribution status
 
-The repository currently prepares **temporary Linux release candidates**, not
-stable public downloads. Candidate archives produced by the manual GitHub
-Actions workflow are accessible to signed-in users with read access to this
-public repository and expire after seven days. There is no published GitHub
-Release or installable npm, crates.io, AUR, `.deb`, or `.rpm` package. The
-Node.js manifest is for conformance tests only. For a candidate archive, see
+Gyrognome provides versioned Linux archives on the
+[GitHub Releases page](https://github.com/alsorokin/gyrognome/releases).
+The manual GitHub Actions workflow also produces temporary release candidates
+that are accessible to signed-in users with read access and expire after seven
+days. There is no installable npm, crates.io, AUR, `.deb`, or `.rpm` package;
+the Node.js manifest is for conformance tests only. For archive installation, see
 [Linux install and upgrade instructions](docs/linux-release-install.md); they
 describe x86_64 and aarch64 glibc 2.35-or-newer builds, checksum verification,
-user-local installation, and the optional `systemd --user` unit. The
-pre-publication privacy, provenance, and licensing review is complete; creating
-a durable GitHub Release remains a separate explicit maintainer action.
+user-local installation, and the optional `systemd --user` unit.
 
 Gyrognome-authored code is MIT licensed; see
 [third-party notices](THIRD_PARTY_NOTICES.md) for the upstream source and the

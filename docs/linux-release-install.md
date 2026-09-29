@@ -1,17 +1,14 @@
-# Linux release candidate: install and upgrade
+# Linux release: install and upgrade
 
-These instructions describe a **candidate artifact**, not a published download.
-No GitHub Release, npm package, crates.io crate, AUR package, `.deb`, or `.rpm`
-is available yet. `package.json` is solely a Node.js conformance-test harness.
-Candidate archives produced by the manual GitHub Actions workflow are
-temporary artifacts of this public repository: signed-in users with read
-access can download them for seven days. They are review builds, not durable
-release assets. The owner approved MIT for Gyrognome-authored code, completed
-the privacy and publication review, and documented their assessment of the
-original site's browser porting permission. The archive includes the project
-license and both official upstream notices.
+Published archives and adjacent checksum files are available from the
+[GitHub Releases page](https://github.com/alsorokin/gyrognome/releases).
+No npm package, crates.io crate, AUR package, `.deb`, or `.rpm` is available;
+`package.json` is solely a Node.js conformance-test harness. Candidate archives
+produced by the manual GitHub Actions workflow are temporary review artifacts
+and expire after seven days. Published and candidate archives include the
+project license and both official upstream notices.
 
-The candidate names its Linux architecture (`x86_64` or `aarch64`) and targets
+Each archive names its Linux architecture (`x86_64` or `aarch64`) and targets
 glibc 2.35 or newer. Native Ubuntu 22.04 candidate builds required at most
 GLIBC 2.34 on both architectures; compatibility was trialed on glibc 2.35.
 Support for
