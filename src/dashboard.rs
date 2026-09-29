@@ -762,10 +762,8 @@ fn render_selector(frame: &mut ratatui::Frame<'_>, characters: &[SelectorEntry],
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Command {
     Quit,
-    Refresh,
     Brag,
     ToggleLifecycle,
-    Confirm(LifecycleAction),
     ConfirmAction,
     Cancel,
     TogglePane(Pane),
@@ -861,12 +859,10 @@ fn command(event: Event) -> Command {
     }
     match key.code {
         KeyCode::Char('q') => Command::Quit,
-        KeyCode::Char('r') => Command::Refresh,
         KeyCode::Char('b') => Command::Brag,
         KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
         KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
         KeyCode::Char('s') => Command::ToggleLifecycle,
-        KeyCode::Char('c') => Command::Confirm(LifecycleAction::Recover),
         KeyCode::Enter => Command::ConfirmAction,
         KeyCode::Esc => Command::Cancel,
         KeyCode::F(1) => Command::TogglePane(Pane::Activity),
@@ -1169,10 +1165,6 @@ impl DashboardState {
         }
         match command {
             Command::Quit => true,
-            Command::Refresh => {
-                self.refresh(provider, id, now);
-                false
-            }
             Command::Brag => {
                 if let Some(message) = online_action_blocked(
                     &self.current.character,
@@ -1198,14 +1190,9 @@ impl DashboardState {
             Command::ToggleLifecycle => {
                 self.confirmation = Some(match self.current.service {
                     Some(ServiceState::Active) => LifecycleAction::Stop,
-                    Some(ServiceState::Inactive | ServiceState::Failed) | None => {
-                        LifecycleAction::Start
-                    }
+                    Some(ServiceState::Failed) => LifecycleAction::Recover,
+                    Some(ServiceState::Inactive) | None => LifecycleAction::Start,
                 });
-                false
-            }
-            Command::Confirm(action) => {
-                self.confirmation = Some(action);
                 false
             }
             Command::Edit(field) => {
@@ -1257,6 +1244,14 @@ impl DashboardState {
             }
             Command::None | Command::Insert(_) | Command::Backspace => false,
         }
+    }
+}
+
+fn lifecycle_help(service: Option<&ServiceState>) -> &'static str {
+    match service {
+        Some(ServiceState::Active) => "s stop",
+        Some(ServiceState::Failed) => "s recover",
+        Some(ServiceState::Inactive) | None => "s start",
     }
 }
 
@@ -1416,12 +1411,14 @@ fn render(
             )
         }
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
-        None if full_layout => {
-            "q quit | r refresh | b brag | m motto | g guild | s start/stop | c recover".to_owned()
-        }
-        None => {
-            "q quit | r refresh | b brag\nm motto | g guild\ns start/stop | c recover".to_owned()
-        }
+        None if full_layout => format!(
+            "q quit | b brag | m motto | g guild | {}",
+            lifecycle_help(snapshot.service.as_ref())
+        ),
+        None => format!(
+            "q quit | b brag\nm motto | g guild\n{}",
+            lifecycle_help(snapshot.service.as_ref())
+        ),
     };
     frame.render_widget(
         Paragraph::new(footer).block(Block::default().borders(Borders::ALL).title("Keys")),
@@ -2702,9 +2699,11 @@ mod tests {
     fn profile_editor_and_help_render_at_narrow_and_full_widths() {
         for width in [40, 70, 120] {
             let output = rendered(width, 40);
-            for key in ["m motto", "g guild", "q quit", "c recover"] {
+            for key in ["m motto", "g guild", "q quit", "s start"] {
                 assert!(output.contains(key));
             }
+            assert!(!output.contains("r refresh"));
+            assert!(!output.contains("c recover"));
             for field in [ProfileField::Motto, ProfileField::Guild] {
                 let mut terminal = Terminal::new(TestBackend::new(width, 20)).unwrap();
                 let editor = ProfileEditor {
@@ -3743,7 +3742,7 @@ mod tests {
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 'r'
             )))),
-            Command::Refresh
+            Command::None
         );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
@@ -3767,7 +3766,7 @@ mod tests {
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 'c'
             )))),
-            Command::Confirm(LifecycleAction::Recover)
+            Command::None
         );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Enter))),
@@ -3821,13 +3820,11 @@ mod tests {
     }
 
     #[test]
-    fn refresh_and_lifecycle_events_preserve_observer_boundaries() {
+    fn lifecycle_events_preserve_observer_boundaries() {
         let id = CharacterId::new();
         let first = sample();
-        let mut second = sample();
-        second.character.activity.task = "new persisted task".to_owned();
         let provider = FakeProvider {
-            snapshots: std::cell::RefCell::new(vec![Ok(second.clone()), Ok(second.clone())]),
+            snapshots: std::cell::RefCell::new(vec![Ok(first.clone())]),
             state_snapshots: std::cell::RefCell::new(Vec::new()),
             refreshes: std::cell::Cell::new(0),
             state_reads: std::cell::Cell::new(0),
@@ -3838,13 +3835,7 @@ mod tests {
         };
         let now = Instant::now();
         let mut state = DashboardState::new(first, now, Duration::from_secs(1));
-        assert!(!state.apply(&provider, &id, Command::Refresh, now));
-        assert_eq!(state.current.character.activity.task, "new persisted task");
-        assert!(provider.actions.borrow().is_empty());
-        assert_eq!(provider.refreshes.get(), 1);
-        assert_eq!(provider.state_reads.get(), 0);
-
-        assert!(!state.apply(&provider, &id, Command::Confirm(LifecycleAction::Stop), now));
+        state.confirmation = Some(LifecycleAction::Stop);
         assert!(!state.apply(&provider, &id, Command::Cancel, now));
         assert!(provider.actions.borrow().is_empty());
 
@@ -3861,14 +3852,14 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_toggle_confirms_stop_when_active_and_start_otherwise() {
+    fn lifecycle_toggle_selects_action_for_service_state() {
         let id = CharacterId::new();
         let now = Instant::now();
 
         for (service, expected) in [
             (Some(ServiceState::Active), LifecycleAction::Stop),
             (Some(ServiceState::Inactive), LifecycleAction::Start),
-            (Some(ServiceState::Failed), LifecycleAction::Start),
+            (Some(ServiceState::Failed), LifecycleAction::Recover),
             (None, LifecycleAction::Start),
         ] {
             let mut snapshot = sample();
@@ -3880,6 +3871,73 @@ mod tests {
             assert_eq!(state.confirmation, Some(expected));
             assert!(provider.actions.borrow().is_empty());
         }
+    }
+
+    #[test]
+    fn lifecycle_help_describes_the_contextual_action() {
+        for width in [40, 120] {
+            for (service, expected) in [
+                (Some(ServiceState::Active), "s stop"),
+                (Some(ServiceState::Inactive), "s start"),
+                (Some(ServiceState::Failed), "s recover"),
+                (None, "s start"),
+            ] {
+                let mut snapshot = sample();
+                snapshot.service = service.clone();
+                let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+                terminal
+                    .draw(|frame| {
+                        render(
+                            frame,
+                            &snapshot,
+                            snapshot.character.progress.task.percent,
+                            &RecentTaskUpdates::default(),
+                            None,
+                            &PaneVisibility::default(),
+                        )
+                    })
+                    .unwrap();
+                let output = terminal
+                    .backend()
+                    .buffer()
+                    .content()
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(
+                    output.contains(expected),
+                    "width={width}, service={service:?}"
+                );
+                assert!(!output.contains("r refresh"));
+                assert!(!output.contains("c recover"));
+            }
+        }
+    }
+
+    #[test]
+    fn failed_service_lifecycle_action_recovers_and_refreshes() {
+        let id = CharacterId::new();
+        let mut failed = sample();
+        failed.service = Some(ServiceState::Failed);
+        let mut recovered = failed.clone();
+        recovered.service = Some(ServiceState::Active);
+        recovered.runtime_owned = Some(true);
+        let provider = fake_provider(vec![Ok(recovered)], Vec::new());
+        provider.action_results.borrow_mut().push(Ok(()));
+        let now = Instant::now();
+        let mut state = DashboardState::new(failed, now, Duration::from_secs(1));
+
+        assert!(!state.apply(&provider, &id, Command::ToggleLifecycle, now));
+        assert_eq!(state.confirmation, Some(LifecycleAction::Recover));
+        assert!(!state.apply(&provider, &id, Command::ConfirmAction, now));
+
+        assert_eq!(*provider.actions.borrow(), [LifecycleAction::Recover]);
+        assert_eq!(provider.refreshes.get(), 1);
+        assert_eq!(state.current.service, Some(ServiceState::Active));
+        assert_eq!(
+            state.current.message.as_deref(),
+            Some("Requested recover successfully.")
+        );
     }
 
     #[test]
@@ -4240,7 +4298,8 @@ mod tests {
     #[test]
     fn lifecycle_failure_keeps_last_successful_snapshot() {
         let id = CharacterId::new();
-        let snapshot = sample();
+        let mut snapshot = sample();
+        snapshot.service = Some(ServiceState::Failed);
         let provider = FakeProvider {
             snapshots: std::cell::RefCell::new(Vec::new()),
             state_snapshots: std::cell::RefCell::new(Vec::new()),
@@ -4255,8 +4314,10 @@ mod tests {
         };
         let now = Instant::now();
         let mut state = DashboardState::new(snapshot.clone(), now, Duration::from_secs(1));
-        state.confirmation = Some(LifecycleAction::Start);
+        state.apply(&provider, &id, Command::ToggleLifecycle, now);
         state.apply(&provider, &id, Command::ConfirmAction, now);
+        assert_eq!(*provider.actions.borrow(), [LifecycleAction::Recover]);
+        assert_eq!(provider.refreshes.get(), 0);
         assert_eq!(
             state.current.character.identity.name,
             snapshot.character.identity.name

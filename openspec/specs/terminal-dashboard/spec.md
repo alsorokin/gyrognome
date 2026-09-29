@@ -294,10 +294,9 @@ percentages it did not draw.
 ### Requirement: Live persisted-state refresh
 
 The dashboard SHALL refresh its displayed managed-character state, online
-profile metadata, and runtime status at bounded periodic intervals and when the
-user requests a refresh. It MAY read persisted character/profile state and
-runtime service status on separate bounded schedules. A user-requested refresh
-SHALL read both.
+profile metadata, and runtime status at bounded periodic intervals without
+requiring a manual refresh action. It MAY read persisted character/profile state
+and runtime service status on separate bounded schedules.
 
 When a predicted task position reaches the current task's duration, the
 dashboard SHALL wait a bounded settling interval before reading persisted
@@ -327,9 +326,9 @@ online-profile interface while leaving simulation ownership unchanged.
 
 #### Scenario: Refreshing an inactive runtime
 
-- **WHEN** the character runtime is inactive and the user requests a refresh
+- **WHEN** the character runtime remains inactive while the dashboard is open
 - **THEN** the dashboard continues to display the last persisted state and
-  updated inactive or failed service status
+  updates the displayed inactive or failed service status automatically
 
 #### Scenario: Reading state and service status on separate schedules
 
@@ -362,16 +361,18 @@ online-profile interface while leaving simulation ownership unchanged.
 
 ### Requirement: Lifecycle controls
 
-The dashboard SHALL expose one keyboard action that starts an inactive or
-failed selected character runtime and stops an active one, plus a separate
-recovery action, through the existing user-service lifecycle interface. Before
-executing a lifecycle action, it SHALL request confirmation. It SHALL report
-successful actions and actionable service-manager or runtime failures in the
-dashboard without exiting.
+The dashboard SHALL expose one contextual keyboard action through the existing
+user-service lifecycle interface. The action SHALL start an inactive selected
+character runtime, stop an active runtime, and recover a failed runtime by
+clearing its failed state before starting it. The dashboard SHALL NOT expose a
+separate recovery action. Before executing a lifecycle action, it SHALL request
+confirmation. It SHALL report successful actions and actionable
+service-manager or runtime failures in the dashboard without exiting.
 
 #### Scenario: Starting an inactive runtime
 
-- **WHEN** a user confirms the dashboard start action for an inactive character
+- **WHEN** a user confirms the dashboard lifecycle action for an inactive
+  character
 - **THEN** the dashboard starts the character through the local user-service
   lifecycle interface and refreshes the displayed status
 
@@ -381,6 +382,14 @@ dashboard without exiting.
   character
 - **THEN** the dashboard stops the character through the local user-service
   lifecycle interface and refreshes the displayed status
+
+#### Scenario: Recovering a failed runtime
+
+- **WHEN** a user confirms the same dashboard lifecycle action for a failed
+  character
+- **THEN** the dashboard clears the service's failed state, starts the
+  character through the local user-service lifecycle interface, and refreshes
+  the displayed status
 
 #### Scenario: Handling a lifecycle failure
 

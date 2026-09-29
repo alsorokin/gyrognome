@@ -325,10 +325,11 @@ calling transport. A desktop Task bar that is full but awaiting its next actual
 callback remains at 100%; display prediction never invents completion rewards,
 a new activity, or a report.
 
-Press `q` to quit, `r` to refresh, `b` to immediately submit one eligible
-manual Brag report, `m` to edit the motto, `g` to edit the guild, `s` to start
-an inactive service or stop an active one, or `c` to recover the selected
-service. Brag has no confirmation overlay and shows only delivered,
+The dashboard refreshes automatically. Press `q` to quit, `b` to immediately
+submit one eligible manual Brag report, `m` to edit the motto, `g` to edit the
+guild, or `s` for the contextual lifecycle action: start an inactive service,
+stop an active one, or recover a failed one by clearing its failed state and
+starting it. Brag has no confirmation overlay and shows only delivered,
 endpoint-rejected, or delivery-failed outcomes. Start, stop, and recover
 require `Enter` confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit
 through the same terminal-restoration path. The same logged-in-user systemd
@@ -336,8 +337,8 @@ prerequisites described above apply to service status and lifecycle actions.
 If the user service manager is unavailable or an action fails, the dashboard
 preserves the last successfully displayed character state and shows the
 actionable error. The selection flow accepts Up/Down or `j`/`k`, `Enter` to
-open a character, and `Esc` or `q` to cancel. It reports an error without entering a dashboard when
-no characters are registered.
+open a character, and `Esc` or `q` to cancel. It reports an error without
+entering a dashboard when no characters are registered.
 
 Profile editors start with the persisted value, accept printable Unicode and
 Backspace, submit with Enter, and cancel with Escape without sending a request.
