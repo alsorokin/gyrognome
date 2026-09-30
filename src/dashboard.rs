@@ -791,18 +791,16 @@ enum Pane {
     Progress,
     Equipment,
     Details,
-    Status,
     Adventure,
     Journal,
 }
 
 impl Pane {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 6] = [
         Self::Activity,
         Self::Progress,
         Self::Equipment,
         Self::Details,
-        Self::Status,
         Self::Adventure,
         Self::Journal,
     ];
@@ -813,9 +811,8 @@ impl Pane {
             Self::Progress => 1,
             Self::Equipment => 2,
             Self::Details => 3,
-            Self::Status => 4,
-            Self::Adventure => 5,
-            Self::Journal => 6,
+            Self::Adventure => 4,
+            Self::Journal => 5,
         }
     }
 
@@ -825,9 +822,8 @@ impl Pane {
             Self::Progress => "F2",
             Self::Equipment => "F3",
             Self::Details => "F4",
-            Self::Status => "F5",
-            Self::Adventure => "F6",
-            Self::Journal => "F7",
+            Self::Adventure => "F5",
+            Self::Journal => "F6",
         }
     }
 }
@@ -869,9 +865,8 @@ fn command(event: Event) -> Command {
         KeyCode::F(2) => Command::TogglePane(Pane::Progress),
         KeyCode::F(3) => Command::TogglePane(Pane::Equipment),
         KeyCode::F(4) => Command::TogglePane(Pane::Details),
-        KeyCode::F(5) => Command::TogglePane(Pane::Status),
-        KeyCode::F(6) => Command::TogglePane(Pane::Adventure),
-        KeyCode::F(7) => Command::TogglePane(Pane::Journal),
+        KeyCode::F(5) => Command::TogglePane(Pane::Adventure),
+        KeyCode::F(6) => Command::TogglePane(Pane::Journal),
         _ => Command::None,
     }
 }
@@ -1345,34 +1340,6 @@ fn render(
     } else {
         4
     };
-    let status_height = if full_layout && panes.is_collapsed(Pane::Status) {
-        2
-    } else {
-        3
-    };
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(header_height),
-            Constraint::Min(6),
-            Constraint::Length(status_height),
-            Constraint::Length(
-                if confirmation.is_some() && snapshot.character.compatibility.notice.is_some() {
-                    5
-                } else if full_layout || confirmation.is_some() {
-                    3
-                } else {
-                    5
-                },
-            ),
-        ])
-        .split(area);
-    render_header(frame, snapshot, updates, rows[0]);
-    if !full_layout {
-        render_compact(frame, snapshot, task_percent, updates, rows[1]);
-    } else {
-        render_full(frame, snapshot, task_percent, updates, rows[1], panes);
-    }
     let status = match (&snapshot.service, snapshot.runtime_owned) {
         (Some(state), Some(owned)) => format!(
             "Service: {state:?} | Runtime ownership: {}",
@@ -1380,21 +1347,15 @@ fn render(
         ),
         _ => "Service status unavailable".to_owned(),
     };
-    if full_layout && panes.is_collapsed(Pane::Status) {
-        frame.render_widget(pane_block("Status", Pane::Status), rows[2]);
-    } else {
-        let status_block = if full_layout {
-            pane_block("Status", Pane::Status)
-        } else {
-            Block::default().borders(Borders::ALL).title("Status")
-        };
-        frame.render_widget(
-            Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
-                .block(status_block)
-                .wrap(Wrap { trim: true }),
-            rows[2],
-        );
-    }
+    let full_status = snapshot.message.clone().unwrap_or_else(|| {
+        match (&snapshot.service, snapshot.runtime_owned) {
+            (Some(state), Some(owned)) => format!(
+                "Service: {state:?} | Runtime ownership: {}",
+                if owned { "owned" } else { "not owned" }
+            ),
+            _ => "Service status unavailable".to_owned(),
+        }
+    });
     let footer = match confirmation {
         Some(action @ (LifecycleAction::Start | LifecycleAction::Recover))
             if snapshot.character.compatibility.notice.is_some() =>
@@ -1411,19 +1372,141 @@ fn render(
             )
         }
         Some(action) => format!("Confirm {}? Enter=yes  Esc=cancel", action.label()),
-        None if full_layout => format!(
-            "q quit | b brag | m motto | g guild | {}",
-            lifecycle_help(snapshot.service.as_ref())
-        ),
-        None => format!(
-            "q quit | b brag\nm motto | g guild\n{}",
-            lifecycle_help(snapshot.service.as_ref())
-        ),
+        None => String::new(),
     };
-    frame.render_widget(
-        Paragraph::new(footer).block(Block::default().borders(Borders::ALL).title("Keys")),
-        rows[3],
-    );
+    let normal_keys = confirmation
+        .is_none()
+        .then(|| full_footer_line(snapshot.service.as_ref()));
+    if full_layout {
+        let footer_width = normal_keys
+            .as_ref()
+            .map(line_width)
+            .unwrap_or_else(|| footer.lines().map(str::len).max().unwrap_or(0));
+        let bottom_height = full_bottom_height(
+            area.width,
+            footer_width,
+            confirmation.is_some() && snapshot.character.compatibility.notice.is_some(),
+        );
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(header_height),
+                Constraint::Min(6),
+                Constraint::Length(bottom_height),
+            ])
+            .split(area);
+        let bottom = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(full_bottom_constraints())
+            .split(rows[2]);
+        render_header(frame, snapshot, updates, rows[0]);
+        render_full(frame, snapshot, task_percent, updates, rows[1], panes);
+        let keys = if let Some(line) = normal_keys {
+            Paragraph::new(line)
+        } else {
+            Paragraph::new(footer)
+        };
+        frame.render_widget(
+            keys.block(Block::default().borders(Borders::ALL).title("Keys"))
+                .wrap(Wrap { trim: true }),
+            bottom[0],
+        );
+        frame.render_widget(
+            Paragraph::new(full_status)
+                .block(Block::default().borders(Borders::ALL).title("Status"))
+                .wrap(Wrap { trim: true }),
+            bottom[1],
+        );
+    } else {
+        let footer_height =
+            if confirmation.is_some() && snapshot.character.compatibility.notice.is_some() {
+                5
+            } else if confirmation.is_some() {
+                3
+            } else {
+                compact_keys_height(
+                    area.width,
+                    line_width(normal_keys.as_ref().expect("normal keys were created")),
+                )
+            };
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(header_height),
+                Constraint::Min(6),
+                Constraint::Length(3),
+                Constraint::Length(footer_height),
+            ])
+            .split(area);
+        render_header(frame, snapshot, updates, rows[0]);
+        render_compact(frame, snapshot, task_percent, updates, rows[1]);
+        frame.render_widget(
+            Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
+                .block(Block::default().borders(Borders::ALL).title("Status"))
+                .wrap(Wrap { trim: true }),
+            rows[2],
+        );
+        let keys = if let Some(line) = normal_keys {
+            Paragraph::new(line)
+        } else {
+            Paragraph::new(footer)
+        };
+        frame.render_widget(
+            keys.block(Block::default().borders(Borders::ALL).title("Keys"))
+                .wrap(Wrap { trim: true }),
+            rows[3],
+        );
+    }
+}
+
+fn full_bottom_constraints() -> [Constraint; 2] {
+    [Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]
+}
+
+fn full_bottom_height(screen_width: u16, keys_content_width: usize, has_warning: bool) -> u16 {
+    if has_warning {
+        return 8;
+    }
+    responsive_keys_height(screen_width / 3, keys_content_width)
+}
+
+fn compact_keys_height(screen_width: u16, keys_content_width: usize) -> u16 {
+    responsive_keys_height(screen_width, keys_content_width)
+}
+
+fn responsive_keys_height(outer_width: u16, keys_content_width: usize) -> u16 {
+    let available_width = usize::from(outer_width.saturating_sub(2));
+    if keys_content_width <= available_width {
+        3
+    } else {
+        4
+    }
+}
+
+fn full_footer_line(service: Option<&ServiceState>) -> Line<'static> {
+    let action = lifecycle_help(service)
+        .strip_prefix("s ")
+        .expect("lifecycle help starts with its shortcut");
+    let key = Style::default().add_modifier(Modifier::BOLD);
+    Line::from(vec![
+        Span::styled("q", key),
+        Span::raw(" quit | "),
+        Span::styled("b", key),
+        Span::raw(" brag | "),
+        Span::styled("m", key),
+        Span::raw(" motto | "),
+        Span::styled("g", key),
+        Span::raw(" guild | "),
+        Span::styled("s", key),
+        Span::raw(format!(" {action}")),
+    ])
+}
+
+fn line_width(line: &Line<'_>) -> usize {
+    line.spans
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum()
 }
 
 fn render_editor(frame: &mut ratatui::Frame<'_>, editor: &ProfileEditor) {
@@ -1660,7 +1743,7 @@ fn render_full(
     render_pane(
         frame,
         right[1],
-        "Journal",
+        &format!("Journal - {}", state.plot.bestplot),
         Pane::Journal,
         panes,
         Paragraph::new(journal_lines(state)).wrap(Wrap { trim: true }),
@@ -1676,13 +1759,9 @@ fn adventure_lines(
         inventory_line(&character.inventory, updates),
         Line::from(""),
         spells_line(&character.spells, updates),
-        Line::from(""),
-        Line::from(format!(
-            "Plot: Act {} — {}",
-            character.plot.act, character.plot.bestplot
-        )),
     ];
     if show_current_quest {
+        lines.push(Line::from(""));
         lines.push(Line::from(format!(
             "Current quest: {}",
             character.current_quest
@@ -2618,7 +2697,7 @@ mod tests {
     #[test]
     fn left_panes_fill_details_and_cap_equipment_for_all_collapses() {
         for height in [20, 24, 40, 80] {
-            for mask in 0..128 {
+            for mask in 0..(1 << Pane::ALL.len()) {
                 let mut panes = PaneVisibility::default();
                 for (index, pane) in Pane::ALL.into_iter().enumerate() {
                     if mask & (1 << index) != 0 {
@@ -2864,9 +2943,17 @@ mod tests {
     }
 
     fn rendered_with_panes(width: u16, height: u16, panes: &PaneVisibility) -> String {
+        rendered_snapshot(width, height, &sample(), panes)
+    }
+
+    fn rendered_snapshot(
+        width: u16,
+        height: u16,
+        snapshot: &DashboardSnapshot,
+        panes: &PaneVisibility,
+    ) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
-        let snapshot = sample();
         let task_percent = snapshot.character.progress.task.percent;
         terminal
             .draw(|frame| {
@@ -3479,6 +3566,14 @@ mod tests {
                 .iter()
                 .any(|span| span.content.starts_with("Spells:"))
         );
+        assert!(lines[3].spans.is_empty());
+        assert!(
+            lines[4]
+                .spans
+                .iter()
+                .any(|span| span.content == "Current quest: Fetch me an anvil")
+        );
+        assert_eq!(expanded_journal.len(), 3);
     }
 
     fn text_position(
@@ -3783,6 +3878,10 @@ mod tests {
                 Command::TogglePane(pane)
             );
         }
+        assert_eq!(
+            command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::F(7)))),
+            Command::None
+        );
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::new(
                 KeyCode::Char('c'),
@@ -4329,7 +4428,7 @@ mod tests {
     fn collapsed_panes_hide_content_without_affecting_other_panes() {
         let mut panes = PaneVisibility::default();
         panes.toggle(Pane::Activity);
-        panes.toggle(Pane::Status);
+        panes.toggle(Pane::Adventure);
 
         let output = rendered_with_panes(120, 40, &panes);
 
@@ -4338,8 +4437,109 @@ mod tests {
         assert!(!output.contains("Tasks completed:"));
         assert!(output.contains("Equipment"));
         assert!(output.contains("Journal"));
-        assert!(output.contains("F7"));
-        assert!(!output.contains("Runtime ownership:"));
+        assert!(output.contains("F6"));
+        assert!(output.contains("Runtime ownership: not owned"));
+        assert!(!output.contains("F7"));
+    }
+
+    #[test]
+    fn full_layout_moves_plot_caption_to_journal_title() {
+        let mut snapshot = sample();
+        snapshot.character.plot.bestplot = "Act VIII".to_owned();
+
+        let output = rendered_snapshot(120, 40, &snapshot, &PaneVisibility::default());
+
+        assert!(output.contains("Journal - Act VIII"));
+        assert!(output.contains("F6"));
+        assert!(!output.contains("Plot:"));
+    }
+
+    #[test]
+    fn full_layout_aligns_bottom_panes_with_main_columns() {
+        for (width, height) in [(90, 4), (120, 4), (150, 3)] {
+            let areas = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints(full_bottom_constraints())
+                .split(Rect::new(0, 0, width, height));
+
+            assert_eq!(areas[0].width, width / 3);
+            assert_eq!(areas[1].width, width - width / 3);
+            assert_eq!(areas[0].height, height);
+            assert_eq!(areas[1].height, height);
+        }
+    }
+
+    #[test]
+    fn full_layout_bottom_panes_expand_only_when_keys_wrap() {
+        assert_eq!(full_bottom_height(90, 45, false), 4);
+        assert_eq!(full_bottom_height(120, 45, false), 4);
+        assert_eq!(full_bottom_height(150, 45, false), 3);
+        assert_eq!(full_bottom_height(144, 47, false), 4);
+        assert_eq!(full_bottom_height(147, 47, false), 3);
+        assert_eq!(full_bottom_height(150, 45, true), 8);
+    }
+
+    #[test]
+    fn compact_keys_expand_only_when_shortcuts_wrap() {
+        assert_eq!(compact_keys_height(40, 45), 4);
+        assert_eq!(compact_keys_height(70, 45), 3);
+        assert_eq!(compact_keys_height(70, 47), 3);
+    }
+
+    #[test]
+    fn full_layout_shortcut_keys_are_bold_and_spaced() {
+        let line = full_footer_line(Some(&ServiceState::Inactive));
+
+        assert_eq!(
+            line.to_string(),
+            "q quit | b brag | m motto | g guild | s start"
+        );
+        for index in [0, 2, 4, 6, 8] {
+            assert!(
+                line.spans[index]
+                    .style
+                    .add_modifier
+                    .contains(Modifier::BOLD)
+            );
+        }
+    }
+
+    #[test]
+    fn full_layout_places_keys_left_of_non_collapsible_status() {
+        for width in [90, 120, 150] {
+            let output = rendered(width, 40);
+            let keys = output.find("Keys").unwrap();
+            let status = output.find("Status").unwrap();
+
+            assert!(keys < status, "width={width}");
+            assert!(
+                output.contains("Runtime ownership: not owned"),
+                "width={width}"
+            );
+            for shortcut in ["q quit", "b brag", "m motto", "g guild", "s start"] {
+                assert!(
+                    output.contains(shortcut),
+                    "width={width}, shortcut={shortcut}"
+                );
+            }
+            assert!(!output.contains("F7"), "width={width}");
+        }
+    }
+
+    #[test]
+    fn compact_layout_retains_stacked_status_keys_and_plot() {
+        let output = rendered(70, 30);
+        let status = output.find("Status").unwrap();
+        let keys = output.find("Keys").unwrap();
+
+        assert!(status < keys);
+        assert!(output.contains("Plot: Act 1 — Act I"));
+        assert!(output.contains("q quit | b brag | m motto | g guild | s start"));
+
+        let wrapped = rendered(40, 30);
+        for shortcut in ["q quit", "b brag", "m motto", "g guild", "s start"] {
+            assert!(wrapped.contains(shortcut), "shortcut={shortcut}");
+        }
     }
 
     #[test]

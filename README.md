@@ -347,15 +347,20 @@ triggering actions. Empty input clears the motto or leaves the guild. After
 submission the dashboard refreshes persisted profile values and shows the
 same safe outcome categories as the CLI.
 
-In the full layout, F1 through F7 toggle Activity, Progress, Equipment, Details,
-Status, Adventure, and Journal. Expanded Activity has four total rows,
+In the full layout, F1 through F6 toggle Activity, Progress, Equipment, Details,
+Adventure, and Journal. The non-collapsible Status pane shares the bottom row
+with Keys, with Keys on the left at one-third width and Status on the right at
+two-thirds width. They use one content row when the shortcut line fits and
+expand to two only when it wraps. The Journal title includes the current plot caption (for example,
+`Journal - Act VIII`), while Adventure omits a separate plot row. Expanded Activity has four total rows,
 Progress seven, and Equipment at most thirteen (eleven content rows). Expanded
 Details fills the remaining vertical space, with a six-row minimum when space
 permits; collapsing it retains only its two border rows. Details shows the
 identifier and compact elapsed time (for example,
 `1d 1h 1m 1s` or `0s`), with Motto and Guild independently shown only when
 nonempty; it no longer shows Quest target. Narrow terminals retain the compact
-character view and display profile-editor shortcuts in the footer.
+character view; their Keys pane likewise uses one content row when the shortcut
+line fits and two only when it wraps.
 
 ## Reference fixtures
 

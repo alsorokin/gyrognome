@@ -21,13 +21,16 @@ recently accessed character first. When an identifier is supplied, it
 SHALL open that character directly. The dashboard SHALL display the persisted
 credential-safe identity, current activity, progress bars, equipment,
 inventory, spells, plot, and local runtime service status. In the full
-dashboard layout, the Adventure pane SHALL separate its inventory and spells
-lists with an empty line. It SHALL show the non-bold current quest labeled
-`Current quest:` only when the Journal pane is collapsed. The dashboard SHALL
-present a separate Journal pane whose first line is the bold current-quest
-value without a label and whose subsequent completed quests are ordered from
-most recent to oldest. It SHALL report an actionable error when the requested
-character is not registered.
+dashboard layout, the Adventure content SHALL NOT include a separate plot
+row. The Adventure pane SHALL separate its inventory and spells lists with an
+empty line. It SHALL show the non-bold current quest labeled `Current quest:`
+only when the Journal pane is collapsed, separated from the spells list by an
+empty line. The dashboard SHALL present a separate Journal pane whose title
+appends the canonical current plot caption after `Journal - `, for example
+`Journal - Act VIII`. The Journal pane's first line SHALL be the bold
+current-quest value without a label and its subsequent completed quests SHALL
+be ordered from most recent to oldest. It SHALL report an actionable error
+when the requested character is not registered.
 
 #### Scenario: Opening a registered character
 
@@ -70,6 +73,12 @@ character is not registered.
 - **THEN** the system reports that the managed character was not found and does
   not enter the interactive terminal view
 
+#### Scenario: Viewing plot context in the full dashboard
+
+- **WHEN** a registered character's canonical current plot caption is `Act VIII`
+- **THEN** the Journal pane title is `Journal - Act VIII`
+- **AND** the Adventure content does not render a separate plot row
+
 #### Scenario: Viewing quest information in the full dashboard
 
 - **WHEN** a registered character has completed quests and an expanded Journal
@@ -84,6 +93,7 @@ character is not registered.
   collapsed
 - **THEN** Adventure displays only the non-bold current quest with the
   `Current quest:` label
+- **AND** an empty line separates it from the spells list
 
 ### Requirement: Recent task update indicator
 
@@ -139,9 +149,20 @@ completion interval.
 ### Requirement: Collapsible dashboard panes
 
 The full dashboard SHALL let the user independently collapse and expand the
-Activity, Progress, Equipment, Details, Status, Adventure, and Journal panes
-using F1 through F7, respectively. Each of those pane headers SHALL display
-its assigned hotkey right-aligned. Collapsing a pane SHALL hide its content and
+Activity, Progress, Equipment, Details, Adventure, and Journal panes using F1
+through F6, respectively. Each collapsible pane header SHALL display its
+assigned hotkey right-aligned. The Status pane SHALL remain expanded and SHALL
+NOT have a collapse hotkey. The full dashboard SHALL place Keys and Status in
+the same bottom row, with Keys on the left and Status on the right. Keys SHALL
+use the same one-third width as the full dashboard's left pane column, and
+Status SHALL use the remaining two-thirds width. In the normal full-dashboard
+state, each bottom pane SHALL occupy three terminal rows when the complete
+Keys line fits in one inner-content row. When the Keys line does not fit, both
+bottom panes SHALL expand to four terminal rows so Keys can wrap across two
+inner-content rows.
+The Keys pane SHALL render each shortcut key with bold emphasis.
+Confirmation warnings MAY temporarily increase the bottom-row height so their
+safety text remains visible. Collapsing a pane SHALL hide its content and
 reduce its layout allocation while preserving the visibility and state of
 every other pane. When both are expanded, Journal SHALL consume no more than
 one quarter of the usable right-column height and Adventure SHALL receive the
@@ -150,12 +171,14 @@ occupy exactly four terminal rows, consisting of two border rows and two
 inner-content rows. Expanded Details SHALL fill all remaining left-column
 height after allocating Activity, Progress, and the capped Equipment pane,
 with at least eight total rows when space permits. Collapsed Details SHALL
-occupy only its two border rows. Progress SHALL occupy
-exactly seven terminal rows, consisting of two border rows and five inner
-progress-bar rows. Equipment SHALL receive flexible space when available but
-its inner content height SHALL NOT exceed eleven rows, matching the maximum
-number of equipment slots. The dashboard SHALL retain its existing compact
-view for terminals that do not use the full layout.
+occupy only its two border rows. Progress SHALL occupy exactly seven terminal
+rows, consisting of two border rows and five inner progress-bar rows.
+Equipment SHALL receive flexible space when available but its inner content
+height SHALL NOT exceed eleven rows, matching the maximum number of equipment
+slots. The dashboard SHALL retain its existing compact character and Status
+view for terminals that do not use the full layout. The compact Keys pane
+SHALL use one inner-content row when its complete shortcut line fits and SHALL
+expand to two inner-content rows only when that line wraps.
 
 #### Scenario: Collapsing a pane
 
@@ -167,6 +190,24 @@ view for terminals that do not use the full layout.
 
 - **WHEN** a user presses the F-key assigned to a collapsed pane
 - **THEN** the dashboard restores the pane's content and layout allocation
+
+#### Scenario: Keeping Status visible
+
+- **WHEN** the full dashboard is displayed or another pane is collapsed
+- **THEN** Status remains expanded in the bottom-right pane without an F-key
+  shortcut
+
+#### Scenario: Arranging the bottom panes
+
+- **WHEN** the full dashboard layout is displayed
+- **THEN** Keys and Status share the bottom row with Keys on the left and
+  Status on the right
+- **AND** Keys uses one third of the width and Status uses two thirds
+- **AND** Keys displays every normal shortcut/action group separated by ` | `,
+  wrapping only when necessary
+- **AND** each pane has one inner-content row when the Keys line fits and two
+  inner-content rows when it wraps
+- **AND** the Keys pane renders each shortcut key in bold
 
 #### Scenario: Allocating Journal height
 
@@ -206,13 +247,16 @@ view for terminals that do not use the full layout.
 #### Scenario: Discovering pane shortcuts
 
 - **WHEN** the full dashboard layout is displayed
-- **THEN** each collapsible pane header shows its corresponding F1 through F7
-  hotkey on the right side
+- **THEN** Activity, Progress, Equipment, Details, Adventure, and Journal show
+  F1, F2, F3, F4, F5, and F6 respectively on the right side of their headers
 
 #### Scenario: Viewing the compact dashboard
 
 - **WHEN** the terminal is below the full-layout width threshold
-- **THEN** the dashboard continues to render its compact character view
+- **THEN** the dashboard continues to render its compact character and Status
+  view
+- **AND** its Keys pane uses one content row when the shortcut line fits and
+  two only when it wraps
 
 ### Requirement: Predicted current-task progress
 

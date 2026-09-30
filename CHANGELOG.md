@@ -4,6 +4,13 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- Reorganized the full dashboard: the Journal title shows the current plot,
+  Status stays visible beside Keys, and F1-F6 toggle Activity, Progress,
+  Equipment, Details, Adventure, and Journal. Keys now adapt their height to
+  wrapped content while preserving the compact dashboard layout.
+
 ## [1.0.0] - 2026-09-30
 
 The first feature-complete release of Gyrognome, a Linux-native Progress Quest
