@@ -1,0 +1,31 @@
+{
+  "format": "gyrognome-desktop-operation-evidence/v3",
+  "integritySha256": "b5364c417826345ce6fcc4735af1489f2a283ebdcb00237731bbe6d4b2b34d46",
+  "payload": {
+    "acceptedCases": ["manual-consumed"],
+    "classification": "normal",
+    "cleanupComplete": true,
+    "credentialMode": "passkey-only",
+    "encoding": "ascii",
+    "implementationIdentity": "desktop-online-contract/pemptus/v1",
+    "importPath": {
+      "adaptations": [],
+      "layout": "supported-component-stream",
+      "sourceFormat": "desktop-delphi-component-stream"
+    },
+    "observedOn": "2026-10-01",
+    "operations": ["manual-brag"],
+    "realm": "Pemptus",
+    "savedEndpoint": "http://progressquest.com/pemptus.php?",
+    "sourceIdentity": {
+      "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+      "configDfmSha256": "ac42dfaf747713e5f91080fec698b697c69000f75405ed1d787e70ea71619600",
+      "mainPasSha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24",
+      "tag": "v6.4.4"
+    },
+    "status": "passing",
+    "targetProfile": "desktop-6.4.4",
+    "validThrough": "2027-10-01",
+    "verifiedHttpsEndpoint": "https://progressquest.com/pemptus.php"
+  }
+}

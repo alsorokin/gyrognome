@@ -56,6 +56,7 @@ pub struct DesktopGuildEvidence<'a> {
 
 pub struct DesktopGuildResponseRules {
     accepted_fingerprint: String,
+    change_accepted_fingerprint: Option<String>,
     rejected_fingerprint: Option<String>,
 }
 
@@ -64,24 +65,28 @@ impl DesktopGuildResponseRules {
         realm: &str,
         operation: DesktopGuildOperation,
     ) -> Result<Self, DesktopProfileError> {
-        if realm != "Spoltog" {
-            return Err(DesktopProfileError::RealmMismatch);
-        }
-        let Some((normalization, join_accepted, rejected, leave_accepted)) =
-            crate::desktop_evidence::production_guild_response_fingerprints()
-        else {
-            return Err(DesktopProfileError::EvidenceUnavailable);
-        };
-        if normalization != DESKTOP_RESPONSE_FINGERPRINT_VERSION {
+        let contract = crate::desktop_contract::realm_contract(realm)
+            .map_err(|_| DesktopProfileError::RealmMismatch)?;
+        let evidence = crate::desktop_evidence::production_desktop_evidence(
+            contract,
+            crate::desktop_eligibility::DesktopOnlineOperation::Guild,
+        )
+        .map_err(|_| DesktopProfileError::EvidenceUnavailable)?;
+        let fingerprints = evidence
+            .guild_fingerprints()
+            .ok_or(DesktopProfileError::EvidenceUnavailable)?;
+        if fingerprints.normalization != DESKTOP_RESPONSE_FINGERPRINT_VERSION {
             return Err(DesktopProfileError::EvidenceUnavailable);
         }
         Ok(match operation {
             DesktopGuildOperation::JoinOrChange => Self {
-                accepted_fingerprint: join_accepted.to_owned(),
-                rejected_fingerprint: Some(rejected.to_owned()),
+                accepted_fingerprint: fingerprints.join,
+                change_accepted_fingerprint: fingerprints.change,
+                rejected_fingerprint: Some(fingerprints.rejected),
             },
             DesktopGuildOperation::Leave => Self {
-                accepted_fingerprint: leave_accepted.to_owned(),
+                accepted_fingerprint: fingerprints.leave,
+                change_accepted_fingerprint: None,
                 rejected_fingerprint: None,
             },
         })
@@ -117,6 +122,7 @@ impl DesktopGuildResponseRules {
         }
         Ok(Self {
             accepted_fingerprint: evidence.accepted_fingerprint.to_ascii_lowercase(),
+            change_accepted_fingerprint: None,
             rejected_fingerprint: Some(evidence.rejected_fingerprint.to_ascii_lowercase()),
         })
     }
@@ -131,7 +137,12 @@ impl DesktopGuildResponseRules {
             return DesktopGuildOutcome::Indeterminate;
         }
         let fingerprint = dynamic_values.fingerprint(body);
-        if fingerprint == self.accepted_fingerprint {
+        if fingerprint == self.accepted_fingerprint
+            || self
+                .change_accepted_fingerprint
+                .as_ref()
+                .is_some_and(|value| value == &fingerprint)
+        {
             DesktopGuildOutcome::Accepted
         } else if self
             .rejected_fingerprint
@@ -210,7 +221,143 @@ pub(crate) fn public_guild(page: &str, name: &str) -> Option<Option<String>> {
     observed
 }
 
-fn cell_text(cell: &str) -> Option<&str> {
+pub(crate) fn public_guild_matches(observed: Option<&str>, submitted: &str) -> bool {
+    match observed {
+        Some(guild) => !submitted.is_empty() && guild.eq_ignore_ascii_case(submitted),
+        None => submitted.is_empty(),
+    }
+}
+
+pub(crate) fn public_guild_for_realm(
+    realm: &str,
+    page: &str,
+    name: &str,
+) -> Option<Option<String>> {
+    match realm {
+        "Spoltog" => public_guild(page, name),
+        "Pemptus" => pemptus_public_row(page, name).map(|(_, guild)| guild),
+        _ => None,
+    }
+}
+
+pub(crate) fn pemptus_public_row(page: &str, name: &str) -> Option<(Vec<String>, Option<String>)> {
+    const HEADERS: [&str; 11] = [
+        "Rank",
+        "Name",
+        "Race",
+        "Class",
+        "Level",
+        "Prime Stat",
+        "Plot Stage",
+        "Prized Item",
+        "Specialty",
+        "Motto",
+        "Guild",
+    ];
+    fn cells<'a>(row: &'a str, tag: &str) -> Option<Vec<&'a str>> {
+        let marker = format!("<{tag}");
+        row.split(&marker)
+            .skip(1)
+            .map(|cell| {
+                let (attributes, text) = cell.split_once('>')?;
+                if (!attributes.is_empty() && !attributes.starts_with(char::is_whitespace))
+                    || attributes.to_ascii_lowercase().contains("span")
+                {
+                    return None;
+                }
+                Some(text)
+            })
+            .collect()
+    }
+    fn text(cell: &str) -> Option<String> {
+        let value = cell_text(cell)?;
+        let remaining = &cell[value.len()..];
+        // Only a plain value or one complete link is supported.
+        let remaining = if cell.starts_with("<a") {
+            let (_, content) = cell.split_once('>')?;
+            content.strip_prefix(value)?.strip_prefix("</a>")?
+        } else {
+            remaining
+        };
+        if !remaining.trim().is_empty()
+            && remaining.trim() != "</td>"
+            && remaining.trim() != "</th>"
+        {
+            return None;
+        }
+        html_unescape(value.trim())
+    }
+    let mut found = None;
+    let mut remaining = page;
+    while let Some((_, table)) = remaining.split_once("<table") {
+        let (attributes, table) = table.split_once('>')?;
+        if !attributes.is_empty() && !attributes.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let (table, rest) = table.split_once("</table>")?;
+        if table.contains("<table") {
+            return None;
+        }
+        remaining = rest;
+        let mut header = false;
+        for row in table.split("<tr").skip(1) {
+            let (attributes, row) = row.split_once('>')?;
+            if (!attributes.is_empty() && !attributes.starts_with(char::is_whitespace))
+                || attributes.to_ascii_lowercase().contains("span")
+            {
+                return None;
+            }
+            let row = row
+                .trim()
+                .strip_suffix("</tr>")
+                .unwrap_or(row.trim())
+                .trim();
+            let headings = cells(row, "th")?;
+            let values = cells(row, "td")?;
+            if !headings.is_empty() {
+                if !values.is_empty() || header {
+                    return None;
+                }
+                let mut decoded = headings
+                    .iter()
+                    .map(|cell| text(cell))
+                    .collect::<Option<Vec<_>>>()?;
+                if decoded.get(9).map(String::as_str) == Some("Motto (Ctrl-M)") {
+                    decoded[9] = "Motto".to_owned();
+                }
+                if decoded.get(10).map(String::as_str) == Some("Guild (Ctrl-G)") {
+                    decoded[10] = "Guild".to_owned();
+                }
+                header = decoded == HEADERS;
+                continue;
+            }
+            let decoded = values
+                .iter()
+                .map(|cell| text(cell))
+                .collect::<Option<Vec<_>>>()?;
+            if decoded.get(1).map(String::as_str) != Some(name) {
+                continue;
+            }
+            if !header || !(10..=11).contains(&decoded.len()) || found.is_some() {
+                return None;
+            }
+            let guild = if decoded.len() == 10 || decoded[10].is_empty() {
+                if values.get(10).is_some_and(|cell| cell.contains("<a")) {
+                    return None;
+                }
+                None
+            } else if values[10].starts_with("<a") && values[10].contains("guilds.php?id=") {
+                Some(decoded[10].clone())
+            } else {
+                return None;
+            };
+            found = Some((decoded[1..10].to_vec(), guild));
+        }
+    }
+    found
+}
+
+pub(crate) fn cell_text(cell: &str) -> Option<&str> {
     let text = if let Some(anchor) = cell.strip_prefix("<a") {
         anchor.split_once('>')?.1
     } else {
@@ -219,7 +366,7 @@ fn cell_text(cell: &str) -> Option<&str> {
     Some(text.split('<').next().unwrap_or_default())
 }
 
-fn html_unescape(value: &str) -> Option<String> {
+pub(crate) fn html_unescape(value: &str) -> Option<String> {
     let mut decoded = String::with_capacity(value.len());
     let mut remaining = value;
     while let Some(offset) = remaining.find('&') {
@@ -357,6 +504,65 @@ mod tests {
     }
 
     #[test]
+    fn pemptus_rules_select_their_own_join_change_leave_and_rejected_evidence() {
+        use crate::desktop_evidence::{
+            DesktopGuildFingerprints, synthetic_pemptus_evidence, with_synthetic_desktop_evidence,
+        };
+        let values = fingerprint_values("Old Guild", "New Guild");
+        let record = synthetic_pemptus_evidence(
+            crate::desktop_eligibility::DesktopOnlineOperation::Guild,
+            Some(DesktopGuildFingerprints {
+                normalization: DESKTOP_RESPONSE_FINGERPRINT_VERSION.to_owned(),
+                join: values.fingerprint(b"Joined New Guild"),
+                change: Some(values.fingerprint(b"Changed New Guild")),
+                leave: values.fingerprint(b"Left Old Guild"),
+                rejected: values.fingerprint(b"Rejected New Guild"),
+            }),
+        );
+        with_synthetic_desktop_evidence(vec![record], || {
+            let rules = DesktopGuildResponseRules::production(
+                "Pemptus",
+                DesktopGuildOperation::JoinOrChange,
+            )
+            .unwrap();
+            assert_eq!(
+                rules.classify(200, b"Joined New Guild", &values),
+                DesktopGuildOutcome::Accepted
+            );
+            assert_eq!(
+                rules.classify(200, b"Changed New Guild", &values),
+                DesktopGuildOutcome::Accepted
+            );
+            assert_eq!(
+                rules.classify(200, b"Rejected New Guild", &values),
+                DesktopGuildOutcome::Rejected
+            );
+            assert_eq!(
+                rules.classify(200, b"Unknown", &values),
+                DesktopGuildOutcome::Indeterminate
+            );
+            let leave =
+                DesktopGuildResponseRules::production("Pemptus", DesktopGuildOperation::Leave)
+                    .unwrap();
+            assert_eq!(
+                leave.classify(200, b"Left Old Guild", &values),
+                DesktopGuildOutcome::Accepted
+            );
+            assert!(
+                DesktopGuildResponseRules::production(
+                    "Spoltog",
+                    DesktopGuildOperation::JoinOrChange
+                )
+                .is_err()
+            );
+        });
+        assert!(
+            DesktopGuildResponseRules::production("Pemptus", DesktopGuildOperation::JoinOrChange)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn unknown_oversized_rejected_and_failed_guild_results_preserve_membership() {
         let rules = rules(DesktopGuildOperation::JoinOrChange);
         let values = fingerprint_values("Old Guild", "New Guild");
@@ -476,6 +682,68 @@ mod tests {
             Err(DesktopProfileError::UnsupportedEncoding)
         ));
         assert_eq!(profile.guild, "New Guild");
+    }
+
+    #[test]
+    fn shared_guild_matching_preserves_case_equivalence_and_empty_leave() {
+        assert!(public_guild_matches(Some("BEERguild"), "BEERGuild"));
+        assert!(public_guild_matches(Some("Guild B"), "gUiLd b"));
+        assert!(public_guild_matches(None, ""));
+        assert!(!public_guild_matches(None, "Guild"));
+        assert!(!public_guild_matches(Some("Guild"), ""));
+        assert!(!public_guild_matches(Some("Other"), "Guild"));
+    }
+
+    #[test]
+    fn pemptus_requires_declared_unambiguous_guild_column() {
+        let header = "<h1>Hall of Fame</h1><table><tr><th>Rank<th>Name<th>Race<th>Class<th>Level<th>Prime Stat<th>Plot Stage<th>Prized Item<th>Specialty<th>Motto<th>Guild";
+        let row =
+            "<tr><td>1<td>Hero<td>Race<td>Class<td>1<td>STR 1<td>Act I<td>Item<td>Skill<td>Motto";
+        let omitted = format!("{header}{row}</table>");
+        assert_eq!(
+            public_guild_for_realm("Pemptus", &omitted, "Hero"),
+            Some(None)
+        );
+        assert_eq!(public_guild_for_realm("Spoltog", &omitted, "Hero"), None);
+        assert_eq!(public_guild_for_realm("Unknown", &omitted, "Hero"), None);
+        let official = omitted
+            .replace("<th>Motto", "<th>Motto (Ctrl-M)\n")
+            .replace("<th>Guild", "<th>Guild (Ctrl-G)")
+            .replace("<tr><td>1", "<tr class=bob><td align=right>1");
+        assert_eq!(
+            public_guild_for_realm("Pemptus", &official, "Hero"),
+            Some(None)
+        );
+        for guild in ["Guild A", "Guild B"] {
+            let page = format!("{header}{row}<td><a href='guilds.php?id=1'>{guild}</a></table>");
+            assert_eq!(
+                public_guild_for_realm("Pemptus", &page, "Hero"),
+                Some(Some(guild.to_owned()))
+            );
+        }
+        assert_eq!(
+            public_guild_for_realm("Pemptus", &format!("{header}{row}<td></table>"), "Hero"),
+            Some(None)
+        );
+        for page in [
+            format!("<table>{row}</table>"),
+            omitted.replace("<th>Guild", ""),
+            omitted.replace("<th>Guild", "<th>Other"),
+            omitted.replace("<td>Class", "<td colspan='2'>Class"),
+            omitted.replace("<th>Name", "<th rowspan='2'>Name"),
+            format!("{header}{row}<td><td>Extra</table>"),
+            format!("{header}{row}{row}</table>"),
+            omitted.replace("<td>Item", ""),
+            omitted.replace("<td>Motto", "<td><b>Motto</b>"),
+            format!("{header}{row}<td>Unlinked Guild</table>"),
+            format!("{header}{row}<td><a href='guilds.php?id=1'></a></table>"),
+        ] {
+            assert_eq!(
+                public_guild_for_realm("Pemptus", &page, "Hero"),
+                None,
+                "{page}"
+            );
+        }
     }
 
     #[test]

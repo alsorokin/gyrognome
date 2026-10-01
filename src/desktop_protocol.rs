@@ -10,6 +10,8 @@ use crate::{
 };
 
 pub const REVISION: &str = "8";
+#[cfg(feature = "desktop-live-conformance")]
+pub(crate) const PUBLIC_REPORT_FIELDS: [&str; 9] = ["n", "r", "c", "l", "k", "a", "i", "z", "m"];
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DesktopProtocolError {
@@ -128,6 +130,21 @@ pub struct ConstructedDesktopGuildRequest {
 }
 
 impl ConstructedDesktopReport {
+    #[cfg(feature = "desktop-live-conformance")]
+    pub(crate) fn public_cells(&self) -> Option<Vec<String>> {
+        PUBLIC_REPORT_FIELDS
+            .into_iter()
+            .map(|name| {
+                self.fields_before_validator
+                    .iter()
+                    .chain(&self.fields_after_validator)
+                    .find(|field| field.name == name)
+                    .map(|field| field.value.clone())
+                    .or_else(|| (name == "z").then(String::new))
+            })
+            .collect()
+    }
+
     pub fn encoded_query(&self) -> String {
         let mut fields = self.fields_before_validator.clone();
         fields.push(DesktopProtocolField {

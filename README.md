@@ -1,7 +1,8 @@
 # Gyrognome
 
 Gyrognome is a Linux-native Progress Quest client with a Rust compatibility
-core and online leaderboard reporting for eligible characters (Alpaquil and Spoltog realms for now).
+core and online leaderboard reporting for eligible characters (Alpaquil,
+Spoltog, and limited Pemptus operations).
 
 <img width="1920" height="1054" alt="image" src="https://github.com/user-attachments/assets/78c91f56-bc8d-48e8-8dd2-3e48f42a645d" />
 
@@ -41,8 +42,25 @@ available for developers with Rust installed.
 - Enables classic desktop level, act, manual brag, motto, and guild operations
   only for fresh `desktop-6.4.4` Spoltog imports covered by bundled passing
   evidence. Unadapted imports and imports recording only the deterministic
-  `load-spelling-patch` normalization are covered; every other realm, endpoint,
-  credential mode, adaptation, encoding, and local-only fork remains closed.
+  `load-spelling-patch` normalization are covered; unsupported contracts,
+  adaptations, encodings, and local-only forks remain closed.
+- Provides realm-aware Pemptus passkey-only transport and separately scoped
+  development conformance stages. Bundled independent evidence enables manual
+  brag and motto set/clear for fresh, unadapted or spelling-only-normalized
+  `desktop-6.4.4` Pemptus imports. Automatic level/act and guild operations remain
+  gated. Any local advancement permanently forks the managed Pemptus timeline
+  local-only because automatic evidence is absent; manual/motto availability
+  does not prevent this. The earlier diagnostic is still non-enabling.
+- Allows an explicitly approved older disposable Pemptus character in the
+  immediate conformance stage, with exact baseline checks, separately counted
+  initial guild cleanup, and preservation of original save files. This does
+  not authorize progression or bypass production evidence gates. A freshly
+  approved 60-second read-only window can reconcile only the sole uncertain
+  preparatory leave; it never replays a mutation or supplies operation evidence.
+- Supports a separately approved, non-enabling continuation of the specific
+  operator-accepted guild join, without repeating completed live checks. Missing
+  join response fingerprints still exclude guild production evidence; only
+  independently conclusive operation records can be promoted after cleanup.
 
 See [Classic desktop save compatibility](docs/classic-desktop-compatibility.md)
 for supported save layouts, continuation behavior, normalization, online

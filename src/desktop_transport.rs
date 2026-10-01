@@ -1,5 +1,6 @@
 use std::{fmt, io::Read, time::Duration};
 
+use crate::desktop_eligibility::DesktopCredentialMode;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use thiserror::Error;
 use url::Url;
@@ -23,6 +24,8 @@ pub enum DesktopTransportError {
     CredentialBearingRedirect,
     #[error("desktop request delivery failed")]
     DeliveryFailed,
+    #[error("desktop credentials do not match the verified authentication contract")]
+    InvalidCredentials,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -38,6 +41,20 @@ impl DesktopTransportCredentials {
             password: password.into(),
         }
     }
+
+    pub(crate) fn authorization_header(
+        &self,
+        mode: DesktopCredentialMode,
+    ) -> Result<Option<String>, DesktopTransportError> {
+        validate_transport_credentials(mode, self)?;
+        Ok(match mode {
+            DesktopCredentialMode::AccountPassword => Some(format!(
+                "Basic {}",
+                STANDARD.encode(format!("{}:{}", self.account, self.password))
+            )),
+            DesktopCredentialMode::PasskeyOnly => None,
+        })
+    }
 }
 
 impl fmt::Debug for DesktopTransportCredentials {
@@ -52,8 +69,18 @@ impl fmt::Debug for DesktopTransportCredentials {
 
 #[derive(Clone)]
 pub struct VerifiedDesktopEndpoint {
+    realm: String,
     endpoint: Url,
     authentication: VerifiedAuthenticationContract,
+}
+
+impl VerifiedDesktopEndpoint {
+    pub fn realm(&self) -> &str {
+        &self.realm
+    }
+    pub fn credential_mode(&self) -> DesktopCredentialMode {
+        self.authentication
+    }
 }
 
 impl fmt::Debug for VerifiedDesktopEndpoint {
@@ -66,8 +93,7 @@ impl fmt::Debug for VerifiedDesktopEndpoint {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct VerifiedAuthenticationContract;
+type VerifiedAuthenticationContract = DesktopCredentialMode;
 
 struct EndpointMapping<'a> {
     realm: &'a str,
@@ -76,18 +102,22 @@ struct EndpointMapping<'a> {
     authentication: Option<VerifiedAuthenticationContract>,
 }
 
-const SPOLTOG_MAPPING: EndpointMapping<'static> = EndpointMapping {
-    realm: "Spoltog",
-    saved_endpoint: "http://progressquest.com/spoltog.php?",
-    verified_https_endpoint: "https://progressquest.com/spoltog.php",
-    authentication: Some(VerifiedAuthenticationContract),
-};
-
 pub fn resolve_verified_desktop_endpoint(
     realm: &str,
     saved_endpoint: &str,
 ) -> Result<VerifiedDesktopEndpoint, DesktopTransportError> {
-    resolve_from_mappings(realm, saved_endpoint, &[SPOLTOG_MAPPING])
+    let contract = crate::desktop_contract::realm_contract(realm)
+        .map_err(|_| DesktopTransportError::UnverifiedEndpoint)?;
+    resolve_from_mappings(
+        realm,
+        saved_endpoint,
+        &[EndpointMapping {
+            realm: contract.realm,
+            saved_endpoint: contract.saved_endpoint,
+            verified_https_endpoint: contract.https_endpoint,
+            authentication: Some(contract.credential_mode),
+        }],
+    )
 }
 
 fn resolve_from_mappings(
@@ -115,6 +145,7 @@ fn resolve_from_mappings(
         return Err(DesktopTransportError::InvalidVerifiedEndpoint);
     }
     Ok(VerifiedDesktopEndpoint {
+        realm: mapping.realm.to_owned(),
         endpoint,
         authentication,
     })
@@ -187,6 +218,7 @@ fn fetch_verified_desktop_public_profile_with(
 pub struct DesktopHttpRequest<'a> {
     pub endpoint: Url,
     pub credentials: &'a DesktopTransportCredentials,
+    pub authentication: DesktopCredentialMode,
 }
 
 impl fmt::Debug for DesktopHttpRequest<'_> {
@@ -230,11 +262,13 @@ impl<C: DesktopHttpClient> DesktopHttpsTransport<C> {
         encoded_query: &str,
         credentials: &DesktopTransportCredentials,
     ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+        validate_transport_credentials(target.authentication, credentials)?;
         let mut endpoint = target.endpoint.clone();
         endpoint.set_query(Some(encoded_query));
         let response = self.client.send(DesktopHttpRequest {
             endpoint,
             credentials,
+            authentication: target.authentication,
         })?;
         if let Some(redirect) = response.redirect {
             if redirect.scheme() != "https" {
@@ -247,6 +281,9 @@ impl<C: DesktopHttpClient> DesktopHttpsTransport<C> {
         }
         if (300..400).contains(&response.status) {
             return Err(DesktopTransportError::RedirectRejected);
+        }
+        if response.body.len() as u64 > MAX_RESPONSE_BYTES {
+            return Err(DesktopTransportError::DeliveryFailed);
         }
         Ok(response)
     }
@@ -275,17 +312,8 @@ impl DesktopHttpClient for UreqDesktopHttpClient {
         &self,
         request: DesktopHttpRequest<'_>,
     ) -> Result<DesktopHttpResponse, DesktopTransportError> {
-        let authorization = format!(
-            "Basic {}",
-            STANDARD.encode(format!(
-                "{}:{}",
-                request.credentials.account, request.credentials.password
-            ))
-        );
         let mut response = self
-            .agent
-            .get(request.endpoint.as_str())
-            .header("Authorization", &authorization)
+            .prepare_request(&request)?
             .call()
             .map_err(|_| DesktopTransportError::DeliveryFailed)?;
         let status = response.status().as_u16();
@@ -316,6 +344,46 @@ impl DesktopHttpClient for UreqDesktopHttpClient {
     }
 }
 
+fn validate_transport_credentials(
+    mode: DesktopCredentialMode,
+    credentials: &DesktopTransportCredentials,
+) -> Result<(), DesktopTransportError> {
+    let valid = match mode {
+        DesktopCredentialMode::AccountPassword => {
+            !credentials.account.is_empty()
+                && !credentials.password.is_empty()
+                && credentials.account.is_ascii()
+                && credentials.password.is_ascii()
+        }
+        DesktopCredentialMode::PasskeyOnly => {
+            credentials.account.is_empty() && credentials.password.is_empty()
+        }
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(DesktopTransportError::InvalidCredentials)
+    }
+}
+
+impl UreqDesktopHttpClient {
+    fn prepare_request(
+        &self,
+        request: &DesktopHttpRequest<'_>,
+    ) -> Result<ureq::RequestBuilder<ureq::typestate::WithoutBody>, DesktopTransportError> {
+        let builder = self.agent.get(request.endpoint.as_str());
+        Ok(
+            match request
+                .credentials
+                .authorization_header(request.authentication)?
+            {
+                Some(authorization) => builder.header("Authorization", authorization),
+                None => builder,
+            },
+        )
+    }
+}
+
 pub fn deliver_verified_desktop_request(
     target: &VerifiedDesktopEndpoint,
     encoded_query: &str,
@@ -338,7 +406,7 @@ mod tests {
         realm: "Synthetic Realm",
         saved_endpoint: "https://legacy.synthetic.invalid/",
         verified_https_endpoint: "https://verified.synthetic.invalid/report",
-        authentication: Some(VerifiedAuthenticationContract),
+        authentication: Some(VerifiedAuthenticationContract::AccountPassword),
     };
 
     struct SyntheticClient {
@@ -366,6 +434,96 @@ mod tests {
 
     fn credentials() -> DesktopTransportCredentials {
         DesktopTransportCredentials::new("synthetic-account", "synthetic-password")
+    }
+
+    #[test]
+    fn constructed_requests_use_only_the_selected_realms_authorization() {
+        let client = UreqDesktopHttpClient::default();
+        for contract in [
+            crate::desktop_contract::SPOLTOG,
+            crate::desktop_contract::PEMPTUS,
+            crate::desktop_contract::SPOLTOG,
+            crate::desktop_contract::PEMPTUS,
+        ] {
+            let credentials = match contract.credential_mode {
+                DesktopCredentialMode::AccountPassword => credentials(),
+                DesktopCredentialMode::PasskeyOnly => DesktopTransportCredentials::new("", ""),
+            };
+            let request = client
+                .prepare_request(&DesktopHttpRequest {
+                    endpoint: Url::parse(contract.https_endpoint).unwrap(),
+                    credentials: &credentials,
+                    authentication: contract.credential_mode,
+                })
+                .unwrap();
+            let headers = request.headers_ref().unwrap();
+            match contract.credential_mode {
+                DesktopCredentialMode::PasskeyOnly => {
+                    assert!(!headers.contains_key("Authorization"))
+                }
+                DesktopCredentialMode::AccountPassword => assert_eq!(
+                    headers["Authorization"],
+                    format!(
+                        "Basic {}",
+                        STANDARD.encode("synthetic-account:synthetic-password")
+                    ),
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn wrong_credentials_fail_before_the_adapter_and_response_limits_apply_once() {
+        for (contract, credentials) in [
+            (crate::desktop_contract::PEMPTUS, credentials()),
+            (
+                crate::desktop_contract::PEMPTUS,
+                DesktopTransportCredentials::new("a", ""),
+            ),
+            (
+                crate::desktop_contract::SPOLTOG,
+                DesktopTransportCredentials::new("", ""),
+            ),
+        ] {
+            let target =
+                resolve_verified_desktop_endpoint(contract.realm, contract.saved_endpoint).unwrap();
+            let transport = DesktopHttpsTransport::new(SyntheticClient {
+                calls: RefCell::new(vec![]),
+                response: RefCell::new(None),
+            });
+            assert_eq!(
+                transport
+                    .deliver(&target, "cmd=b", &credentials)
+                    .unwrap_err(),
+                DesktopTransportError::InvalidCredentials
+            );
+            assert!(transport.client.calls.borrow().is_empty());
+        }
+        for response in [
+            None,
+            Some(DesktopHttpResponse {
+                status: 200,
+                redirect: None,
+                body: vec![b'x'; MAX_RESPONSE_BYTES as usize + 1],
+            }),
+        ] {
+            let transport = DesktopHttpsTransport::new(SyntheticClient {
+                calls: RefCell::new(vec![]),
+                response: RefCell::new(response),
+            });
+            let target = resolve_verified_desktop_endpoint(
+                crate::desktop_contract::SPOLTOG.realm,
+                crate::desktop_contract::SPOLTOG.saved_endpoint,
+            )
+            .unwrap();
+            assert_eq!(
+                transport
+                    .deliver(&target, "cmd=b", &credentials())
+                    .unwrap_err(),
+                DesktopTransportError::DeliveryFailed
+            );
+            assert_eq!(transport.client.calls.borrow().len(), 1);
+        }
     }
 
     #[test]

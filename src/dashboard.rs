@@ -30,7 +30,8 @@ use thiserror::Error;
 use crate::{
     compatibility::CompatibilityProfile,
     desktop_eligibility::{
-        DesktopEligibilityDecision, DesktopOnlineOperation, DesktopOperationEligibility,
+        DesktopEligibilityDecision, DesktopIneligibilityReason, DesktopOnlineOperation,
+        DesktopOperationEligibility,
     },
     desktop_save::{DesktopValidatedBar, DesktopValidatedRow},
     guild::GuildOutcome,
@@ -1651,6 +1652,12 @@ fn render_compact(
         Line::from(format!("Tasks completed: {}", state.activity.tasks)),
         Line::from(progress_text(&state.progress, task_percent)),
     ];
+    if partially_online_eligible(&state.compatibility.online_eligibility) {
+        let mut eligibility = vec![Line::from("Online eligibility: partially eligible")];
+        eligibility.extend(operation_eligibility_lines(state));
+        eligibility.extend(content);
+        content = eligibility;
+    }
     content.extend(equipment_lines(&state.equipment, updates));
     content.push(inventory_line(&state.inventory, updates));
     content.push(spells_line(&state.spells, updates));
@@ -1679,15 +1686,27 @@ fn render_full(
         .direction(Direction::Horizontal)
         .constraints([Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)])
         .split(area);
+    let state = &snapshot.character;
+    let details = details_lines(state);
+    let left_constraints = if partially_online_eligible(&state.compatibility.online_eligibility) {
+        left_pane_constraints_with_details(
+            panes,
+            columns[0].height,
+            u16::try_from(details.len())
+                .unwrap_or(u16::MAX)
+                .saturating_add(2),
+        )
+    } else {
+        left_pane_constraints(panes, columns[0].height)
+    };
     let left = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(left_pane_constraints(panes, columns[0].height))
+        .constraints(left_constraints)
         .split(columns[0]);
     let right = Layout::default()
         .direction(Direction::Vertical)
         .constraints(right_pane_constraints(panes))
         .split(columns[1]);
-    let state = &snapshot.character;
     render_pane(
         frame,
         left[0],
@@ -1725,7 +1744,7 @@ fn render_full(
         "Details",
         Pane::Details,
         panes,
-        Paragraph::new(details_lines(state)),
+        Paragraph::new(details),
     );
     render_pane(
         frame,
@@ -1793,6 +1812,14 @@ fn journal_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
 }
 
 fn left_pane_constraints(visibility: &PaneVisibility, height: u16) -> [Constraint; 5] {
+    left_pane_constraints_with_details(visibility, height, 8)
+}
+
+fn left_pane_constraints_with_details(
+    visibility: &PaneVisibility,
+    height: u16,
+    detail_rows: u16,
+) -> [Constraint; 5] {
     let pane_height = |pane, expanded| {
         if visibility.is_collapsed(pane) {
             2
@@ -1804,7 +1831,9 @@ fn left_pane_constraints(visibility: &PaneVisibility, height: u16) -> [Constrain
     let progress = pane_height(Pane::Progress, 7);
     let details_min = pane_height(
         Pane::Details,
-        height.saturating_sub(activity + progress + 2).clamp(6, 8),
+        height
+            .saturating_sub(activity + progress + 2)
+            .clamp(6, detail_rows.max(6)),
     );
     let equipment = pane_height(
         Pane::Equipment,
@@ -1856,6 +1885,9 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     {
         lines.push(Line::from(format!("Online eligibility: {eligibility}")));
     }
+    if partially_online_eligible(&character.compatibility.online_eligibility) {
+        lines.extend(operation_eligibility_lines(character));
+    }
     if let Some(counters) = character.compatibility.measured_since_import {
         lines.push(Line::from(format!(
             "Since import: {} tasks, {} elapsed",
@@ -1876,9 +1908,62 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
     lines
 }
 
+fn operation_eligibility_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
+    DesktopOnlineOperation::ALL
+        .into_iter()
+        .map(|operation| {
+            let label = match operation {
+                DesktopOnlineOperation::AutomaticLevel => "level",
+                DesktopOnlineOperation::AutomaticAct => "act",
+                DesktopOnlineOperation::ManualBrag => "brag",
+                DesktopOnlineOperation::Motto => "motto",
+                DesktopOnlineOperation::Guild => "guild",
+            };
+            let status = match character
+                .compatibility
+                .online_eligibility
+                .iter()
+                .find(|value| value.operation == operation)
+                .map(|value| value.decision)
+            {
+                Some(DesktopEligibilityDecision::Eligible) => "eligible".to_owned(),
+                Some(DesktopEligibilityDecision::Ineligible(reason)) => {
+                    let reason = match reason {
+                        DesktopIneligibilityReason::FreshOfficialClientImportRequired => {
+                            "fresh import required"
+                        }
+                        DesktopIneligibilityReason::ProfileMismatch => "profile",
+                        DesktopIneligibilityReason::ImportPathMismatch => "import path",
+                        DesktopIneligibilityReason::RealmMismatch => "realm",
+                        DesktopIneligibilityReason::EndpointMismatch => "endpoint",
+                        DesktopIneligibilityReason::InvalidCredentials => "credentials",
+                        DesktopIneligibilityReason::CredentialModeMismatch => "auth mode",
+                        DesktopIneligibilityReason::UnsupportedEncoding => "encoding",
+                        DesktopIneligibilityReason::OperationEvidenceUnavailable => "no evidence",
+                    };
+                    format!("gated ({reason})")
+                }
+                None => "gated (unknown eligibility)".to_owned(),
+            };
+            Line::from(format!("Online {label}: {status}"))
+        })
+        .collect()
+}
+
+fn partially_online_eligible(eligibility: &[DesktopOperationEligibility]) -> bool {
+    let eligible = eligibility
+        .iter()
+        .filter(|value| value.decision == DesktopEligibilityDecision::Eligible)
+        .count();
+    eligible > 0 && eligible < DesktopOnlineOperation::ALL.len()
+}
+
 fn overall_online_eligibility(eligibility: &[DesktopOperationEligibility]) -> Option<String> {
     if eligibility.is_empty() {
         return None;
+    }
+    if partially_online_eligible(eligibility) {
+        return Some("partially eligible".to_owned());
     }
     eligibility
         .iter()
@@ -2656,6 +2741,83 @@ mod tests {
             .collect();
         assert!(output.contains("Warning:"));
         assert!(output.contains("local-only"));
+    }
+
+    #[test]
+    fn partial_desktop_details_and_action_guards_follow_individual_operations() {
+        let mut snapshot = sample();
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        snapshot.character.compatibility.realm = Some("Pemptus".to_owned());
+        for enabled in [
+            &[DesktopOnlineOperation::ManualBrag][..],
+            &[DesktopOnlineOperation::Motto][..],
+            &DesktopOnlineOperation::ALL[..],
+            &[][..],
+        ] {
+            snapshot.character.compatibility.online_eligibility =
+                DesktopOnlineOperation::ALL.into_iter().map(|operation| DesktopOperationEligibility {
+                    operation,
+                    decision: if enabled.contains(&operation) {
+                        DesktopEligibilityDecision::Eligible
+                    } else {
+                        DesktopEligibilityDecision::Ineligible(
+                            crate::desktop_eligibility::DesktopIneligibilityReason::OperationEvidenceUnavailable,
+                        )
+                    },
+                }).collect();
+            let details = details_lines(&snapshot.character)
+                .into_iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let partial = !enabled.is_empty() && enabled.len() < 5;
+            assert_eq!(details.contains("partially eligible"), partial);
+            for operation in DesktopOnlineOperation::ALL {
+                assert_eq!(
+                    online_action_blocked(&snapshot.character, operation).is_none(),
+                    enabled.contains(&operation)
+                );
+            }
+            assert_eq!(
+                details
+                    .lines()
+                    .filter(|line| line.starts_with("Online ")
+                        && !line.starts_with("Online eligibility:"))
+                    .count(),
+                if partial { 5 } else { 0 }
+            );
+            if partial {
+                for (width, height) in [(120, 40), (60, 35)] {
+                    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            render(
+                                frame,
+                                &snapshot,
+                                0,
+                                &RecentTaskUpdates::default(),
+                                None,
+                                &PaneVisibility::default(),
+                            )
+                        })
+                        .unwrap();
+                    let output: String = terminal
+                        .backend()
+                        .buffer()
+                        .content()
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect();
+                    assert!(output.contains("partially eligible"));
+                    for line in operation_eligibility_lines(&snapshot.character) {
+                        assert!(
+                            output.contains(&line.to_string()),
+                            "{width}x{height}: {line}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]

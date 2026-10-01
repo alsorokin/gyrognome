@@ -5,6 +5,7 @@ pub mod compatibility;
 pub mod conformance_bridge;
 pub mod dashboard;
 pub mod desktop_callback;
+pub mod desktop_contract;
 pub mod desktop_eligibility;
 pub mod desktop_evidence;
 mod desktop_fingerprint;
@@ -21,6 +22,8 @@ pub mod guild;
 pub mod lifecycle;
 pub mod newguy;
 pub mod newguy_wizard;
+#[cfg(feature = "desktop-live-conformance")]
+pub mod pemptus_acceptance_probe;
 pub mod protocol;
 pub mod reporting;
 pub mod rng;

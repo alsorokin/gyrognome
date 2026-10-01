@@ -52,8 +52,31 @@ const MAX_GUILD_BYTES: usize = 255;
 const MAX_DISTINCT_MOTTO_ATTEMPTS: u8 = 2;
 const MAX_HANDOFF_PLOTS: usize = 2;
 
+mod scoped;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum DesktopLiveStage {
+    Legacy,
+    Immediate,
+    Progression,
+}
+
 #[derive(Debug)]
 pub struct DesktopLiveExperimentOptions {
+    pub realm: String,
+    pub stage: DesktopLiveStage,
+    pub operations: Vec<crate::desktop_eligibility::DesktopOnlineOperation>,
+    pub max_mutation_attempts: Option<usize>,
+    pub allow_existing_disposable: bool,
+    pub initial_guild_leave: bool,
+    pub preparation_reconciliation_seconds: Option<u64>,
+    pub confirm_preparation_reconciliation: bool,
+    pub operator_join_reconciliation_seconds: Option<u64>,
+    pub confirm_operator_accepted_join: bool,
+    pub confirm_no_competing_join: bool,
+    pub manual_motto: String,
+    pub guild_change_designation: Option<String>,
     pub confirm_disposable: bool,
     pub confirm_live_submission: bool,
     pub confirm_client_stopped: bool,
@@ -79,7 +102,7 @@ pub enum DesktopLiveExperimentError {
     InvalidExperimentDirectory,
     #[error("the disposable save is not a supported desktop save")]
     UnsupportedSave,
-    #[error("the disposable save does not match the approved Spoltog authentication contract")]
+    #[error("the disposable save does not match the approved realm authentication contract")]
     ContractMismatch,
     #[error("the disposable save is not a fresh unadvanced character")]
     NotFresh,
@@ -221,6 +244,9 @@ struct LiveContext {
 }
 
 pub fn run(options: &DesktopLiveExperimentOptions) -> Result<(), DesktopLiveExperimentError> {
+    if options.realm != REALM || options.stage != DesktopLiveStage::Legacy {
+        return scoped::run(options);
+    }
     validate_options(options)?;
     let (save_path, backup_path) = select_save_files(&options.experiment_dir)?;
     let save = match import_supported_file(&save_path)
@@ -430,6 +456,18 @@ fn validate_options(
         || options.guild_designation.is_empty()
         || options.guild_designation.len() > MAX_GUILD_BYTES
         || !options.guild_designation.is_ascii()
+        || !options.operations.is_empty()
+        || options.allow_existing_disposable
+        || options.initial_guild_leave
+        || options.preparation_reconciliation_seconds.is_some()
+        || options.confirm_preparation_reconciliation
+        || options.operator_join_reconciliation_seconds.is_some()
+        || options.confirm_operator_accepted_join
+        || options.confirm_no_competing_join
+        || options.max_mutation_attempts.is_some()
+        || options.guild_change_designation.is_some()
+        || options.realm != REALM
+        || options.stage != DesktopLiveStage::Legacy
     {
         return Err(DesktopLiveExperimentError::InvalidScope);
     }
@@ -1207,6 +1245,19 @@ mod tests {
     #[test]
     fn options_require_full_live_scope() {
         let mut options = DesktopLiveExperimentOptions {
+            allow_existing_disposable: false,
+            initial_guild_leave: false,
+            preparation_reconciliation_seconds: None,
+            confirm_preparation_reconciliation: false,
+            operator_join_reconciliation_seconds: None,
+            confirm_operator_accepted_join: false,
+            confirm_no_competing_join: false,
+            realm: REALM.to_owned(),
+            stage: DesktopLiveStage::Legacy,
+            operations: vec![],
+            max_mutation_attempts: None,
+            manual_motto: "Synthetic manual".to_owned(),
+            guild_change_designation: None,
             confirm_disposable: true,
             confirm_live_submission: true,
             confirm_client_stopped: true,

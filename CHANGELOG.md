@@ -4,6 +4,14 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Development-only, feature-gated Pemptus manual-report probe with passkey-only
+  HTTPS delivery, explicit disposable-character handoff, no mutation retries,
+  and bounded credential-safe public observations. The diagnostic distinguishes
+  delivery from independently established acceptance and does not enable
+  production Pemptus reporting.
+
 ### Changed
 
 - Reorganized the full dashboard: the Journal title shows the current plot,

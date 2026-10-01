@@ -338,10 +338,28 @@ pub fn validate_fixture(path: &Path, content: &str) -> Result<(), FixtureSafetyE
         .is_some_and(|name| name.starts_with("checkpoint-"))
         || is_trace_or_experiment)
         && lower.contains("passkey")
+        && serde_json::from_str::<Value>(content)
+            .map_or(true, |value| contains_passkey_data(&value, None))
     {
         return Err(FixtureSafetyError::Passkey);
     }
     Ok(())
+}
+
+fn contains_passkey_data(value: &Value, key: Option<&str>) -> bool {
+    if key == Some("credentialMode") && value.as_str() == Some("passkey-only") {
+        return false;
+    }
+    match value {
+        Value::Object(fields) => fields.iter().any(|(key, value)| {
+            key.to_ascii_lowercase().contains("passkey") || contains_passkey_data(value, Some(key))
+        }),
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_passkey_data(value, None)),
+        Value::String(value) => value.to_ascii_lowercase().contains("passkey"),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -349,6 +367,20 @@ mod tests {
     use std::path::Path;
 
     use super::*;
+
+    #[test]
+    fn permits_only_the_structured_passkey_mode_label_not_passkey_data() {
+        let path = Path::new("desktop-operation-evidence.json");
+        assert!(validate_fixture(path, r#"{"credentialMode":"passkey-only"}"#).is_ok());
+        for content in [
+            r#"{"passkey":42,"credentialMode":"passkey-only"}"#,
+            r#"{"credentialMode":"passkey-only secret"}"#,
+            r#"{"other":"passkey-only"}"#,
+            r#"{"credentialMode":{"passkey":42}}"#,
+        ] {
+            assert!(validate_fixture(path, content).is_err());
+        }
+    }
 
     #[test]
     fn rejects_prohibited_fixture_content() {

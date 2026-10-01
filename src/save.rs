@@ -15,7 +15,7 @@ use crate::{
     compatibility::{CompatibilityProfile, DesktopCanonicalState, DesktopImportMetadata},
     desktop_eligibility::{
         DesktopEligibilityInput, DesktopOnlineOperation, DesktopOperationEligibility,
-        evaluate_desktop_eligibility, production_desktop_evidence,
+        evaluate_production_desktop_eligibility,
     },
     desktop_save::{
         DesktopDocument, DesktopMappingError, DesktopParseError, DesktopValidatedSave,
@@ -108,7 +108,6 @@ pub fn import_supported_bytes(bytes: &[u8]) -> Result<ImportedSave, SaveError> {
 pub fn inspect_desktop(save: &DesktopValidatedSave) -> DesktopSaveInspection {
     let state = DesktopCanonicalState::from(save);
     let import_metadata = DesktopImportMetadata::from_validated(&save.adaptations);
-    let evidence = production_desktop_evidence();
     let operations = [
         DesktopOnlineOperation::AutomaticLevel,
         DesktopOnlineOperation::AutomaticAct,
@@ -130,12 +129,20 @@ pub fn inspect_desktop(save: &DesktopValidatedSave) -> DesktopSaveInspection {
                 endpoint: &save.private.endpoint,
                 account: &save.private.account,
                 password: &save.private.password,
-                encoding_supported: true,
+                encoding_supported: crate::desktop_eligibility::desktop_request_text_is_ascii(
+                    &state,
+                    &[
+                        &save.private.realm,
+                        &save.private.endpoint,
+                        &save.private.account,
+                        &save.private.password,
+                    ],
+                ),
                 operation,
             };
             DesktopOperationEligibility {
                 operation,
-                decision: evaluate_desktop_eligibility(&input, evidence.as_ref()),
+                decision: evaluate_production_desktop_eligibility(&input),
             }
         })
         .collect();

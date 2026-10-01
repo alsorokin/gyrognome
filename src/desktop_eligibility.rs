@@ -7,7 +7,7 @@ use crate::compatibility::{
     SourceFormat,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum DesktopOnlineOperation {
     AutomaticLevel,
@@ -15,6 +15,26 @@ pub enum DesktopOnlineOperation {
     ManualBrag,
     Motto,
     Guild,
+}
+
+impl DesktopOnlineOperation {
+    pub const ALL: [Self; 5] = [
+        Self::AutomaticLevel,
+        Self::AutomaticAct,
+        Self::ManualBrag,
+        Self::Motto,
+        Self::Guild,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AutomaticLevel => "automatic level",
+            Self::AutomaticAct => "automatic act",
+            Self::ManualBrag => "manual brag",
+            Self::Motto => "motto",
+            Self::Guild => "guild",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,26 +122,36 @@ pub(crate) struct DesktopEligibilityEvidence<'a> {
     pub operations: &'a [DesktopOnlineOperation],
 }
 
-pub(crate) fn production_desktop_evidence() -> Option<DesktopEligibilityEvidence<'static>> {
-    static ADAPTATIONS: [DesktopAdaptation; 0] = [];
-    static OPERATIONS: [DesktopOnlineOperation; 5] = [
-        DesktopOnlineOperation::AutomaticLevel,
-        DesktopOnlineOperation::AutomaticAct,
-        DesktopOnlineOperation::ManualBrag,
-        DesktopOnlineOperation::Motto,
-        DesktopOnlineOperation::Guild,
-    ];
-    crate::desktop_evidence::production_desktop_evidence_is_valid().then_some(
-        DesktopEligibilityEvidence {
-            profile: CompatibilityProfile::Desktop644,
-            source_format: SourceFormat::DesktopDelphiComponentStream,
-            layout: DesktopLayout::SupportedComponentStream,
-            adaptations: &ADAPTATIONS,
-            realm: "Spoltog",
-            saved_endpoint: "http://progressquest.com/spoltog.php?",
-            credential_mode: DesktopCredentialMode::AccountPassword,
-            operations: &OPERATIONS,
-        },
+pub(crate) fn evaluate_production_desktop_eligibility(
+    input: &DesktopEligibilityInput<'_>,
+) -> DesktopEligibilityDecision {
+    if let DesktopEligibilityDecision::Ineligible(reason) =
+        evaluate_desktop_eligibility(input, None)
+        && reason != DesktopIneligibilityReason::OperationEvidenceUnavailable
+    {
+        return DesktopEligibilityDecision::Ineligible(reason);
+    }
+    let contract = match crate::desktop_contract::realm_contract(input.realm) {
+        Ok(contract) => contract,
+        Err(reason) => return DesktopEligibilityDecision::Ineligible(reason),
+    };
+    if let Err(reason) = contract.validate(
+        input.endpoint,
+        input.passkey,
+        input.account,
+        input.password,
+        input.encoding_supported,
+    ) {
+        return DesktopEligibilityDecision::Ineligible(reason);
+    }
+    let evidence = crate::desktop_evidence::production_desktop_evidence(contract, input.operation);
+    evaluate_desktop_eligibility(
+        input,
+        evidence
+            .as_ref()
+            .ok()
+            .map(|value| value.eligibility())
+            .as_ref(),
     )
 }
 
@@ -189,6 +219,31 @@ fn adaptations_match_evidence(input: &[DesktopAdaptation], evidence: &[DesktopAd
     input == evidence || (evidence.is_empty() && input == [DesktopAdaptation::LoadSpellingPatch])
 }
 
+pub(crate) fn desktop_request_text_is_ascii(
+    state: &crate::compatibility::DesktopCanonicalState,
+    additional_text: &[&str],
+) -> bool {
+    [
+        &state.traits,
+        &state.stats,
+        &state.equipment,
+        &state.inventory,
+        &state.spells,
+        &state.plots,
+        &state.quests,
+    ]
+    .into_iter()
+    .all(|rows| {
+        rows.iter()
+            .all(|row| row.caption.is_ascii() && row.subitems.iter().all(|value| value.is_ascii()))
+    }) && state.current_task.is_ascii()
+        && state.activity.is_ascii()
+        && state.queue.iter().all(|command| command.caption.is_ascii())
+        && state.profile.motto.is_ascii()
+        && state.profile.guild.is_ascii()
+        && additional_text.iter().all(|value| value.is_ascii())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,14 +293,63 @@ mod tests {
         production_input.operation = DesktopOnlineOperation::AutomaticLevel;
         production_input.adaptations = &[];
         assert_eq!(
-            evaluate_desktop_eligibility(&production_input, production_desktop_evidence().as_ref()),
+            evaluate_production_desktop_eligibility(&production_input),
             DesktopEligibilityDecision::Eligible
         );
     }
 
     #[test]
+    fn pemptus_production_gates_open_only_manual_and_motto_on_supported_fresh_imports() {
+        let contract = crate::desktop_contract::PEMPTUS;
+        for operation in [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+            DesktopOnlineOperation::Guild,
+        ] {
+            for adaptations in [&[][..], &[DesktopAdaptation::LoadSpellingPatch][..]] {
+                let mut value = input();
+                value.realm = contract.realm;
+                value.endpoint = contract.saved_endpoint;
+                value.account = "";
+                value.password = "";
+                value.operation = operation;
+                value.adaptations = adaptations;
+                let available = matches!(
+                    operation,
+                    DesktopOnlineOperation::ManualBrag | DesktopOnlineOperation::Motto
+                );
+                assert_eq!(
+                    evaluate_production_desktop_eligibility(&value)
+                        == DesktopEligibilityDecision::Eligible,
+                    available,
+                );
+                value.advancement = DesktopAdvancementProvenance::LocalOnly;
+                assert_eq!(
+                    evaluate_production_desktop_eligibility(&value),
+                    DesktopEligibilityDecision::Ineligible(
+                        DesktopIneligibilityReason::FreshOfficialClientImportRequired
+                    ),
+                );
+                value.advancement = DesktopAdvancementProvenance::Unadvanced;
+                value.adaptations = &[DesktopAdaptation::LegacyPrologue62];
+                assert_ne!(
+                    evaluate_production_desktop_eligibility(&value),
+                    DesktopEligibilityDecision::Eligible
+                );
+            }
+        }
+    }
+
+    #[test]
     fn production_evidence_covers_only_unadapted_and_spelling_normalized_imports() {
-        let evidence = production_desktop_evidence().unwrap();
+        let validated = crate::desktop_evidence::production_desktop_evidence(
+            crate::desktop_contract::SPOLTOG,
+            DesktopOnlineOperation::ManualBrag,
+        )
+        .unwrap();
+        let evidence = validated.eligibility();
         for operation in [
             DesktopOnlineOperation::AutomaticLevel,
             DesktopOnlineOperation::AutomaticAct,

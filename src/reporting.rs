@@ -1,6 +1,5 @@
 //! Credential-safe leaderboard report delivery.
 
-use base64::{Engine, engine::general_purpose::STANDARD};
 use std::time::Duration;
 use thiserror::Error;
 use url::Url;
@@ -11,7 +10,7 @@ use crate::{
     desktop_fingerprint::DesktopGuildFingerprintValues,
     desktop_profile::{
         DesktopGuildOperation, DesktopGuildOutcome, DesktopGuildResponseRules,
-        apply_desktop_guild_action, public_guild,
+        apply_desktop_guild_action, public_guild_for_realm, public_guild_matches,
     },
     desktop_protocol::{
         DesktopAccountAuthentication, DesktopReportOperation,
@@ -181,7 +180,8 @@ impl GuildTransport for HttpsTransport {
         name: &str,
     ) -> Result<Option<String>, DesktopTransportError> {
         let page = fetch_verified_desktop_public_profile(target, name)?;
-        public_guild(&page, name).ok_or(DesktopTransportError::DeliveryFailed)
+        public_guild_for_realm(target.realm(), &page, name)
+            .ok_or(DesktopTransportError::DeliveryFailed)
     }
 }
 
@@ -823,13 +823,7 @@ fn set_desktop_guild(
         &target.authentication.account,
         &target.authentication.password,
     );
-    let authorization = format!(
-        "Basic {}",
-        STANDARD.encode(format!(
-            "{}:{}",
-            target.authentication.account, target.authentication.password
-        ))
-    );
+    let authorization = credentials.authorization_header(endpoint.credential_mode())?;
     let passkey = target.authentication.passkey.to_string();
     let operation = if designation.is_empty() {
         DesktopGuildOperation::Leave
@@ -845,7 +839,7 @@ fn set_desktop_guild(
                 character_name: &target.identity.name,
                 account: &target.authentication.account,
                 password: &target.authentication.password,
-                authorization: &authorization,
+                authorization: authorization.as_deref().unwrap_or(""),
                 passkey: &passkey,
                 prior_guild: prior,
                 submitted_guild: submitted,
@@ -889,10 +883,7 @@ fn reconcile_desktop_guild_outcome(
     let Ok(observed) = observe_public_guild() else {
         return (outcome, None);
     };
-    let matches = match &observed {
-        Some(guild) => !submitted.is_empty() && guild.eq_ignore_ascii_case(submitted),
-        None => submitted.is_empty(),
-    };
+    let matches = public_guild_matches(observed.as_deref(), submitted);
     matches
         .then(|| {
             (
