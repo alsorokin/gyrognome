@@ -26,7 +26,9 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap,
+    },
 };
 use thiserror::Error;
 
@@ -886,8 +888,10 @@ impl PaneScroll {
     fn reconcile_focus(&mut self, panes: &PaneVisibility) {
         match self.focused {
             Some(pane) if !panes.is_collapsed(pane) => {}
-            Some(pane) => self.focused = cycle_focus(panes, pane, true),
-            None => self.focused = first_expanded(panes),
+            Some(pane) => {
+                self.focused = cycle_focus(panes, pane, true).or_else(|| first_expanded(panes))
+            }
+            None => {}
         }
     }
 
@@ -901,25 +905,36 @@ impl PaneScroll {
     fn focus_previous(&mut self, panes: &PaneVisibility) {
         self.focused = match self.focused {
             Some(pane) => cycle_focus(panes, pane, false),
-            None => first_expanded(panes),
+            None => Pane::ALL
+                .into_iter()
+                .rev()
+                .find(|&pane| !panes.is_collapsed(pane)),
         };
     }
 }
 
 fn first_expanded(panes: &PaneVisibility) -> Option<Pane> {
-    Pane::ALL.into_iter().find(|&pane| !panes.is_collapsed(pane))
+    Pane::ALL
+        .into_iter()
+        .find(|&pane| !panes.is_collapsed(pane))
 }
 
-/// Finds the next (or previous) expanded pane after `current`, wrapping
-/// around at either end. Returns `None` only when no pane is expanded.
+/// Finds the next (or previous) expanded pane, stopping at the unfocused
+/// position between the last and first panes.
 fn cycle_focus(panes: &PaneVisibility, current: Pane, forward: bool) -> Option<Pane> {
-    let all = Pane::ALL;
-    let len = all.len();
     let start = current.index();
-    (1..=len)
-        .map(|step| if forward { (start + step) % len } else { (start + len - step) % len })
-        .map(|index| all[index])
-        .find(|&pane| !panes.is_collapsed(pane))
+    if forward {
+        Pane::ALL[start + 1..]
+            .iter()
+            .copied()
+            .find(|&pane| !panes.is_collapsed(pane))
+    } else {
+        Pane::ALL[..start]
+            .iter()
+            .rev()
+            .copied()
+            .find(|&pane| !panes.is_collapsed(pane))
+    }
 }
 
 /// The rendered rectangle and scroll bounds recorded for a pane during the
@@ -1074,10 +1089,7 @@ impl DashboardState {
     fn new(current: DashboardSnapshot, now: Instant, refresh_interval: Duration) -> Self {
         let task_anchor = TaskAnchor::from_snapshot(&current, now);
         let panes = PaneVisibility::default();
-        let scroll = PaneScroll {
-            focused: first_expanded(&panes),
-            ..PaneScroll::default()
-        };
+        let scroll = PaneScroll::default();
         Self {
             current,
             action_message: None,
@@ -1684,7 +1696,15 @@ fn render(
             ])
             .split(area);
         render_header(frame, snapshot, updates, rows[0]);
-        render_compact(frame, snapshot, task_percent, updates, rows[1], scroll, layout);
+        render_compact(
+            frame,
+            snapshot,
+            task_percent,
+            updates,
+            rows[1],
+            scroll,
+            layout,
+        );
         for viewport in layout.panes.iter_mut() {
             *viewport = None;
         }
@@ -1899,7 +1919,6 @@ fn render_compact(
     let mut content = vec![
         Line::from(format!("Activity: {}", activity_text(&state.activity))),
         Line::from(format!("Tasks completed: {}", state.activity.tasks)),
-        Line::from(progress_text(&state.progress, task_percent)),
     ];
     if partially_online_eligible(&state.compatibility.online_eligibility) {
         let mut eligibility = vec![Line::from("Online eligibility: partially eligible")];
@@ -1907,19 +1926,30 @@ fn render_compact(
         eligibility.extend(content);
         content = eligibility;
     }
-    content.extend(equipment_lines(&state.equipment, updates));
-    content.push(inventory_line(&state.inventory, updates));
-    content.push(spells_line(&state.spells, updates));
-    content.push(Line::from(format!(
-        "Plot: Act {} — {}",
-        state.plot.act, state.plot.bestplot
-    )));
-    content.push(Line::from(format!("Quests: {}", state.quests.join(", "))));
-    let paragraph = Paragraph::new(content).wrap(Wrap { trim: true });
     let inner = area.inner(Margin {
         horizontal: 1,
         vertical: 1,
     });
+    let task_row = Paragraph::new(content.clone())
+        .wrap(Wrap { trim: true })
+        .line_count(inner.width);
+    content.push(Line::default());
+    content.push(Line::from(progress_text(&state.progress)));
+    content.push(Line::default());
+    content.extend(equipment_lines(&state.equipment, updates));
+    content.push(Line::default());
+    content.push(inventory_line(&state.inventory, updates));
+    content.push(spells_line(&state.spells, updates));
+    content.push(Line::default());
+    content.push(Line::from(format!(
+        "Plot: Act {} — {}",
+        state.plot.act, state.plot.bestplot
+    )));
+    content.push(Line::from(format!(
+        "Current quest: {}",
+        state.current_quest
+    )));
+    let paragraph = Paragraph::new(content).wrap(Wrap { trim: true });
     let content_rows = paragraph.line_count(inner.width);
     let max_offset = content_rows
         .saturating_sub(usize::from(inner.height))
@@ -1937,6 +1967,18 @@ fn render_compact(
             .block(Block::default().borders(Borders::ALL).title("Character")),
         area,
     );
+    if !inner.is_empty()
+        && let Some(visible_row) = task_row.checked_sub(usize::from(offset))
+        && visible_row < usize::from(inner.height)
+    {
+        frame.render_widget(
+            ProgressGauge {
+                label: &format!("Task {task_percent}%"),
+                percent: task_percent.min(100),
+            },
+            Rect::new(inner.x, inner.y + visible_row as u16, inner.width, 1),
+        );
+    }
 }
 
 fn render_full(
@@ -1990,7 +2032,11 @@ fn render_full(
     );
     if panes.is_collapsed(Pane::Progress) {
         frame.render_widget(
-            pane_block("Progress", Pane::Progress, scroll.is_focused(Pane::Progress)),
+            pane_block(
+                "Progress",
+                Pane::Progress,
+                scroll.is_focused(Pane::Progress),
+            ),
             left[1],
         );
         layout.panes[Pane::Progress.index()] = None;
@@ -2332,7 +2378,9 @@ fn render_pane(
         inner_height: inner.height,
     });
     frame.render_widget(
-        content.scroll((offset, 0)).block(pane_block(title, pane, focused)),
+        content
+            .scroll((offset, 0))
+            .block(pane_block(title, pane, focused)),
         area,
     );
 }
@@ -2419,14 +2467,13 @@ impl Widget for ProgressGauge<'_> {
     }
 }
 
-fn progress_text(progress: &Progress, task_percent: u64) -> String {
+fn progress_text(progress: &Progress) -> String {
     format!(
-        "XP {}% | Encumbrance {}% | Plot {}% | Quest {}% | Task {}%",
+        "XP {}% | Encumbrance {}% | Plot {}% | Quest {}%",
         progress.experience.percent,
         progress.encumbrance.percent,
         progress.plot.percent,
-        progress.quest.percent,
-        task_percent
+        progress.quest.percent
     )
 }
 
@@ -3450,10 +3497,7 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let task_percent = snapshot.character.progress.task.percent;
-        let mut scroll = PaneScroll {
-            focused: first_expanded(panes),
-            ..PaneScroll::default()
-        };
+        let mut scroll = PaneScroll::default();
         let mut layout = ScrollLayout::default();
         terminal
             .draw(|frame| {
@@ -3492,10 +3536,7 @@ mod tests {
         confirmation: Option<LifecycleAction>,
         panes: &PaneVisibility,
     ) {
-        let mut scroll = PaneScroll {
-            focused: first_expanded(panes),
-            ..PaneScroll::default()
-        };
+        let mut scroll = PaneScroll::default();
         let mut layout = ScrollLayout::default();
         render(
             frame,
@@ -3866,6 +3907,197 @@ mod tests {
         assert!(compact.contains("STR:"));
         let too_small = rendered(30, 10);
         assert!(too_small.contains("Terminal is too small"));
+    }
+
+    fn compact_buffer(
+        snapshot: &DashboardSnapshot,
+        width: u16,
+        height: u16,
+        percent: u64,
+        scroll: &mut PaneScroll,
+    ) -> (Buffer, ScrollLayout) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut layout = ScrollLayout::default();
+        terminal
+            .draw(|frame| {
+                render_compact(
+                    frame,
+                    snapshot,
+                    percent,
+                    &RecentTaskUpdates::default(),
+                    frame.area(),
+                    scroll,
+                    &mut layout,
+                )
+            })
+            .unwrap();
+        (terminal.backend().buffer().clone(), layout)
+    }
+
+    fn compact_rows(buffer: &Buffer) -> Vec<String> {
+        (1..buffer.area.height - 1)
+            .map(|y| {
+                (1..buffer.area.width - 1)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn compact_sections_have_blank_rows_and_only_the_current_quest() {
+        for empty_equipment in [false, true] {
+            let mut snapshot = sample();
+            snapshot.character.current_quest = "Canonical target".to_owned();
+            snapshot.character.quests = vec!["Completed history".to_owned(); 100];
+            snapshot.character.inventory.clear();
+            snapshot.character.spells = vec![Spell {
+                name: "Wrapped spell ".repeat(8) + "SPELLEND",
+                rank: "1".to_owned(),
+            }];
+            snapshot.character.equipment = Equipment {
+                weapon: String::new(),
+                shield: String::new(),
+                helm: String::new(),
+                hauberk: String::new(),
+                brassairts: String::new(),
+                vambraces: String::new(),
+                gauntlets: String::new(),
+                gambeson: String::new(),
+                cuisses: String::new(),
+                greaves: String::new(),
+                sollerets: String::new(),
+            };
+            if !empty_equipment {
+                snapshot.character.equipment.weapon = "Wrapped weapon ".repeat(8) + "WEAPONEND";
+            }
+            let (buffer, layout) =
+                compact_buffer(&snapshot, 40, 60, 75, &mut PaneScroll::default());
+            assert_eq!(layout.compact.unwrap().max_offset, 0);
+            let rows = compact_rows(&buffer);
+            let equipment = rows
+                .iter()
+                .position(|row| {
+                    row.starts_with(if empty_equipment {
+                        "Equipment: none"
+                    } else {
+                        "Weapon:"
+                    })
+                })
+                .unwrap();
+            assert_eq!(rows[equipment - 1], "");
+            let inventory = rows
+                .iter()
+                .position(|row| row == "Inventory: none")
+                .unwrap();
+            assert_eq!(rows[inventory - 1], "");
+            if !empty_equipment {
+                assert!(rows[inventory - 2].contains("WEAPONEND"));
+            }
+            let plot = rows
+                .iter()
+                .position(|row| row.starts_with("Plot:"))
+                .unwrap();
+            assert_eq!(rows[plot - 1], "");
+            assert!(rows[plot - 2].contains("SPELLEND 1"));
+            assert!(
+                rows.iter()
+                    .any(|row| row == "Current quest: Canonical target")
+            );
+            assert!(!rows.join("\n").contains("Completed history"));
+        }
+    }
+
+    #[test]
+    fn compact_task_bar_matches_full_gauge_and_is_separate_from_summary() {
+        let snapshot = active_snapshot(250.0, 1_000);
+        for percent in [0, 75, 100] {
+            let (buffer, _) =
+                compact_buffer(&snapshot, 70, 40, percent, &mut PaneScroll::default());
+            let rows = compact_rows(&buffer);
+            let summary = rows
+                .iter()
+                .position(|row| row == "XP 0% | Encumbrance 8% | Plot 0% | Quest 4%")
+                .unwrap();
+            let y = summary as u16;
+            let area = Rect::new(1, y, 68, 1);
+            let mut expected = Buffer::empty(area);
+            ProgressGauge {
+                label: &format!("Task {percent}%"),
+                percent,
+            }
+            .render(area, &mut expected);
+            for x in 1..69 {
+                assert_eq!(buffer[(x, y)], expected[(x, y)]);
+            }
+            let label = format!("Task {percent}%");
+            let label_x = 1 + (68 - label.len() as u16) / 2;
+            assert_eq!(buffer[(label_x, y)].symbol(), "T");
+            assert_eq!(rows[summary + 1], "");
+        }
+        assert_eq!(snapshot.character.progress.task.percent, 25);
+    }
+
+    #[test]
+    fn compact_gauge_scrolls_with_wrapped_prefix_and_partial_eligibility() {
+        for partial in [false, true] {
+            let mut snapshot = overflowing_snapshot();
+            snapshot.character.activity.kill.clear();
+            snapshot.character.activity.task = "Long wrapped activity ".repeat(8);
+            snapshot.character.progress.encumbrance.percent = 100;
+            snapshot.character.quests = vec!["Hidden completed quest".to_owned(); 100];
+            if partial {
+                snapshot.character.compatibility.online_eligibility =
+                    DesktopOnlineOperation::ALL
+                        .into_iter()
+                        .map(|operation| DesktopOperationEligibility {
+                            operation,
+                            decision: if operation == DesktopOnlineOperation::ManualBrag {
+                                DesktopEligibilityDecision::Eligible
+                            } else {
+                                DesktopEligibilityDecision::Ineligible(
+                                    crate::desktop_eligibility::DesktopIneligibilityReason::OperationEvidenceUnavailable,
+                                )
+                            },
+                        })
+                        .collect();
+            }
+            let (reference, reference_layout) =
+                compact_buffer(&snapshot, 40, 300, 75, &mut PaneScroll::default());
+            assert_eq!(reference_layout.compact.unwrap().max_offset, 0);
+            let rows = compact_rows(&reference);
+            let gauge_row = rows
+                .iter()
+                .position(|row| row.contains("Task 75%"))
+                .unwrap();
+            assert!(gauge_row > 3);
+            assert!(rows[gauge_row + 1].starts_with("XP 0% | Encumbrance"));
+            assert!(!rows.join("\n").contains("Hidden completed quest"));
+            let mut scroll = PaneScroll::default();
+            let (_, layout) = compact_buffer(&snapshot, 40, 8, 75, &mut scroll);
+            let max_offset = layout.compact.unwrap().max_offset;
+            assert!(usize::from(max_offset) > gauge_row);
+            for offset in 0..=max_offset {
+                scroll.compact = offset;
+                let (buffer, _) = compact_buffer(&snapshot, 40, 8, 75, &mut scroll);
+                for y in 1..7 {
+                    for x in 1..39 {
+                        assert_eq!(
+                            buffer[(x, y)],
+                            reference[(x, y + offset)],
+                            "partial={partial}, offset={offset}, x={x}, y={y}"
+                        );
+                    }
+                    assert_eq!(buffer[(0, y)].symbol(), "│");
+                    assert_eq!(buffer[(39, y)].symbol(), "│");
+                }
+            }
+            let (_, layout) = compact_buffer(&snapshot, 40, 300, 75, &mut scroll);
+            assert_eq!(layout.compact.unwrap().max_offset, 0);
+            assert_eq!(scroll.compact, 0);
+        }
     }
 
     #[test]
@@ -5226,13 +5458,17 @@ mod tests {
             .unwrap();
     }
 
-    /// A snapshot with enough quest history that the Journal pane (full
-    /// layout) and the Character pane (compact layout) both overflow their
-    /// visible area at common terminal sizes.
+    /// Enough quest history and inventory to overflow both layouts.
     fn overflowing_snapshot() -> DashboardSnapshot {
         let mut snapshot = sample();
         snapshot.character.quests = (0..200).map(|index| format!("Quest {index}")).collect();
         snapshot.character.current_quest = "Quest 0".to_owned();
+        snapshot.character.inventory = (0..200)
+            .map(|index| InventoryEntry {
+                name: format!("Item {index}"),
+                quantity: 1,
+            })
+            .collect();
         snapshot
     }
 
@@ -5248,28 +5484,57 @@ mod tests {
     }
 
     #[test]
-    fn tab_and_shift_tab_cycle_focus_through_expanded_panes_and_wrap() {
+    fn tab_and_shift_tab_cycle_focus_through_expanded_panes_and_none() {
         let now = Instant::now();
         let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
         let provider = fake_provider(Vec::new(), Vec::new());
         let id = state.current.character.id.clone();
         render_state(&mut state, 120, 40);
-        assert_eq!(state.scroll.focused, Some(Pane::Activity));
+        assert_eq!(state.scroll.focused, None);
 
-        for expected in [
-            Pane::Progress,
-            Pane::Equipment,
-            Pane::Details,
-            Pane::Adventure,
-            Pane::Journal,
-            Pane::Activity,
-        ] {
-            state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
-            assert_eq!(state.scroll.focused, Some(expected));
+        for _ in 0..2 {
+            for expected in Pane::ALL.into_iter().map(Some).chain([None]) {
+                state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+                render_state(&mut state, 120, 40);
+                assert_eq!(state.scroll.focused, expected);
+            }
+            for expected in Pane::ALL.into_iter().rev().map(Some).chain([None]) {
+                state.handle_event(&provider, &id, key_event(KeyCode::BackTab), now);
+                render_state(&mut state, 120, 40);
+                assert_eq!(state.scroll.focused, expected);
+            }
         }
-
+        state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+        assert_eq!(state.scroll.focused, Some(Pane::Activity));
         state.handle_event(&provider, &id, key_event(KeyCode::BackTab), now);
-        assert_eq!(state.scroll.focused, Some(Pane::Journal));
+        assert_eq!(state.scroll.focused, None);
+    }
+
+    #[test]
+    fn focus_cycle_skips_collapsed_panes_and_keeps_the_none_position() {
+        for mask in 0..(1 << Pane::ALL.len()) {
+            let mut panes = PaneVisibility::default();
+            for pane in Pane::ALL {
+                if mask & (1 << pane.index()) != 0 {
+                    panes.toggle(pane);
+                }
+            }
+            let expanded: Vec<_> = Pane::ALL
+                .into_iter()
+                .filter(|&pane| !panes.is_collapsed(pane))
+                .collect();
+            let mut scroll = PaneScroll::default();
+            for _ in 0..2 {
+                for expected in expanded.iter().copied().map(Some).chain([None]) {
+                    scroll.focus_next(&panes);
+                    assert_eq!(scroll.focused, expected, "mask={mask}");
+                }
+                for expected in expanded.iter().rev().copied().map(Some).chain([None]) {
+                    scroll.focus_previous(&panes);
+                    assert_eq!(scroll.focused, expected, "mask={mask}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -5279,15 +5544,23 @@ mod tests {
         let provider = fake_provider(Vec::new(), Vec::new());
         let id = state.current.character.id.clone();
         render_state(&mut state, 120, 40);
+        state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
         assert_eq!(state.scroll.focused, Some(Pane::Activity));
 
         state.handle_event(&provider, &id, key_event(KeyCode::F(1)), now);
         assert!(state.panes.is_collapsed(Pane::Activity));
         assert_eq!(state.scroll.focused, Some(Pane::Progress));
+
+        state.handle_event(&provider, &id, key_event(KeyCode::BackTab), now);
+        assert_eq!(state.scroll.focused, None);
+        state.handle_event(&provider, &id, key_event(KeyCode::BackTab), now);
+        assert_eq!(state.scroll.focused, Some(Pane::Journal));
+        state.handle_event(&provider, &id, key_event(KeyCode::F(6)), now);
+        assert_eq!(state.scroll.focused, Some(Pane::Progress));
     }
 
     #[test]
-    fn collapsing_every_pane_clears_focus_and_expanding_one_restores_it() {
+    fn toggling_panes_without_focus_keeps_none_until_tab_is_pressed() {
         let now = Instant::now();
         let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
         let provider = fake_provider(Vec::new(), Vec::new());
@@ -5295,13 +5568,41 @@ mod tests {
         render_state(&mut state, 120, 40);
 
         for pane in Pane::ALL {
-            state.handle_event(&provider, &id, key_event(KeyCode::F((pane.index() + 1) as u8)), now);
+            state.handle_event(
+                &provider,
+                &id,
+                key_event(KeyCode::F((pane.index() + 1) as u8)),
+                now,
+            );
         }
         assert_eq!(state.scroll.focused, None);
 
         state.handle_event(&provider, &id, key_event(KeyCode::F(3)), now);
         assert!(!state.panes.is_collapsed(Pane::Equipment));
+        assert_eq!(state.scroll.focused, None);
+        state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
         assert_eq!(state.scroll.focused, Some(Pane::Equipment));
+        state.handle_event(&provider, &id, key_event(KeyCode::F(3)), now);
+        assert_eq!(state.scroll.focused, None);
+    }
+
+    #[test]
+    fn keyboard_scrolling_without_focus_leaves_full_layout_offsets_unchanged() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+        for key in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+        ] {
+            state.handle_event(&provider, &id, key_event(key), now);
+            assert_eq!(state.scroll.focused, None);
+            assert_eq!(state.scroll.offsets, [0; Pane::ALL.len()]);
+        }
     }
 
     #[test]
@@ -5311,7 +5612,7 @@ mod tests {
         let provider = fake_provider(Vec::new(), Vec::new());
         let id = state.current.character.id.clone();
         render_state(&mut state, 120, 40);
-        for _ in 0..5 {
+        for _ in 0..Pane::ALL.len() {
             state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
         }
         assert_eq!(state.scroll.focused, Some(Pane::Journal));
@@ -5398,7 +5699,11 @@ mod tests {
         let id = state.current.character.id.clone();
         render_state(&mut state, 70, 30);
         assert!(!state.layout.full_layout);
-        let max_offset = state.layout.compact.expect("compact pane is rendered").max_offset;
+        let max_offset = state
+            .layout
+            .compact
+            .expect("compact pane is rendered")
+            .max_offset;
         assert!(max_offset > 0, "expected Character content to overflow");
 
         state.handle_event(&provider, &id, key_event(KeyCode::Down), now);
@@ -5428,7 +5733,7 @@ mod tests {
         let id = state.current.character.id.clone();
 
         render_state(&mut state, 120, 20);
-        for _ in 0..5 {
+        for _ in 0..Pane::ALL.len() {
             state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
         }
         assert_eq!(state.scroll.focused, Some(Pane::Journal));
@@ -5458,7 +5763,7 @@ mod tests {
         let id = state.current.character.id.clone();
 
         render_state(&mut state, 120, 40);
-        for _ in 0..5 {
+        for _ in 0..Pane::ALL.len() {
             state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
         }
         state.handle_event(&provider, &id, key_event(KeyCode::Down), now);

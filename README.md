@@ -390,15 +390,25 @@ permits; collapsing it retains only its two border rows. Details shows the
 identifier and compact elapsed time (for example,
 `1d 1h 1m 1s` or `0s`), with Motto and Guild independently shown only when
 nonempty; it no longer shows Quest target. Narrow terminals retain the compact
-character view; their Keys pane likewise uses one content row when the shortcut
-line fits and two only when it wraps.
+character view, showing only the current quest rather than completed quest
+history. Its XP, encumbrance, plot, and quest percentages share a summary, with
+task progress on its own bar immediately above, using the same appearance and
+prediction as full mode. Empty lines separate equipment from the preceding
+percentage summary and following inventory, and separate the spellbook from plot
+information. All of this content scrolls together. The compact Keys pane
+likewise uses one content row when the shortcut line fits and two only when it
+wraps.
 
 Content that overflows a pane's visible area can be scrolled. In the full
 layout, `Tab` and `Shift+Tab` move keyboard scroll focus forward and backward
-among the expanded panes, wrapping at either end; the focused pane has a cyan
+among the expanded panes, with a "none selected" position between the last and
+first panes. No pane is selected initially; `Tab` selects the first expanded
+pane, and `Shift+Tab` selects the last. The focused pane has a cyan
 double-line border. `Up`/`Down` scroll the focused pane by one row, and
 `PageUp`/`PageDown` scroll it by one visible page. Collapsing the focused
-pane moves focus to the next expanded pane. The mouse wheel scrolls whichever
+pane moves focus to the next expanded pane. With no pane selected, these
+keyboard scrolling keys do nothing in the full layout, and toggling panes
+leaves focus unselected. The mouse wheel scrolls whichever
 expanded pane is under the pointer, independent of keyboard focus. In the
 compact layout, `Up`/`Down`, `PageUp`/`PageDown`, and the mouse wheel all
 scroll the combined Character pane. Scroll offsets are independent per pane,

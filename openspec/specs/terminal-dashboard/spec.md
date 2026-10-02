@@ -630,7 +630,10 @@ and the concise uniform-state desktop summary SHALL remain unchanged.
 The dashboard SHALL allow users to read vertically overflowing content in
 expanded full-layout panes and in the compact layout's combined Character
 pane. In the full layout, Tab and Shift+Tab SHALL move keyboard scroll focus
-forward and backward among expanded panes, wrapping at either end. The
+forward and backward among expanded panes, including a no-focus position
+between the last and first panes. No pane SHALL be focused initially. From
+the no-focus position, Tab SHALL select the first expanded pane and Shift+Tab
+SHALL select the last expanded pane. The
 focused pane SHALL be visibly distinguishable. Up and Down SHALL scroll the
 focused pane by one content row; PageUp and PageDown SHALL scroll it by one
 visible content page. Scrolling SHALL NOT alter character state or pane
@@ -647,8 +650,17 @@ available content range as the terminal is resized or content changes.
 
 - **WHEN** the user presses Tab or Shift+Tab in the full dashboard
 - **THEN** keyboard scroll focus moves to the next or previous expanded pane,
-  wrapping at the first and last panes
-- **AND** the focused pane is visibly distinguished
+  passing through a no-focus position when moving past either end
+- **AND** any focused pane is visibly distinguished
+
+#### Scenario: Leaving all panes unselected
+
+- **WHEN** the full dashboard opens or keyboard focus cycles past either end
+- **THEN** no pane is selected
+- **AND** Up, Down, PageUp, and PageDown do not scroll any pane
+- **AND** toggling pane collapse state leaves focus unselected
+- **AND** the next Tab selects the first expanded pane, or Shift+Tab selects
+  the last expanded pane
 
 #### Scenario: Scrolling a focused full-layout pane
 
