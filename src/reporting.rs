@@ -1,6 +1,6 @@
 //! Credential-safe leaderboard report delivery.
 
-use std::time::Duration;
+use std::{process::Command, time::Duration};
 use thiserror::Error;
 use url::Url;
 
@@ -466,7 +466,58 @@ fn official_endpoint(request: &str) -> Result<Url, ReportingError> {
 
 pub struct ReportResult {
     pub identity: CharacterIdentity,
+    pub realm: String,
     pub outcome: DeliveryOutcome,
+}
+
+#[derive(Debug, Error)]
+pub enum PublicLeaderboardError {
+    #[error("no public leaderboard page is configured for this realm")]
+    UnsupportedRealm,
+    #[error("could not construct the public leaderboard page URL")]
+    InvalidPageUrl(#[source] url::ParseError),
+    #[error("could not open the public leaderboard page: {0}")]
+    BrowserLaunch(#[source] std::io::Error),
+}
+
+pub fn public_leaderboard_url(
+    realm: &str,
+    display_name: &str,
+) -> Result<Url, PublicLeaderboardError> {
+    let page = match realm {
+        "Alpaquil" => "https://progressquest.com/alpaquil.php",
+        "Spoltog" => "https://progressquest.com/spoltog.php",
+        "Pemptus" => "https://progressquest.com/pemptus.php",
+        _ => return Err(PublicLeaderboardError::UnsupportedRealm),
+    };
+    let mut url = Url::parse(page).map_err(PublicLeaderboardError::InvalidPageUrl)?;
+    url.query_pairs_mut().append_pair("name", display_name);
+    Ok(url)
+}
+
+pub fn open_public_leaderboard(
+    realm: &str,
+    display_name: &str,
+) -> Result<(), PublicLeaderboardError> {
+    open_public_leaderboard_with(realm, display_name, |url| {
+        let status = Command::new("xdg-open").arg(url.as_str()).status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "xdg-open exited with an unsuccessful status",
+            ))
+        }
+    })
+}
+
+fn open_public_leaderboard_with(
+    realm: &str,
+    display_name: &str,
+    open: impl FnOnce(&Url) -> std::io::Result<()>,
+) -> Result<(), PublicLeaderboardError> {
+    let url = public_leaderboard_url(realm, display_name)?;
+    open(&url).map_err(PublicLeaderboardError::BrowserLaunch)
 }
 
 pub fn submit(
@@ -491,6 +542,11 @@ pub fn submit(
     if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
         return Err(ReportingError::UnofficialEndpoint);
     }
+    let realm = state
+        .online
+        .as_ref()
+        .map(|online| online.realm.clone())
+        .ok_or(StorageError::ReportingIneligible)?;
     let request = protocol::progress_report(
         host,
         &state,
@@ -509,8 +565,30 @@ pub fn submit(
     let request = official_endpoint(&request)?;
     Ok(ReportResult {
         identity: target.identity,
+        realm,
         outcome: transport.deliver(request),
     })
+}
+
+pub fn submit_manual_brag(
+    store: &Store,
+    id: &CharacterId,
+    transport: &impl ReportTransport,
+) -> Result<ReportResult, ReportingError> {
+    submit_manual_brag_with_opener(store, id, transport, open_public_leaderboard)
+}
+
+fn submit_manual_brag_with_opener(
+    store: &Store,
+    id: &CharacterId,
+    transport: &impl ReportTransport,
+    open: impl FnOnce(&str, &str) -> Result<(), PublicLeaderboardError>,
+) -> Result<ReportResult, ReportingError> {
+    let result = submit(store, id, transport)?;
+    if let Err(error) = open(&result.realm, &result.identity.name) {
+        eprintln!("Could not open the public leaderboard page: {error}");
+    }
+    Ok(result)
 }
 
 pub fn set_motto(
@@ -644,6 +722,11 @@ fn set_motto_with_evidence(
     let request = official_endpoint(&request)?;
     Ok(ReportResult {
         identity: target.identity,
+        realm: state
+            .online
+            .as_ref()
+            .map(|online| online.realm.clone())
+            .ok_or(StorageError::ReportingIneligible)?,
         outcome: transport.deliver(request),
     })
 }
@@ -695,6 +778,11 @@ pub(crate) fn submit_event(
     let request = official_endpoint(&request)?;
     Ok(ReportResult {
         identity: target.identity,
+        realm: state
+            .online
+            .as_ref()
+            .map(|online| online.realm.clone())
+            .ok_or(StorageError::ReportingIneligible)?,
         outcome: transport.deliver(request),
     })
 }
@@ -733,6 +821,7 @@ pub(crate) fn submit_desktop_event(
         deliver_desktop_report(transport, &target.authentication, request.encoded_query());
     Ok(ReportResult {
         identity: target.identity,
+        realm: target.authentication.realm.clone(),
         outcome: response,
     })
 }
@@ -759,6 +848,7 @@ fn submit_desktop_manual(
     .map_err(|_| ReportingError::DesktopConstruction)?;
     Ok(ReportResult {
         identity: target.identity,
+        realm: target.authentication.realm.clone(),
         outcome: deliver_desktop_report(transport, &target.authentication, request.encoded_query()),
     })
 }
@@ -791,6 +881,7 @@ fn set_desktop_motto(
     .map_err(|_| ReportingError::DesktopConstruction)?;
     Ok(ReportResult {
         identity: target.identity,
+        realm: target.authentication.realm.clone(),
         outcome: deliver_desktop_report(transport, &target.authentication, request.encoded_query()),
     })
 }
@@ -935,6 +1026,38 @@ mod tests {
         save,
         simulation::{ReportTrigger, advance_with_trace},
     };
+
+    #[test]
+    fn public_leaderboard_urls_use_fixed_realm_pages_and_encode_names() {
+        for (realm, page) in [
+            ("Alpaquil", "alpaquil.php"),
+            ("Spoltog", "spoltog.php"),
+            ("Pemptus", "pemptus.php"),
+        ] {
+            let url = public_leaderboard_url(realm, "A name & ?#").unwrap();
+            assert_eq!(
+                url.as_str(),
+                format!("https://progressquest.com/{page}?name=A+name+%26+%3F%23")
+            );
+            assert_eq!(
+                url.query_pairs().collect::<Vec<_>>(),
+                [("name".into(), "A name & ?#".into())]
+            );
+        }
+        assert!(matches!(
+            public_leaderboard_url("Other", "Name"),
+            Err(PublicLeaderboardError::UnsupportedRealm)
+        ));
+    }
+
+    #[test]
+    fn public_leaderboard_opening_reports_launcher_failures_separately() {
+        let error = open_public_leaderboard_with("Spoltog", "A name", |_| {
+            Err(std::io::Error::other("launcher failed"))
+        })
+        .unwrap_err();
+        assert!(matches!(error, PublicLeaderboardError::BrowserLaunch(_)));
+    }
 
     struct TestDirectory(PathBuf);
     impl TestDirectory {
@@ -1447,17 +1570,27 @@ mod tests {
             DeliveryOutcome::DeliveryFailed,
         ] {
             let (_directory, store, id) = registered_store();
-            let result = submit(
+            let opened = Cell::new(false);
+            let result = submit_manual_brag_with_opener(
                 &store,
                 &id,
                 &FakeTransport {
                     create: CreateDelivery::DeliveryFailed,
                     report: expected,
                 },
+                |realm, name| {
+                    assert_eq!(realm, "Alpaquil");
+                    assert_eq!(name, "Reference Hero");
+                    opened.set(true);
+                    Err(PublicLeaderboardError::BrowserLaunch(
+                        std::io::Error::other("test launcher failure"),
+                    ))
+                },
             )
             .unwrap();
             assert_eq!(result.outcome, expected);
             assert_eq!(result.identity.name, "Reference Hero");
+            assert!(opened.get());
         }
     }
 

@@ -319,7 +319,7 @@ pub fn run() -> Result<(), CliError> {
             let transport = reporting::TestEnrollmentTransport::from_environment();
             #[cfg(not(feature = "enrollment-test-transport"))]
             let transport = HttpsTransport;
-            let result = reporting::submit(&store, &id, &transport)?;
+            let result = reporting::submit_manual_brag(&store, &id, &transport)?;
             match result.outcome {
                 DeliveryOutcome::Delivered => println!("Leaderboard report delivered."),
                 DeliveryOutcome::EndpointRejected => {

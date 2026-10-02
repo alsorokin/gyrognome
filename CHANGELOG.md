@@ -6,6 +6,9 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Added
 
+- Open the selected character's official realm-specific public leaderboard
+  page in the system browser after a confirmed manual brag, without changing
+  the report outcome if browser opening fails.
 - Pemptus desktop online support for unadapted, spelling-only, and exact indexed
   quest-placeholder-only imports, including existing unadvanced managed characters:
   automatic level/act reporting, manual brag, motto set/clear, and guild

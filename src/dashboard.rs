@@ -364,7 +364,8 @@ impl DashboardProvider for LocalProvider {
     }
 
     fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
-        Ok(reporting::submit(&self.store.borrow(), id, &HttpsTransport)?.outcome)
+        let result = reporting::submit_manual_brag(&self.store.borrow(), id, &HttpsTransport)?;
+        Ok(result.outcome)
     }
 
     fn set_motto(&self, id: &CharacterId, text: &str) -> Result<DeliveryOutcome, DashboardError> {

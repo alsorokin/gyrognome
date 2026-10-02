@@ -204,12 +204,17 @@ gyro report <character-id>
 ```
 
 It displays the safe identity and requires typing `yes` for every submission.
-Declining changes nothing and sends no request. A successful HTTP response is
-reported only as delivered; it does not establish leaderboard classification.
-Rejected and failed deliveries do not retry automatically. A worker attempts
-each persisted online level-up and act-completion event once, then continues
-regardless of delivery outcome. Registration, inspection, dashboard refresh,
-lifecycle commands, and character administration never report.
+A successful HTTP response is reported only as delivered; it does not establish
+leaderboard classification.
+After the confirmed report attempt completes, the CLI opens the character's
+realm-specific public leaderboard page with its display name selected. This
+happens whether delivery succeeds, is rejected, or fails; a browser-launch
+failure is reported separately. Declining changes nothing, sends no request,
+and opens no page. The dashboard's Brag action also opens the public page after
+its manual report attempt. Worker level-up and act-completion reports never open
+a page and are attempted once each regardless of delivery outcome.
+Registration, inspection, dashboard refresh, lifecycle commands, and character
+administration never report.
 
 Do not provide a passkey, raw save contents, or a signed request URL to this
 command or to any Gyrognome diagnostic. Offline-created characters and active
