@@ -428,6 +428,8 @@ struct TaskAnchor {
     duration_ms: u64,
     identity: TaskIdentity,
     observed_at: Instant,
+    /// Task milliseconds credited per wall-clock millisecond.
+    rate: f64,
 }
 
 impl TaskAnchor {
@@ -444,6 +446,18 @@ impl TaskAnchor {
                 duration_ms: character.progress.task.max,
             },
             observed_at,
+            rate: task_prediction_rate(character.compatibility.profile),
+        }
+    }
+}
+
+fn task_prediction_rate(profile: CompatibilityProfile) -> f64 {
+    match profile {
+        CompatibilityProfile::Browser => 1.0,
+        CompatibilityProfile::Desktop644 => {
+            crate::desktop_callback::MAX_CALLBACK_ELAPSED_MS as f64
+                / crate::desktop_callback::CALLBACK_PERIOD.as_secs_f64()
+                / 1_000.0
         }
     }
 }
@@ -452,7 +466,7 @@ fn predicted_task_position(anchor: TaskAnchor, elapsed: Duration) -> f64 {
     if anchor.duration_ms == 0 {
         return 0.0;
     }
-    (anchor.position_ms + elapsed.as_millis() as f64).min(anchor.duration_ms as f64)
+    (anchor.position_ms + elapsed.as_millis() as f64 * anchor.rate).min(anchor.duration_ms as f64)
 }
 
 fn task_percent(position_ms: f64, duration_ms: u64) -> u64 {
@@ -479,7 +493,7 @@ fn next_task_percent_boundary(anchor: TaskAnchor, elapsed: Duration) -> Option<D
     let target_position =
         ((u128::from(percent + 1) * u128::from(anchor.duration_ms)).div_ceil(100)) as f64;
     Some(Duration::from_millis(
-        (target_position - position).max(1.0).ceil() as u64,
+        ((target_position - position) / anchor.rate).max(1.0).ceil() as u64,
     ))
 }
 
@@ -1202,8 +1216,9 @@ impl DashboardState {
         if self.current.runtime_owned != Some(true) {
             return None;
         }
-        let remaining_ms = (self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
+        let remaining_ms = ((self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
             .max(0.0)
+            / self.task_anchor.rate)
             .ceil() as u64;
         self.task_anchor
             .observed_at
@@ -3604,9 +3619,43 @@ mod tests {
                 duration_ms: 0,
             },
             observed_at: now,
+            rate: 1.0,
         };
         assert_eq!(predicted_task_position(zero, Duration::ZERO), 0.0);
         assert_eq!(predicted_task_percent(zero, Duration::ZERO), 100);
+    }
+
+    #[test]
+    fn desktop_prediction_advances_at_the_callback_credit_rate() {
+        let now = Instant::now();
+        let mut snapshot = active_snapshot(0.0, 10_000);
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        let desktop = TaskAnchor::from_snapshot(&snapshot, now);
+        assert!(
+            (predicted_task_position(desktop, Duration::from_millis(1_094)) - 1_000.228_571).abs()
+                < 1e-3
+        );
+        assert!(predicted_task_percent(desktop, Duration::from_millis(10_000)) < 100);
+        assert_eq!(
+            predicted_task_percent(desktop, Duration::from_millis(10_938)),
+            100
+        );
+        assert_eq!(
+            next_task_percent_boundary(desktop, Duration::ZERO),
+            Some(Duration::from_millis(110))
+        );
+
+        let state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+        assert_eq!(
+            state.settling_deadline(),
+            Some(now + Duration::from_millis(10_938) + SETTLING_INTERVAL)
+        );
+
+        let browser = TaskAnchor::from_snapshot(&active_snapshot(0.0, 10_000), now);
+        assert_eq!(
+            predicted_task_percent(browser, Duration::from_millis(10_000)),
+            100
+        );
     }
 
     #[test]

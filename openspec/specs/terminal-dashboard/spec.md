@@ -258,13 +258,68 @@ expand to two inner-content rows only when that line wraps.
 - **AND** its Keys pane uses one content row when the shortcut line fits and
   two only when it wraps
 
+### Requirement: Compact character content layout
+
+The compact dashboard SHALL display only the canonical current quest with the
+`Current quest:` label, rather than the full quest list or completed quest
+history. It SHALL retain the plot information.
+
+The compact percentage summary SHALL contain experience, encumbrance, plot,
+and quest percentages only. Immediately above that summary, the dashboard
+SHALL display task progress on a dedicated, single-row progress bar spanning
+the Character pane's inner width. The bar SHALL use the same filled/unfilled
+appearance and centered `Task <percent>%` label as the full-mode task bar,
+and SHALL use the same display-only predicted task percentage.
+
+The compact Character content SHALL include one empty line before equipment,
+one empty line after equipment and before inventory, and one empty line after
+the spellbook and before plot information. The task bar and empty separator
+lines SHALL participate in the combined Character pane's normal scrolling.
+These changes SHALL NOT change full-layout presentation.
+
+#### Scenario: Showing only the current quest
+
+- **WHEN** the compact dashboard displays a character with a current quest and
+  several completed quests
+- **THEN** it shows the current quest with the `Current quest:` label
+- **AND** completed quest history is absent, including after scrolling
+- **AND** plot information remains available
+
+#### Scenario: Separating task progress
+
+- **WHEN** the compact dashboard displays task progress at 75 percent
+- **THEN** the percentage summary contains only experience, encumbrance, plot,
+  and quest percentages
+- **AND** the preceding row is a task progress bar labeled `Task 75%`, with the same
+  fill treatment as full mode
+
+#### Scenario: Separating compact sections
+
+- **WHEN** compact Character content includes equipment, inventory, spells,
+  and plot information
+- **THEN** one empty row separates the percentage summary from equipment, equipment from
+  inventory, and the spellbook from plot information
+
+#### Scenario: Scrolling wrapped content and the task bar
+
+- **WHEN** compact Character content wraps or exceeds the visible height
+- **THEN** scrolling preserves the task bar's position relative to the
+  percentage summary and equipment
+- **AND** the bar and separator rows scroll with the rest of the content,
+  without overwriting borders or other content
+
 ### Requirement: Predicted current-task progress
 
 The dashboard SHALL display a predicted position for the current task progress
 bar between persisted state reads, derived from monotonic time elapsed since it
 observed the most recent persisted state. The prediction SHALL be computed from
-the observed persisted task position and task duration alone; it SHALL NOT
-invoke the simulation, acquire a character lock, or write character state.
+the observed persisted task position, task duration, and the character's
+compatibility profile alone; it SHALL NOT invoke the simulation, acquire a
+character lock, or write character state.
+
+For browser characters, the predicted position SHALL advance at wall-clock
+rate. For desktop characters, it SHALL advance at the desktop callback credit
+rate of 100 milliseconds per 109.375 milliseconds of elapsed time.
 
 The prediction SHALL be display-only. It SHALL NOT be persisted, included in
 any leaderboard report, or used to determine task completion, the
@@ -272,10 +327,10 @@ recent-task-update indicator, lifecycle eligibility, or manual-brag
 eligibility.
 
 The prediction SHALL apply only to the task progress bar, in both the full
-Progress pane and the compact progress summary. The experience, encumbrance,
-plot, and quest bars, the completed-task count, the activity description, the
-character stats, equipment, inventory, spells, plots, and quests SHALL change
-only when a newer persisted state is read.
+Progress pane and the compact Character pane's dedicated task-bar row. The
+experience, encumbrance, plot, and quest bars, the completed-task count, the
+activity description, the character stats, equipment, inventory, spells,
+plots, and quests SHALL change only when a newer persisted state is read.
 
 The predicted position SHALL NOT exceed the current task's duration. When the
 predicted position reaches that duration, the dashboard SHALL display a full
@@ -299,6 +354,13 @@ percentages it did not draw.
   between persisted state reads
 - **THEN** the displayed task bar advances in whole-percent steps toward the
   current task's duration without the dashboard advancing the character itself
+
+#### Scenario: Predicting a desktop task at the callback rate
+
+- **WHEN** a local runtime owns a desktop character whose task has 10,000
+  milliseconds remaining
+- **THEN** the predicted task bar reaches full after about 10,938 milliseconds
+  of elapsed time rather than 10,000
 
 #### Scenario: Reaching the end of a task before new state is read
 

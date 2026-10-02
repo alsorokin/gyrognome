@@ -27,6 +27,11 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Changed
 
+- Matched desktop runtime pacing to the original callback cadence, with
+  completion-, report-, provenance-, and stop-boundary persistence and
+  dashboard prediction at the same rate.
+- Refined the compact dashboard with current-quest-only display, a dedicated
+  task progress bar, and clearer spacing between Character sections.
 - Reorganized the full dashboard: the Journal title shows the current plot,
   Status stays visible beside Keys, and F1-F6 toggle Activity, Progress,
   Equipment, Details, Adventure, and Journal. Keys now adapt their height to

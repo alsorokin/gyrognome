@@ -79,11 +79,19 @@ inspection, but the dashboard omits the constant unavailable-history summary.
 Desktop workers follow callback semantics rather than browser duration
 semantics:
 
+- callbacks run on a fixed 109.375 millisecond cadence, matching the default
+  Windows timer resolution behind the classic 100 millisecond `TTimer`, so
+  desktop characters advance at roughly 91% of wall-clock speed;
 - callbacks credit at most 100 milliseconds;
 - delayed or missed time is discarded rather than caught up;
 - filling a task bar does not complete it until the next actual callback;
 - pending full-bar state and desktop RNG state survive restart; and
 - level and act reports use their exact transition snapshots.
+
+Callback state is kept in memory and committed on task completion, before a
+level or act report is delivered, when a character is first marked local-only,
+and on graceful stop. A crash can therefore lose the partial progress of the
+current task. The dashboard predicts desktop bars at the same reduced rate.
 
 The dashboard displays the human-readable activity text from the classic state,
 while the internal command remains available to simulation.

@@ -89,29 +89,46 @@ atomically. It SHALL not remove a character while a local runtime owns it.
 ### Requirement: Controlled offline advancement
 
 The system SHALL advance a running managed character using elapsed time
-measured only by its active runtime and SHALL durably record each successful
-result. It SHALL supply explicit monotonic elapsed inputs to the selected
-profile. Time while stopped SHALL NOT be applied as catch-up.
+measured only by its active runtime. It SHALL supply explicit monotonic elapsed
+inputs to the selected profile. Time while stopped SHALL NOT be applied as
+catch-up.
 
-For browser characters, each update SHALL cap elapsed time at the configured
-worker interval and discard excess scheduler delay permanently. Updates SHALL
-occur at the earlier of the interval and task completion, in whole bounded
-simulation ticks and at least one tick. The interval SHALL remain the maximum
-single advancement. Task-aligned scheduling SHALL preserve total simulated
-time and the browser's canonical/random continuation compared with equivalent
+For browser characters, the system SHALL durably record each successful
+result. Each update SHALL cap elapsed time at the configured worker interval
+and discard excess scheduler delay permanently. Updates SHALL occur at the
+earlier of the interval and task completion, in whole bounded simulation ticks
+and at least one tick. The interval SHALL remain the maximum single
+advancement. Task-aligned scheduling SHALL preserve total simulated time and
+the browser's canonical/random continuation compared with equivalent
 whole-interval advancement.
 
-For desktop characters, each actual callback SHALL supply at most 100
-milliseconds, discard excess delay, and preserve the full-bar-then-complete
-callback boundary. The runtime SHALL NOT synthesize missed callbacks or
-accelerate callback frequency to drain a full task. Restart SHALL reestablish
-the timing baseline while retaining pending completion. Time spent delayed by
-online delivery SHALL NOT become catch-up advancement.
+For desktop characters, the runtime SHALL schedule callbacks at a fixed rate
+of one per 109.375 milliseconds, approximating the original client's 100 ms
+timer on default Windows timer resolution, so that time spent processing a
+callback does not lengthen the period. Each actual callback SHALL credit the
+monotonic time since the previous callback's simulation step finished, clamped
+to 0..100 milliseconds, so that persistence and report delivery time is not
+charged against task progress. It SHALL discard excess delay and preserve the
+full-bar-then-complete callback boundary. When callbacks fall behind schedule,
+the runtime SHALL skip the missed callbacks rather than run them back to back.
+The runtime SHALL NOT synthesize missed callbacks or accelerate callback
+frequency to drain a full task. Restart SHALL reestablish the timing baseline
+while retaining the last durably recorded state. Time spent delayed by online
+delivery SHALL NOT become catch-up advancement.
+
+Desktop runtime state SHALL be durably recorded at least: when a callback
+dispatches task completion; before any report produced by a callback is
+delivered; when local-only provenance is first recorded; and on graceful
+stop. The runtime is not required to record partial progress within a task.
+Between those points, unrecorded partial-task progress MAY be lost on an
+abnormal exit; such loss SHALL only roll the character back to an earlier
+recorded state and SHALL NOT duplicate completion rewards or reports.
 
 #### Scenario: Advancing while the runtime is active
 
 - **WHEN** a character runtime remains active across advancement intervals
-- **THEN** each successful resulting state is persisted and locally inspectable
+- **THEN** its state is durably recorded at the profile's commit points and is
+  locally inspectable
 
 #### Scenario: Restarting a stopped runtime
 
@@ -158,11 +175,61 @@ online delivery SHALL NOT become catch-up advancement.
 - **THEN** the runtime still supplies at least one whole tick rather than
   scheduling a zero-duration update
 
+#### Scenario: Pacing desktop callbacks independent of processing time
+
+- **WHEN** a desktop runtime runs for one minute and each callback takes a
+  substantial but sub-period time to process
+- **THEN** approximately 549 callbacks occur and approximately 54.9 seconds of
+  task time are credited, rather than fewer callbacks spaced by sleep plus
+  processing time
+
+#### Scenario: Falling behind the desktop schedule
+
+- **WHEN** a desktop callback finishes after one or more later scheduled
+  callback times have already passed
+- **THEN** the runtime runs the next callback at the next future scheduled
+  time, crediting at most 100 milliseconds, without back-to-back catch-up
+  callbacks
+
+#### Scenario: Committing a desktop task completion
+
+- **WHEN** a desktop callback dispatches task completion
+- **THEN** the resulting state, random continuation, and measured counters are
+  durably recorded before the next callback
+
+#### Scenario: Committing before a desktop report
+
+- **WHEN** a desktop callback produces a level or act report
+- **THEN** the callback's resulting state is durably recorded before the
+  report is delivered, so a restart cannot replay that callback or resend the
+  report
+
+#### Scenario: Not committing desktop partial progress per callback
+
+- **WHEN** a desktop callback only advances the task bar without dispatching
+  completion, producing a report, or recording local-only provenance
+- **THEN** the runtime does not durably record that callback's result before
+  the next commit point
+
 #### Scenario: Persisting a full desktop bar
 
 - **WHEN** a desktop callback fills its task bar
-- **THEN** that pending-completion state is durable and only the next actual
-  callback dispatches completion
+- **THEN** that pending-completion state is retained across a graceful stop or
+  later commit point, and only the next actual callback dispatches completion
+
+#### Scenario: Stopping a desktop runtime gracefully
+
+- **WHEN** a desktop runtime receives a stop request
+- **THEN** it durably records its latest in-memory state, including a full
+  pending-completion bar, before exiting
+
+#### Scenario: Abnormal exit between desktop commits
+
+- **WHEN** a desktop runtime exits abnormally after uncommitted partial
+  progress
+- **THEN** the next start resumes the last durably recorded state, losing at
+  most the uncommitted partial progress and never repeating a recorded
+  completion or report
 
 ### Requirement: Exclusive character ownership
 

@@ -9,6 +9,29 @@ use crate::{
 
 pub const MAX_CALLBACK_ELAPSED_MS: i64 = 100;
 
+/// Real cadence of the original client's 100 ms `TTimer` at the default
+/// Windows timer resolution (7 × 15.625 ms).
+pub const CALLBACK_PERIOD: std::time::Duration = std::time::Duration::from_micros(109_375);
+
+/// Returns the next fixed-rate callback deadline after `previous`, skipping
+/// any deadlines that `now` has already passed instead of catching up.
+pub fn next_callback_deadline(
+    previous: std::time::Instant,
+    now: std::time::Instant,
+    period: std::time::Duration,
+) -> std::time::Instant {
+    let next = previous.checked_add(period).unwrap_or(now);
+    if next > now {
+        return next;
+    }
+    let skipped = now.saturating_duration_since(next).as_nanos() / period.as_nanos().max(1) + 1;
+    u32::try_from(skipped)
+        .ok()
+        .and_then(|skipped| period.checked_mul(skipped))
+        .and_then(|offset| next.checked_add(offset))
+        .unwrap_or_else(|| now.checked_add(period).unwrap_or(now))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopCallbackCheckpoint {
     pub state: DesktopCanonicalState,
@@ -118,6 +141,24 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn callback_deadlines_are_fixed_rate_and_skip_missed_periods() {
+        let start = std::time::Instant::now();
+        let period = CALLBACK_PERIOD;
+        assert_eq!(
+            next_callback_deadline(start, start + period / 2, period),
+            start + period
+        );
+        assert_eq!(
+            next_callback_deadline(start, start + period, period),
+            start + period * 2
+        );
+        assert_eq!(
+            next_callback_deadline(start, start + period * 3 + period / 2, period),
+            start + period * 4
+        );
+    }
 
     fn checkpoint(position: u64, maximum: u64) -> DesktopCallbackCheckpoint {
         DesktopCallbackCheckpoint {

@@ -28,7 +28,7 @@ use crate::{
         DesktopCanonicalState, DesktopImportMetadata, ImportMetadata, RandomContinuation,
         SourceFormat, initialize_desktop_registration_random,
     },
-    desktop_callback::{DesktopCallbackCheckpoint, DesktopCallbackObservation},
+    desktop_callback::DesktopCallbackCheckpoint,
     desktop_eligibility::{
         DesktopEligibilityDecision, DesktopEligibilityInput, DesktopIneligibilityReason,
         DesktopOnlineOperation, DesktopOperationEligibility,
@@ -750,7 +750,8 @@ impl Store {
         &mut self,
         id: &CharacterId,
         checkpoint: &DesktopCallbackCheckpoint,
-        observation: DesktopCallbackObservation,
+        credited_milliseconds: u64,
+        tasks_completed: u64,
         mark_local_only: bool,
     ) -> Result<(), StorageError> {
         let identity = desktop_identity(&checkpoint.state)?;
@@ -785,15 +786,13 @@ impl Store {
         metadata.measured_since_import.elapsed_milliseconds = metadata
             .measured_since_import
             .elapsed_milliseconds
-            .checked_add(observation.credited_milliseconds)
+            .checked_add(credited_milliseconds)
             .ok_or(StorageError::DesktopCounterOverflow("elapsed milliseconds"))?;
-        if observation.completion_dispatched {
-            metadata.measured_since_import.tasks_completed = metadata
-                .measured_since_import
-                .tasks_completed
-                .checked_add(1)
-                .ok_or(StorageError::DesktopCounterOverflow("tasks completed"))?;
-        }
+        metadata.measured_since_import.tasks_completed = metadata
+            .measured_since_import
+            .tasks_completed
+            .checked_add(tasks_completed)
+            .ok_or(StorageError::DesktopCounterOverflow("tasks completed"))?;
         if mark_local_only {
             metadata.advancement_provenance = DesktopAdvancementProvenance::LocalOnly;
         }
@@ -1656,6 +1655,18 @@ pub fn aligned_task_completion_duration(state: &Character) -> Duration {
     Duration::from_millis(ticks.saturating_mul(crate::simulation::MAX_TICK_MS))
 }
 
+/// Desktop callback state held in memory between durable commit points.
+struct DesktopSession {
+    checkpoint: DesktopCallbackCheckpoint,
+    authentication: DesktopAuthentication,
+    progress_reporting_evidence_available: bool,
+    local_only_recorded: bool,
+    pending_credited_milliseconds: u64,
+    pending_tasks_completed: u64,
+    pending_local_only: bool,
+    dirty: bool,
+}
+
 /// Owns one managed character and advances it only while this process is active.
 pub struct Worker {
     store: Store,
@@ -1664,6 +1675,7 @@ pub struct Worker {
     _lock: CharacterLock,
     last_tick: Instant,
     transport: Box<dyn ReportTransport>,
+    desktop: Option<DesktopSession>,
 }
 
 impl Worker {
@@ -1678,6 +1690,7 @@ impl Worker {
             _lock: lock,
             last_tick: Instant::now(),
             transport: Box::new(HttpsTransport),
+            desktop: None,
         })
     }
 
@@ -1722,46 +1735,112 @@ impl Worker {
                 }
             }
             CompatibilityProfile::Desktop644 => {
-                let managed = self.store.get_desktop(&self.id)?;
-                let RandomContinuation::Desktop644(random) = managed.compatibility.random else {
-                    return Err(StorageError::InvalidDesktopState(
-                        "random continuation profile mismatch",
-                    )
-                    .into());
-                };
-                let authentication = self.store.desktop_authentication(&self.id)?;
-                let progress_reporting_evidence_available =
-                    desktop_progress_reporting_evidence_available(&managed, &authentication);
-                let mut checkpoint = DesktopCallbackCheckpoint {
-                    state: managed.state,
-                    random,
-                };
-                let mut hooks = SourceDerivedDesktopHooks::traced();
                 let elapsed_ms =
                     i64::try_from(elapsed_ms).map_err(|_| WorkerError::ElapsedOverflow)?;
-                let observation = checkpoint.apply_progression_callback(elapsed_ms, &mut hooks)?;
-                let changed =
-                    observation.credited_milliseconds != 0 || observation.completion_dispatched;
-                let mark_local_only = should_mark_desktop_local_only(
-                    &authentication,
-                    changed,
-                    progress_reporting_evidence_available,
-                );
-                self.store.replace_desktop_checkpoint(
-                    &self.id,
-                    &checkpoint,
-                    observation,
-                    mark_local_only,
-                )?;
-                for report in hooks.reports() {
-                    let _ = crate::reporting::submit_desktop_event(
-                        &self.store,
-                        &self.id,
-                        report,
-                        &*self.transport,
-                    );
-                }
+                let result = self.desktop_callback(elapsed_ms, true);
+                self.desktop = None;
+                result?;
             }
+        }
+        Ok(())
+    }
+
+    fn load_desktop_session(&mut self) -> Result<(), WorkerError> {
+        if self.desktop.is_some() {
+            return Ok(());
+        }
+        let managed = self.store.get_desktop(&self.id)?;
+        let RandomContinuation::Desktop644(random) = managed.compatibility.random else {
+            return Err(
+                StorageError::InvalidDesktopState("random continuation profile mismatch").into(),
+            );
+        };
+        let authentication = self.store.desktop_authentication(&self.id)?;
+        let progress_reporting_evidence_available =
+            desktop_progress_reporting_evidence_available(&managed, &authentication);
+        self.desktop = Some(DesktopSession {
+            local_only_recorded: managed.import_metadata.advancement_provenance
+                == DesktopAdvancementProvenance::LocalOnly,
+            checkpoint: DesktopCallbackCheckpoint {
+                state: managed.state,
+                random,
+            },
+            authentication,
+            progress_reporting_evidence_available,
+            pending_credited_milliseconds: 0,
+            pending_tasks_completed: 0,
+            pending_local_only: false,
+            dirty: false,
+        });
+        Ok(())
+    }
+
+    /// Runs one desktop callback in memory and commits it when a durable
+    /// commit point is reached (or always, when `commit_always` is set).
+    /// Returns the instant the simulation step finished, before any I/O.
+    fn desktop_callback(
+        &mut self,
+        elapsed_ms: i64,
+        commit_always: bool,
+    ) -> Result<Instant, WorkerError> {
+        self.load_desktop_session()?;
+        let session = self.desktop.as_mut().expect("desktop session loaded");
+        let mut hooks = SourceDerivedDesktopHooks::traced();
+        let observation = session
+            .checkpoint
+            .apply_progression_callback(elapsed_ms, &mut hooks)?;
+        let simulated_at = Instant::now();
+        let changed = observation.credited_milliseconds != 0 || observation.completion_dispatched;
+        let newly_local_only = !session.local_only_recorded
+            && should_mark_desktop_local_only(
+                &session.authentication,
+                changed,
+                session.progress_reporting_evidence_available,
+            );
+        session.pending_credited_milliseconds = session
+            .pending_credited_milliseconds
+            .saturating_add(observation.credited_milliseconds);
+        session.pending_tasks_completed += u64::from(observation.completion_dispatched);
+        session.pending_local_only |= newly_local_only;
+        session.dirty |= changed;
+        if commit_always
+            || observation.completion_dispatched
+            || newly_local_only
+            || !hooks.reports().is_empty()
+        {
+            self.commit_desktop()?;
+        }
+        for report in hooks.reports() {
+            let _ = crate::reporting::submit_desktop_event(
+                &self.store,
+                &self.id,
+                report,
+                &*self.transport,
+            );
+        }
+        Ok(simulated_at)
+    }
+
+    /// Durably records the in-memory desktop session, then drops it so the
+    /// next callback re-reads authentication, evidence, and provenance.
+    fn commit_desktop(&mut self) -> Result<(), WorkerError> {
+        let Some(session) = self.desktop.as_ref() else {
+            return Ok(());
+        };
+        self.store.replace_desktop_checkpoint(
+            &self.id,
+            &session.checkpoint,
+            session.pending_credited_milliseconds,
+            session.pending_tasks_completed,
+            session.pending_local_only,
+        )?;
+        self.desktop = None;
+        Ok(())
+    }
+
+    fn flush_desktop(&mut self) -> Result<(), WorkerError> {
+        if self.desktop.as_ref().is_some_and(|session| session.dirty) {
+            self.commit_desktop()?;
         }
         Ok(())
     }
@@ -1772,9 +1851,7 @@ impl Worker {
                 let state = self.store.get(&self.id)?.state;
                 Ok(aligned_task_completion_duration(&state).min(interval))
             }
-            CompatibilityProfile::Desktop644 => Ok(Duration::from_millis(
-                crate::desktop_callback::MAX_CALLBACK_ELAPSED_MS as u64,
-            )),
+            CompatibilityProfile::Desktop644 => Ok(crate::desktop_callback::CALLBACK_PERIOD),
         }
     }
 
@@ -1785,6 +1862,9 @@ impl Worker {
     pub fn run_until(mut self, stop: &AtomicBool, interval: Duration) -> Result<(), WorkerError> {
         if interval.is_zero() {
             return Err(WorkerError::ZeroInterval);
+        }
+        if self.profile == CompatibilityProfile::Desktop644 {
+            return self.run_desktop_until(stop);
         }
         while !stop.load(Ordering::Relaxed) {
             let scheduled = self.scheduled_duration(interval)?;
@@ -1798,6 +1878,29 @@ impl Worker {
             self.advance_elapsed(elapsed)?;
         }
         Ok(())
+    }
+
+    /// Fires desktop callbacks on a fixed-rate schedule so processing time
+    /// does not stretch the period, crediting time since the previous
+    /// simulation step like the original timer handler. Partial task progress
+    /// stays in memory until a commit point or a graceful stop; an error exits
+    /// without flushing, as a crash would.
+    fn run_desktop_until(&mut self, stop: &AtomicBool) -> Result<(), WorkerError> {
+        let period = crate::desktop_callback::CALLBACK_PERIOD;
+        self.last_tick = Instant::now();
+        let mut deadline = self.last_tick.checked_add(period).unwrap_or(self.last_tick);
+        loop {
+            thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let elapsed = Instant::now().saturating_duration_since(self.last_tick);
+            let elapsed_ms = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
+            self.last_tick = self.desktop_callback(elapsed_ms, false)?;
+            deadline =
+                crate::desktop_callback::next_callback_deadline(deadline, Instant::now(), period);
+        }
+        self.flush_desktop()
     }
 }
 
@@ -3320,7 +3423,7 @@ mod tests {
 
         assert_eq!(
             worker.scheduled_duration(Duration::from_secs(1)).unwrap(),
-            Duration::from_millis(100)
+            crate::desktop_callback::CALLBACK_PERIOD
         );
         worker.advance_elapsed(Duration::from_millis(250)).unwrap();
         assert_eq!(
@@ -3347,6 +3450,121 @@ mod tests {
         assert_eq!(
             persisted.import_metadata.advancement_provenance,
             DesktopAdvancementProvenance::LocalOnly
+        );
+    }
+
+    #[test]
+    fn desktop_batched_callbacks_commit_only_at_commit_points() {
+        let directory = TestDirectory::new("desktop-worker-batched");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.position = 5_800;
+        save.bars.task.maximum = 6_000;
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let initial_task = registered.state.current_task.clone();
+        let mut worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        let persisted = |worker: &Worker| worker.store.get_desktop(&registered.id).unwrap();
+
+        worker.desktop_callback(100, false).unwrap();
+        assert_eq!(persisted(&worker).state.bars.task.position, 5_900);
+
+        worker.desktop_callback(100, false).unwrap();
+        assert_eq!(persisted(&worker).state.bars.task.position, 5_900);
+
+        worker.flush_desktop().unwrap();
+        let pending = persisted(&worker);
+        assert_eq!(pending.state.bars.task.position, 6_000);
+        assert_eq!(pending.state.current_task, initial_task);
+        assert_eq!(
+            pending
+                .import_metadata
+                .measured_since_import
+                .elapsed_milliseconds,
+            200
+        );
+
+        worker.desktop_callback(100, false).unwrap();
+        let completed = persisted(&worker);
+        assert_eq!(completed.state.bars.task.position, 0);
+        assert_ne!(completed.state.current_task, initial_task);
+        assert_eq!(
+            completed.import_metadata.measured_since_import,
+            crate::compatibility::SinceImportCounters {
+                tasks_completed: 1,
+                elapsed_milliseconds: 200,
+            }
+        );
+    }
+
+    #[test]
+    fn desktop_batched_callback_commits_before_report_delivery() {
+        let directory = TestDirectory::new("desktop-worker-batched-report");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_level_report_fixture(), &mut Numbers(0x1357_9bdf))
+            .unwrap();
+        let online_action = store.acquire_online_action_lock(&registered.id).unwrap();
+        let path = directory.0.clone();
+        let id = registered.id.clone();
+        let reporting = thread::spawn(move || {
+            let mut worker = Worker::start(Store::open_at(path).unwrap(), id).unwrap();
+            worker.desktop_callback(0, false).map(|_| ())
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while store.get_desktop(&registered.id).unwrap().identity.level != 3 {
+            assert!(
+                Instant::now() < deadline,
+                "batched desktop callback was not persisted before report delivery"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        drop(online_action);
+        reporting.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn desktop_run_until_paces_callbacks_and_flushes_on_stop() {
+        let directory = TestDirectory::new("desktop-worker-pacing");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.maximum = 600_000;
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0xf00d_cafe))
+            .unwrap();
+        let worker =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let running = {
+            let stop = std::sync::Arc::clone(&stop);
+            thread::spawn(move || worker.run_until(&stop, Duration::from_secs(1)))
+        };
+
+        thread::sleep(Duration::from_millis(600));
+        let mid_run = store.get_desktop(&registered.id).unwrap();
+        assert!(
+            mid_run
+                .import_metadata
+                .measured_since_import
+                .elapsed_milliseconds
+                <= 100
+        );
+
+        thread::sleep(Duration::from_millis(500));
+        stop.store(true, Ordering::Relaxed);
+        running.join().unwrap().unwrap();
+        let credited = store
+            .get_desktop(&registered.id)
+            .unwrap()
+            .import_metadata
+            .measured_since_import
+            .elapsed_milliseconds;
+        assert!(
+            (800..=1_100).contains(&credited),
+            "credited {credited} ms over 1.1 s"
         );
     }
 
@@ -4578,15 +4796,7 @@ mod tests {
         };
         worker
             .store
-            .replace_desktop_checkpoint(
-                &registered.id,
-                &checkpoint,
-                DesktopCallbackObservation {
-                    credited_milliseconds: 0,
-                    completion_dispatched: false,
-                },
-                false,
-            )
+            .replace_desktop_checkpoint(&registered.id, &checkpoint, 0, 0, false)
             .unwrap();
         assert_eq!(
             worker
