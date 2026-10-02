@@ -170,6 +170,11 @@ pub(super) fn validate_scope(
     {
         return Err(DesktopLiveExperimentError::InvalidScope);
     }
+    if options.allow_quest_placeholder
+        && (contract.realm != "Pemptus" || options.stage != DesktopLiveStage::Progression)
+    {
+        return Err(DesktopLiveExperimentError::InvalidScope);
+    }
     if options.preparation_reconciliation_seconds.is_some()
         || options.confirm_preparation_reconciliation
     {
@@ -375,11 +380,8 @@ pub(super) fn run(
             desktop_request_text_is_ascii(&state, &[]),
         )
         .map_err(|_| DesktopLiveExperimentError::ContractMismatch)?;
+    validate_source_adaptations(options, &save)?;
     if save.private.realm != contract.realm
-        || !DesktopImportMetadata::from_validated(&save.adaptations)
-            .provenance
-            .adaptations
-            .is_empty()
         || save.game_style != 3
         || (!save.profile.guild.is_empty() && !options.initial_guild_leave)
         || (save.profile.guild.is_empty() && options.initial_guild_leave)
@@ -389,27 +391,7 @@ pub(super) fn run(
     }
     validate_fresh(&save)?;
     let name = trait_value(&save, "Name")?.to_owned();
-    let scope = sha256(
-        &serde_json::to_vec(&(
-            contract.realm,
-            options.stage,
-            &options.operations,
-            options.max_mutation_attempts,
-            options.max_active_seconds,
-            options.classification_poll_seconds,
-            &options.control_motto,
-            &options.manual_motto,
-            &options.motto,
-            &options.guild_designation,
-            &options.guild_change_designation,
-            &name,
-            &source_hash,
-            &state,
-            options.allow_existing_disposable,
-            options.initial_guild_leave,
-        ))
-        .map_err(|_| DesktopLiveExperimentError::PrivateState)?,
-    );
+    let scope = source_scope(options, contract, &save, &source_hash)?;
     let checkpoint_path = directory.join(CHECKPOINT);
     let checkpoint = if checkpoint_path.exists() {
         let checkpoint: StageCheckpoint = serde_json::from_slice(
@@ -529,6 +511,73 @@ pub(super) fn run(
     }
     println!("scoped desktop stage completed with validated credential-free operation records");
     Ok(())
+}
+
+fn validate_source_adaptations(
+    options: &DesktopLiveExperimentOptions,
+    save: &DesktopValidatedSave,
+) -> Result<(), DesktopLiveExperimentError> {
+    validate_scope(options)?;
+    let adaptations = DesktopImportMetadata::from_validated(&save.adaptations)
+        .provenance
+        .adaptations;
+    if options.allow_quest_placeholder {
+        if adaptations != [crate::compatibility::DesktopAdaptation::LegacyQuestPlaceholder]
+            || !matches!(save.quest, crate::desktop_save::DesktopQuestMarker::LegacyPlaceholder { index }
+                if index < crate::desktop_rules::bundled().tables.monsters.len())
+        {
+            return Err(DesktopLiveExperimentError::InvalidScope);
+        }
+    } else if !adaptations.is_empty() {
+        return Err(DesktopLiveExperimentError::InvalidScope);
+    }
+    Ok(())
+}
+
+fn source_scope(
+    options: &DesktopLiveExperimentOptions,
+    contract: DesktopRealmContract,
+    save: &DesktopValidatedSave,
+    source_hash: &str,
+) -> Result<String, DesktopLiveExperimentError> {
+    let state = DesktopCanonicalState::from(save);
+    let name = trait_value(save, "Name")?;
+    let original = sha256(
+        &serde_json::to_vec(&(
+            contract.realm,
+            options.stage,
+            &options.operations,
+            options.max_mutation_attempts,
+            options.max_active_seconds,
+            options.classification_poll_seconds,
+            &options.control_motto,
+            &options.manual_motto,
+            &options.motto,
+            &options.guild_designation,
+            &options.guild_change_designation,
+            name,
+            source_hash,
+            &state,
+            options.allow_existing_disposable,
+            options.initial_guild_leave,
+        ))
+        .map_err(|_| DesktopLiveExperimentError::PrivateState)?,
+    );
+    if !options.allow_quest_placeholder {
+        return Ok(original);
+    }
+    let adaptations = DesktopImportMetadata::from_validated(&save.adaptations)
+        .provenance
+        .adaptations;
+    Ok(sha256(
+        &serde_json::to_vec(&(
+            original,
+            options.allow_quest_placeholder,
+            adaptations,
+            &save.quest,
+        ))
+        .map_err(|_| DesktopLiveExperimentError::PrivateState)?,
+    ))
 }
 
 fn validate_baseline(
@@ -1335,14 +1384,25 @@ fn evidence_records(
     if !checkpoint_can_resume(&context.checkpoint)
         || context
             .checkpoint
+            .attempts
+            .iter()
+            .enumerate()
+            .any(|(index, intent)| context.checkpoint.attempts[..index].contains(intent))
+        || context
+            .checkpoint
             .observations
             .iter()
             .enumerate()
             .any(|(index, value)| {
-                value.case.is_some()
-                    && context.checkpoint.observations[..index]
-                        .iter()
-                        .any(|prior| prior.case == value.case)
+                value.case.is_some_and(|case| {
+                    context.options.stage != DesktopLiveStage::Progression
+                        || !matches!(
+                            case,
+                            DesktopEvidenceCase::LevelAccepted | DesktopEvidenceCase::ActAccepted
+                        )
+                }) && context.checkpoint.observations[..index]
+                    .iter()
+                    .any(|prior| prior.case == value.case)
             })
     {
         return Err(DesktopLiveExperimentError::Inconclusive);
@@ -1418,6 +1478,9 @@ fn evidence_records(
         let encoded = encode_operation_evidence(DesktopOperationEvidenceObservation {
             contract: context.contract,
             operation,
+            adaptations: DesktopImportMetadata::from_validated(&context.save.adaptations)
+                .provenance
+                .adaptations,
             accepted_cases,
             guild_fingerprints,
             observed_on: observed_on.to_owned(),
@@ -1583,6 +1646,7 @@ mod tests {
     fn options(directory: &Path) -> DesktopLiveExperimentOptions {
         DesktopLiveExperimentOptions {
             allow_existing_disposable: false,
+            allow_quest_placeholder: false,
             initial_guild_leave: false,
             preparation_reconciliation_seconds: None,
             confirm_preparation_reconciliation: false,
@@ -1613,6 +1677,303 @@ mod tests {
             max_active_seconds: MAX_ACTIVE_SECONDS,
             classification_poll_seconds: 5,
         }
+    }
+
+    fn placeholder_options(directory: &Path) -> DesktopLiveExperimentOptions {
+        let mut options = options(directory);
+        options.stage = DesktopLiveStage::Progression;
+        options.operations = vec![
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+        ];
+        options.allow_quest_placeholder = true;
+        options.max_mutation_attempts = Some(32);
+        options
+    }
+
+    fn placeholder_save() -> DesktopValidatedSave {
+        let mut save = crate::pemptus_acceptance_probe::tests::synthetic_save();
+        save.adaptations.legacy_quest_placeholder = true;
+        save.quest = crate::desktop_save::DesktopQuestMarker::LegacyPlaceholder { index: 1 };
+        save
+    }
+
+    #[test]
+    fn placeholder_admission_requires_exact_source_and_explicit_progression_scope() {
+        let directory = TestDirectory::new();
+        let mut options = placeholder_options(&directory.0);
+        let save = placeholder_save();
+        assert!(validate_source_adaptations(&options, &save).is_ok());
+        options.allow_quest_placeholder = false;
+        assert!(validate_source_adaptations(&options, &save).is_err());
+        options.allow_quest_placeholder = true;
+        for stage in [DesktopLiveStage::Immediate, DesktopLiveStage::Legacy] {
+            options.stage = stage;
+            assert!(validate_source_adaptations(&options, &save).is_err());
+        }
+        options.stage = DesktopLiveStage::Progression;
+        options.realm = "Spoltog".to_owned();
+        assert!(validate_source_adaptations(&options, &save).is_err());
+        options.realm = "Pemptus".to_owned();
+        options.confirm_live_submission = false;
+        assert!(validate_source_adaptations(&options, &save).is_err());
+        options.confirm_live_submission = true;
+        options.operations.pop();
+        assert!(validate_source_adaptations(&options, &save).is_err());
+        options
+            .operations
+            .push(DesktopOnlineOperation::AutomaticAct);
+        assert!(
+            validate_source_adaptations(
+                &options,
+                &crate::pemptus_acceptance_probe::tests::synthetic_save()
+            )
+            .is_err()
+        );
+        for marker in [
+            crate::desktop_save::DesktopQuestMarker::None,
+            crate::desktop_save::DesktopQuestMarker::Value {
+                marker: "Unknown".to_owned(),
+                index: 1,
+            },
+            crate::desktop_save::DesktopQuestMarker::LegacyPlaceholder {
+                index: crate::desktop_rules::bundled().tables.monsters.len(),
+            },
+        ] {
+            let mut invalid = save.clone();
+            invalid.quest = marker;
+            assert!(validate_source_adaptations(&options, &invalid).is_err());
+        }
+        let mut combined = save.clone();
+        combined.adaptations.spelling_patch_applied = true;
+        assert!(validate_source_adaptations(&options, &combined).is_err());
+        combined.adaptations.spelling_patch_applied = false;
+        combined.adaptations.legacy_prologue_62 = true;
+        assert!(validate_source_adaptations(&options, &combined).is_err());
+        assert!(!directory.0.join(CHECKPOINT).exists());
+    }
+
+    #[test]
+    fn placeholder_source_scope_binds_admission_provenance_index_and_source_without_replay() {
+        let directory = TestDirectory::new();
+        let mut options = placeholder_options(&directory.0);
+        let save = placeholder_save();
+        let bound = source_scope(
+            &options,
+            crate::desktop_contract::PEMPTUS,
+            &save,
+            "source-a",
+        )
+        .unwrap();
+        options.allow_quest_placeholder = false;
+        let different_flag = source_scope(
+            &options,
+            crate::desktop_contract::PEMPTUS,
+            &save,
+            "source-a",
+        )
+        .unwrap();
+        assert_ne!(bound, different_flag);
+        options.allow_quest_placeholder = true;
+        assert_ne!(
+            bound,
+            source_scope(
+                &options,
+                crate::desktop_contract::PEMPTUS,
+                &save,
+                "source-b"
+            )
+            .unwrap()
+        );
+        let mut other = save.clone();
+        other.quest = crate::desktop_save::DesktopQuestMarker::LegacyPlaceholder { index: 2 };
+        assert_ne!(
+            bound,
+            source_scope(
+                &options,
+                crate::desktop_contract::PEMPTUS,
+                &other,
+                "source-a"
+            )
+            .unwrap()
+        );
+        other = save.clone();
+        other.adaptations.spelling_patch_applied = true;
+        assert_ne!(
+            bound,
+            source_scope(
+                &options,
+                crate::desktop_contract::PEMPTUS,
+                &other,
+                "source-a"
+            )
+            .unwrap()
+        );
+        other = save.clone();
+        other.activity = "Different synthetic state".to_owned();
+        assert_ne!(
+            bound,
+            source_scope(
+                &options,
+                crate::desktop_contract::PEMPTUS,
+                &other,
+                "source-a"
+            )
+            .unwrap()
+        );
+        let transport = fake(&options, false);
+        let mut context = context(&options, &transport);
+        context.checkpoint.scope_sha256 = bound.clone();
+        assert!(validate_checkpoint_scope(&context.checkpoint, &bound, &options).is_ok());
+        assert!(validate_checkpoint_scope(&context.checkpoint, &different_flag, &options).is_err());
+        context
+            .checkpoint
+            .attempts
+            .push("unknown-primary".to_owned());
+        assert!(!checkpoint_can_resume(&context.checkpoint));
+        assert!(validate_checkpoint_scope(&context.checkpoint, &bound, &options).is_err());
+        context.checkpoint.attempts.clear();
+        context.checkpoint.pending_callback = true;
+        assert!(!checkpoint_can_resume(&context.checkpoint));
+        assert!(validate_checkpoint_scope(&context.checkpoint, &bound, &options).is_err());
+        assert_eq!(transport.calls.get(), 0);
+    }
+
+    #[test]
+    fn placeholder_records_retain_original_provenance_after_runtime_resolution() {
+        let directory = TestDirectory::new();
+        let options = placeholder_options(&directory.0);
+        let transport = fake(&options, false);
+        let mut context = context(&options, &transport);
+        context.save = placeholder_save();
+        context.checkpoint.callback.state = DesktopCanonicalState::from(&context.save);
+        crate::desktop_simulation::resolve_legacy_quest_marker(
+            &mut context.checkpoint.callback.state,
+        )
+        .unwrap();
+        for (index, case) in [
+            DesktopEvidenceCase::LevelAccepted,
+            DesktopEvidenceCase::ActAccepted,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let intent = format!("synthetic-intent-{index}");
+            context.checkpoint.attempts.push(intent.clone());
+            context.checkpoint.observations.push(StageObservation {
+                intent_sha256: intent,
+                case: Some(case),
+                fingerprint_sha256: "0".repeat(64),
+                observed_on: current_utc_date(),
+            });
+        }
+        let records = evidence_records(&context, true).unwrap();
+        assert_eq!(records.len(), 2);
+        for record in records.values() {
+            assert_eq!(
+                record["payload"]["importPath"]["adaptations"],
+                serde_json::json!(["legacy-quest-placeholder"])
+            );
+        }
+        assert!(evidence_records(&context, false).is_err());
+        context.checkpoint.observations.pop();
+        context.checkpoint.attempts.pop();
+        assert!(evidence_records(&context, true).is_err());
+        assert!(context.save.adaptations.legacy_quest_placeholder);
+        assert_eq!(transport.calls.get(), 0);
+    }
+
+    #[test]
+    fn completed_progression_packages_successive_reports_without_callbacks_or_replay() {
+        let directory = TestDirectory::new();
+        let options = placeholder_options(&directory.0);
+        let transport = fake(&options, false);
+        let mut context = context(&options, &transport);
+        context.save = placeholder_save();
+        context.checkpoint.active_milliseconds = 22_429_700;
+        for (index, case) in std::iter::repeat_n(DesktopEvidenceCase::LevelAccepted, 12)
+            .chain([
+                DesktopEvidenceCase::ActAccepted,
+                DesktopEvidenceCase::ActAccepted,
+            ])
+            .enumerate()
+        {
+            let intent = sha256(format!("synthetic-native-intent-{index}").as_bytes());
+            context.checkpoint.attempts.push(intent.clone());
+            context.checkpoint.observations.push(StageObservation {
+                intent_sha256: intent,
+                case: Some(case),
+                fingerprint_sha256: "0".repeat(64),
+                observed_on: current_utc_date(),
+            });
+        }
+        let before = serde_json::to_vec(&context.checkpoint).unwrap();
+        progression(&mut context, &AtomicBool::new(false)).unwrap();
+        assert_eq!(serde_json::to_vec(&context.checkpoint).unwrap(), before);
+        assert_eq!(transport.calls.get(), 0);
+        assert_eq!(transport.pages.get(), 0);
+        let records = evidence_records(&context, true).unwrap();
+        assert_eq!(records.len(), 2);
+        for (operation, case) in [
+            (
+                DesktopOnlineOperation::AutomaticLevel,
+                DesktopEvidenceCase::LevelAccepted,
+            ),
+            (
+                DesktopOnlineOperation::AutomaticAct,
+                DesktopEvidenceCase::ActAccepted,
+            ),
+        ] {
+            let record = &records[&operation.label().replace(' ', "-")];
+            assert_eq!(
+                record["payload"]["acceptedCases"],
+                serde_json::json!([case])
+            );
+            assert_eq!(
+                record["payload"]["importPath"]["adaptations"],
+                serde_json::json!(["legacy-quest-placeholder"])
+            );
+        }
+        assert!(evidence_records(&context, false).is_err());
+        context.checkpoint.pending_callback = true;
+        assert!(evidence_records(&context, true).is_err());
+        context.checkpoint.pending_callback = false;
+        context
+            .checkpoint
+            .attempts
+            .push("unobserved-primary".to_owned());
+        assert!(evidence_records(&context, true).is_err());
+        context.checkpoint.attempts.pop();
+        let duplicate_intent = context.checkpoint.attempts[0].clone();
+        context.checkpoint.attempts.push(duplicate_intent.clone());
+        context.checkpoint.observations.push(StageObservation {
+            intent_sha256: duplicate_intent,
+            case: Some(DesktopEvidenceCase::LevelAccepted),
+            fingerprint_sha256: "0".repeat(64),
+            observed_on: current_utc_date(),
+        });
+        assert!(checkpoint_can_resume(&context.checkpoint));
+        assert!(evidence_records(&context, true).is_err());
+    }
+
+    #[test]
+    fn immediate_evidence_still_refuses_repeated_primary_cases() {
+        let directory = TestDirectory::new();
+        let options = options(&directory.0);
+        let transport = fake(&options, false);
+        let mut context = context(&options, &transport);
+        immediate(&mut context, &AtomicBool::new(false)).unwrap();
+        assert!(evidence_records(&context, true).is_ok());
+        let intent = sha256(b"distinct-synthetic-duplicate-manual");
+        context.checkpoint.attempts.push(intent.clone());
+        context.checkpoint.observations.push(StageObservation {
+            intent_sha256: intent,
+            case: Some(DesktopEvidenceCase::ManualConsumed),
+            fingerprint_sha256: "0".repeat(64),
+            observed_on: current_utc_date(),
+        });
+        assert!(checkpoint_can_resume(&context.checkpoint));
+        assert!(evidence_records(&context, true).is_err());
     }
 
     fn context<'a>(
@@ -2194,6 +2555,7 @@ mod tests {
             vec![crate::desktop_evidence::SyntheticDesktopEvidence {
                 contract: context.contract,
                 operation: DesktopOnlineOperation::Guild,
+                adaptations: vec![],
                 content: serde_json::to_string(guild).unwrap(),
                 integrity: guild["integritySha256"].as_str().unwrap().to_owned(),
             }],
@@ -2207,6 +2569,17 @@ mod tests {
                     prior_guild: "Guild B",
                     submitted_guild: "__gyrognome-invalid__",
                 };
+                let fingerprints = crate::desktop_evidence::production_desktop_evidence(
+                    context.contract,
+                    DesktopOnlineOperation::Guild,
+                )
+                .unwrap()
+                .guild_fingerprints()
+                .unwrap();
+                assert_eq!(fingerprints.join, values.fingerprint(b"joined"));
+                assert_eq!(fingerprints.change, Some(values.fingerprint(b"changed")));
+                assert_eq!(fingerprints.rejected, values.fingerprint(b"rejected"));
+                assert_eq!(fingerprints.leave, values.fingerprint(b"left"));
                 let rules = crate::desktop_profile::DesktopGuildResponseRules::production(
                     "Pemptus",
                     crate::desktop_profile::DesktopGuildOperation::JoinOrChange,
@@ -2215,12 +2588,12 @@ mod tests {
                 for body in [b"joined".as_slice(), b"changed".as_slice()] {
                     assert_eq!(
                         rules.classify(200, body, &values),
-                        crate::desktop_profile::DesktopGuildOutcome::Accepted
+                        crate::desktop_profile::DesktopGuildOutcome::Indeterminate
                     );
                 }
                 assert_eq!(
                     rules.classify(200, b"rejected", &values),
-                    crate::desktop_profile::DesktopGuildOutcome::Rejected
+                    crate::desktop_profile::DesktopGuildOutcome::Indeterminate
                 );
                 let leave = crate::desktop_profile::DesktopGuildResponseRules::production(
                     "Pemptus",
@@ -2229,7 +2602,7 @@ mod tests {
                 .unwrap();
                 assert_eq!(
                     leave.classify(200, b"left", &values),
-                    crate::desktop_profile::DesktopGuildOutcome::Accepted
+                    crate::desktop_profile::DesktopGuildOutcome::Indeterminate
                 );
             },
         );

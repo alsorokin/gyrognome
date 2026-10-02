@@ -1,0 +1,100 @@
+{
+  "format": "gyrognome-desktop-quest-placeholder-study/v1",
+  "scope": {
+    "adaptation": "legacy-quest-placeholder",
+    "markerCaption": "fQuest",
+    "indexRequirement": "valid zero-based index into the pinned desktop-6.4.4 monster table",
+    "stateRequirement": "otherwise supported; no legacy prologue, unsupported fTask, or other substantive adaptation"
+  },
+  "source": {
+    "repository": "https://bitbucket.org/grumdrig/pq",
+    "tag": "v6.4.4",
+    "commit": "95f5d66f97a3697a7446fba951ab04156c752274",
+    "file": "Main.pas",
+    "sha256": "fc61edcd1723e4d69724699d1fc60e69f02d0c0530a3c0d90eff446303829f24",
+    "locations": {
+      "newCharacter": "RollCharacter 1345; GoButtonClick 741-760",
+      "loadSave": "SaveGame 1508-1542; LoadGame 1543-1575",
+      "questSelection": "CompleteQuest 910-985",
+      "markerUse": "MonsterTask 523-570"
+    }
+  },
+  "sourceSemantics": {
+    "newCharacter": "GoButtonClick clears fQuest.Caption before creating the initial prologue queue.",
+    "loadSave": "LoadGame restores component properties through ReadComponent without quest-marker normalization; SaveGame serializes the component stream.",
+    "monsterQuest": "CompleteQuest's Exterminate branch stores the selected monster-table row in fQuest.Caption and its zero-based row index in fQuest.Tag. Non-monster branches clear the caption.",
+    "markerUse": "MonsterTask tests only whether fQuest.Caption is non-empty before its one-in-four quest-monster choice, then selects K.Monsters.Lines[fQuest.Tag].",
+    "candidateCanonicalValue": "The monster-table row at the saved index; it is not inferred from fQuest's placeholder spelling."
+  },
+  "comparison": {
+    "kind": "credential-free synthetic states only",
+    "operations": [
+      "manual-brag",
+      "automatic-level",
+      "automatic-act",
+      "motto-set-and-clear",
+      "guild"
+    ],
+    "checks": [
+      "canonical state after the existing task-completion marker resolution",
+      "subsequent quest/task transitions and desktop random-state consumption",
+      "level/act callback snapshot order",
+      "unsigned request construction for all five operation shapes"
+    ]
+  },
+  "syntheticResults": {
+    "canonicalStateAfterResolution": "pass",
+    "questTransitions": {
+      "seeds": 64,
+      "transitionsPerSeed": 3,
+      "initialAndSubsequentQuestPairs": true,
+      "monsterAndNonMonsterQuestBranchesObserved": true,
+      "canonicalStateAndRandomConsumptionMatch": true
+    },
+    "monsterSelection": {
+      "everyValidMonsterTableIndex": true,
+      "seedsPerIndex": 64,
+      "testedWithoutPriorMarkerNormalization": true,
+      "taskActivityBarsAndRandomConsumptionMatch": true,
+      "mismatchedValidIndexChangesSelection": true
+    },
+    "callbackOrder": {
+      "observed": ["automatic-level", "automatic-act"],
+      "placeholderAndCanonicalSnapshotsMatch": true
+    },
+    "unsignedOperationShapesMatch": [
+      "manual-brag",
+      "automatic-level",
+      "automatic-act",
+      "motto-set",
+      "motto-clear",
+      "guild"
+    ],
+    "boundaryChecks": {
+      "invalidIndex": "rejected without state mutation",
+      "unknownCaption": "not normalized",
+      "unsupportedTaskForm": "rejected by existing desktop importer",
+      "legacyPrologueAndCombinedAdaptations": "remain outside the passing import path and production gates"
+    },
+    "adaptationProvenanceRetained": true
+  },
+  "excluded": [
+    "fTask captions and unsupported task forms",
+    "invalid or out-of-range monster-table indexes",
+    "unknown captions other than the exact fQuest placeholder",
+    "legacy-prologue state",
+    "combined or other substantive adaptations",
+    "real saves, credentials, signed requests, live acceptance, and active-time evidence"
+  ],
+  "decision": {
+    "status": "pass-within-narrow-source-and-synthetic-scope",
+    "review": "The exact indexed-placeholder source behavior and local synthetic equivalence are supported. Official LoadGame does not normalize the marker; canonical-state equality occurs through the existing native task-completion resolution, not import-time provenance erasure. This does not establish Delphi component-stream runtime equivalence, save-writer identity, or a general adaptation exemption.",
+    "changesEligibility": false,
+    "authorizesRequests": false,
+    "placeholderImportProductionEligible": false,
+    "officialExecutableLaunched": false,
+    "signedRequestsSent": false,
+    "activeTimeEvidence": false,
+    "classicOnlineEligible": false
+  }
+}

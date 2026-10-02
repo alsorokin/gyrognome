@@ -377,6 +377,7 @@ pub(crate) struct DesktopReportingTarget {
     pub(crate) state: DesktopCanonicalState,
     pub(crate) profile: OnlineProfile,
     pub(crate) authentication: DesktopAuthentication,
+    pub(crate) adaptations: Vec<crate::compatibility::DesktopAdaptation>,
     _online_action_lock: OnlineActionLock,
 }
 
@@ -1129,6 +1130,7 @@ impl Store {
         Ok(DesktopReportingTarget {
             identity: character.identity,
             state: character.state,
+            adaptations: character.import_metadata.provenance.adaptations,
             profile,
             authentication,
             _online_action_lock: online_action_lock,
@@ -1158,6 +1160,7 @@ impl Store {
         Ok(DesktopReportingTarget {
             identity: character.identity,
             state: character.state,
+            adaptations: character.import_metadata.provenance.adaptations,
             profile,
             authentication,
             _online_action_lock: online_action_lock,
@@ -1982,6 +1985,13 @@ mod tests {
         save
     }
 
+    fn pemptus_placeholder_fixture() -> DesktopValidatedSave {
+        let mut save = pemptus_fixture();
+        save.adaptations.legacy_quest_placeholder = true;
+        save.quest = DesktopQuestMarker::LegacyPlaceholder { index: 1 };
+        save
+    }
+
     struct PemptusTransport {
         path: PathBuf,
         id: CharacterId,
@@ -2074,6 +2084,9 @@ mod tests {
                 .1
                 .as_ref();
             self.calls.lock().unwrap().push(format!("guild:{guild}"));
+            if self.fail {
+                return Err(crate::desktop_transport::DesktopTransportError::DeliveryFailed);
+            }
             Ok(crate::desktop_transport::DesktopHttpResponse {
                 status: 200,
                 redirect: None,
@@ -2083,6 +2096,33 @@ mod tests {
                     "" => b"left".to_vec(),
                     _ => b"rejected".to_vec(),
                 },
+            })
+        }
+
+        fn desktop_public_guild(
+            &self,
+            target: &crate::desktop_transport::VerifiedDesktopEndpoint,
+            name: &str,
+        ) -> Result<Option<String>, crate::desktop_transport::DesktopTransportError> {
+            assert_eq!(target.realm(), "Pemptus");
+            let stored = Store::open_at(&self.path)
+                .unwrap()
+                .get_desktop(&self.id)
+                .unwrap();
+            assert_eq!(name, stored.identity.name);
+            let mut calls = self.calls.lock().unwrap();
+            let submitted = calls
+                .iter()
+                .rev()
+                .find_map(|call| call.strip_prefix("guild:"))
+                .unwrap()
+                .to_owned();
+            calls.push(format!("public:{name}"));
+            Ok(match submitted.as_str() {
+                "Guild A" | "Guild B" => Some(submitted),
+                "" => None,
+                _ if stored.state.profile.guild.is_empty() => None,
+                _ => Some(stored.state.profile.guild),
             })
         }
     }
@@ -3614,71 +3654,375 @@ mod tests {
     }
 
     #[test]
-    fn bundled_pemptus_partial_coverage_matches_inspection_and_keeps_local_only_permanent() {
-        let directory = TestDirectory::new("pemptus-production-partial");
+    fn bundled_placeholder_coverage_enables_all_operations_and_never_reconnects_local_forks() {
+        let directory = TestDirectory::new("pemptus-placeholder-production");
+        let mut source = pemptus_placeholder_fixture();
+        let level = desktop_level_report_fixture();
+        source.current_task = level.current_task;
+        source.activity = level.activity;
+        source.queue = level.queue;
+        source.bars = level.bars;
         let mut store = Store::open_at(&directory.0).unwrap();
-        let save = pemptus_fixture();
-        let registered = store.register_desktop(&save, &mut Numbers(7)).unwrap();
+        let fresh = store.register_desktop(&source, &mut Numbers(7)).unwrap();
+        let forked = store.register_desktop(&source, &mut Numbers(8)).unwrap();
+        crate::desktop_evidence::with_synthetic_desktop_evidence(vec![], || {
+            let mut worker = Worker::start_with_transport(
+                Store::open_at(&directory.0).unwrap(),
+                forked.id.clone(),
+                RejectNetworkTransport,
+            )
+            .unwrap();
+            worker.advance_elapsed(Duration::from_millis(1)).unwrap();
+        });
+        let gates = store
+            .managed_inspection(&fresh.id)
+            .unwrap()
+            .compatibility
+            .online_eligibility;
+        assert_eq!(gates, save::inspect_desktop(&source).online_eligibility);
+        for gate in gates {
+            assert_eq!(gate.decision, DesktopEligibilityDecision::Eligible);
+        }
+        assert!(
+            store
+                .managed_inspection(&forked.id)
+                .unwrap()
+                .compatibility
+                .online_eligibility
+                .iter()
+                .all(|gate| gate.decision
+                    == DesktopEligibilityDecision::Ineligible(
+                        DesktopIneligibilityReason::FreshOfficialClientImportRequired
+                    ))
+        );
+        assert!(crate::reporting::submit(&store, &forked.id, &RejectNetworkTransport).is_err());
+        assert!(crate::reporting::set_motto(
+            &mut store, &forked.id, "Blocked", &RejectNetworkTransport,
+        ).is_err());
+        assert!(crate::reporting::set_guild(
+            &mut store, &forked.id, "Blocked", &RejectNetworkTransport,
+        ).is_err());
         let calls = Arc::new(Mutex::new(vec![]));
         let transport = PemptusTransport {
             path: directory.0.clone(),
-            id: registered.id.clone(),
+            id: fresh.id.clone(),
             calls: calls.clone(),
             fail: false,
         };
+        let mut worker = Worker::start_with_transport(
+            Store::open_at(&directory.0).unwrap(),
+            fresh.id.clone(),
+            transport,
+        )
+        .unwrap();
+        worker.advance_elapsed(Duration::ZERO).unwrap();
+        worker.advance_elapsed(Duration::from_millis(1)).unwrap();
+        assert_eq!(calls.lock().unwrap().as_slice(), ["l"]);
+        let state = worker.store.get_desktop(&fresh.id).unwrap();
         assert_eq!(
-            save::inspect_desktop(&save).online_eligibility,
-            store
-                .managed_inspection(&registered.id)
+            state.import_metadata.provenance.adaptations,
+            [crate::compatibility::DesktopAdaptation::LegacyQuestPlaceholder]
+        );
+        assert_eq!(
+            state.import_metadata.advancement_provenance,
+            DesktopAdvancementProvenance::Unadvanced
+        );
+        assert!(!matches!(
+            state.state.quest,
+            DesktopQuestMarker::LegacyPlaceholder { .. }
+        ));
+        assert_eq!(
+            worker
+                .store
+                .managed_inspection(&fresh.id)
                 .unwrap()
                 .compatibility
                 .online_eligibility,
+            save::inspect_desktop(&source).online_eligibility
         );
-        assert_eq!(
-            crate::reporting::submit(&store, &registered.id, &transport)
+    }
+
+    #[test]
+    fn bundled_pemptus_coverage_supports_existing_imports_without_reimport_or_local_fork() {
+        for path in 0..3 {
+            let directory = TestDirectory::new(&format!("pemptus-production-supported-{path}"));
+            let mut store = Store::open_at(&directory.0).unwrap();
+            let mut save = if path == 2 {
+                pemptus_placeholder_fixture()
+            } else {
+                pemptus_fixture()
+            };
+            save.adaptations.spelling_patch_applied = path == 1;
+            let level = desktop_level_report_fixture();
+            save.current_task = level.current_task;
+            save.activity = level.activity;
+            save.queue = level.queue;
+            save.bars = level.bars;
+            let registered = store.register_desktop(&save, &mut Numbers(7)).unwrap();
+            let original_metadata = store.get_desktop(&registered.id).unwrap().import_metadata;
+            crate::desktop_evidence::with_synthetic_desktop_evidence(vec![], || {
+                assert!(
+                    store
+                        .managed_inspection(&registered.id)
+                        .unwrap()
+                        .compatibility
+                        .online_eligibility
+                        .iter()
+                        .filter(|gate| gate.operation != DesktopOnlineOperation::Guild)
+                        .all(|gate| gate.decision != DesktopEligibilityDecision::Eligible)
+                );
+            });
+            let listed = store.list_managed().unwrap();
+            let compatibility = &listed
+                .iter()
+                .find(|value| value.id == registered.id)
+                .unwrap()
+                .compatibility;
+            assert!(compatibility.notice.is_none());
+            assert_eq!(
+                compatibility
+                    .online_eligibility
+                    .iter()
+                    .map(|gate| format!("{:?}: {:?}", gate.operation, gate.decision))
+                    .collect::<Vec<_>>(),
+                [
+                    "AutomaticLevel: Eligible",
+                    "AutomaticAct: Eligible",
+                    "ManualBrag: Eligible",
+                    "Motto: Eligible",
+                    "Guild: Eligible",
+                ],
+            );
+            let calls = Arc::new(Mutex::new(vec![]));
+            let transport = PemptusTransport {
+                path: directory.0.clone(),
+                id: registered.id.clone(),
+                calls: calls.clone(),
+                fail: false,
+            };
+            assert_eq!(
+                save::inspect_desktop(&save).online_eligibility,
+                store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility,
+            );
+            assert!(
+                store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility
+                    .iter()
+                    .all(|gate| gate.decision == DesktopEligibilityDecision::Eligible)
+            );
+            assert_eq!(
+                crate::reporting::submit(&store, &registered.id, &transport)
+                    .unwrap()
+                    .outcome,
+                DeliveryOutcome::Delivered,
+            );
+            assert_eq!(
+                crate::reporting::set_motto(
+                    &mut store,
+                    &registered.id,
+                    "Supported motto",
+                    &transport
+                )
                 .unwrap()
                 .outcome,
-            DeliveryOutcome::Delivered,
-        );
-        assert_eq!(
-            crate::reporting::set_motto(&mut store, &registered.id, "Supported motto", &transport)
-                .unwrap()
-                .outcome,
-            DeliveryOutcome::Delivered,
-        );
-        assert_eq!(
-            crate::reporting::set_motto(&mut store, &registered.id, "", &transport)
-                .unwrap()
-                .outcome,
-            DeliveryOutcome::Delivered,
-        );
-        assert!(
-            crate::reporting::set_guild(&mut store, &registered.id, "Guild A", &transport).is_err()
-        );
-        assert_eq!(calls.lock().unwrap().as_slice(), ["b", "m", "m"]);
-        let mut worker = Worker::start_with_transport(
-            Store::open_at(&directory.0).unwrap(),
-            registered.id.clone(),
-            RejectNetworkTransport,
-        )
-        .unwrap();
-        worker.advance_elapsed(Duration::from_millis(1)).unwrap();
-        drop(worker);
-        let mut reopened = Store::open_at(&directory.0).unwrap();
-        assert_eq!(
-            reopened
-                .get_desktop(&registered.id)
-                .unwrap()
-                .import_metadata
-                .advancement_provenance,
-            DesktopAdvancementProvenance::LocalOnly,
-        );
-        assert!(crate::reporting::submit(&reopened, &registered.id, &transport).is_err());
-        assert!(
-            crate::reporting::set_motto(&mut reopened, &registered.id, "Blocked", &transport)
-                .is_err()
-        );
-        assert_eq!(calls.lock().unwrap().as_slice(), ["b", "m", "m"]);
+                DeliveryOutcome::Delivered,
+            );
+            assert_eq!(
+                crate::reporting::set_motto(&mut store, &registered.id, "", &transport)
+                    .unwrap()
+                    .outcome,
+                DeliveryOutcome::Delivered,
+            );
+            for designation in ["Guild A", "Guild B", ""] {
+                assert_eq!(
+                    crate::reporting::set_guild(
+                        &mut store,
+                        &registered.id,
+                        designation,
+                        &transport,
+                    )
+                    .unwrap()
+                    .outcome,
+                    GuildOutcome::Accepted
+                );
+                assert_eq!(store.profile(&registered.id).unwrap().guild, designation);
+            }
+            assert_eq!(calls.lock().unwrap().len(), 9);
+            let mut worker = Worker::start_with_transport(
+                Store::open_at(&directory.0).unwrap(),
+                registered.id.clone(),
+                transport,
+            )
+            .unwrap();
+            worker.advance_elapsed(Duration::ZERO).unwrap();
+            worker.advance_elapsed(Duration::from_millis(1)).unwrap();
+            drop(worker);
+            let reopened = Store::open_at(&directory.0).unwrap();
+            assert_eq!(
+                reopened
+                    .get_desktop(&registered.id)
+                    .unwrap()
+                    .import_metadata
+                    .advancement_provenance,
+                DesktopAdvancementProvenance::Unadvanced,
+            );
+            assert!(
+                reopened.list_managed().unwrap()[0]
+                    .compatibility
+                    .notice
+                    .is_none()
+            );
+            assert_eq!(
+                reopened
+                    .get_desktop(&registered.id)
+                    .unwrap()
+                    .import_metadata
+                    .provenance,
+                original_metadata.provenance
+            );
+            assert!(
+                reopened
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility
+                    .iter()
+                    .all(|gate| gate.decision == DesktopEligibilityDecision::Eligible)
+            );
+            assert_eq!(calls.lock().unwrap().last().unwrap(), "l");
+            assert_eq!(calls.lock().unwrap().len(), 10);
+        }
+    }
+
+    #[test]
+    fn pemptus_guild_actions_confirm_public_state_once_and_preserve_uncertain_membership() {
+        use crate::desktop_transport::{
+            DesktopHttpResponse, DesktopTransportCredentials, DesktopTransportError,
+            VerifiedDesktopEndpoint,
+        };
+        struct ObservedGuildTransport {
+            native: PemptusTransport,
+            observation: Result<Option<String>, DesktopTransportError>,
+        }
+        impl GuildTransport for ObservedGuildTransport {
+            fn guild(&self, _: Url, _: &str, _: &str, _: &GuildResponseRules) -> GuildOutcome {
+                panic!("Pemptus used browser guild transport")
+            }
+
+            fn guild_desktop(
+                &self,
+                target: &VerifiedDesktopEndpoint,
+                query: &str,
+                credentials: &DesktopTransportCredentials,
+            ) -> Result<DesktopHttpResponse, DesktopTransportError> {
+                self.native.guild_desktop(target, query, credentials)
+            }
+
+            fn desktop_public_guild(
+                &self,
+                target: &VerifiedDesktopEndpoint,
+                name: &str,
+            ) -> Result<Option<String>, DesktopTransportError> {
+                assert_eq!(target.realm(), "Pemptus");
+                let stored = Store::open_at(&self.native.path)
+                    .unwrap()
+                    .get_desktop(&self.native.id)
+                    .unwrap();
+                assert_eq!(name, stored.identity.name);
+                self.native
+                    .calls
+                    .lock()
+                    .unwrap()
+                    .push(format!("public:{name}"));
+                self.observation
+                    .as_ref()
+                    .map(Clone::clone)
+                    .map_err(|_| DesktopTransportError::DeliveryFailed)
+            }
+        }
+        let directory = TestDirectory::new("pemptus-public-confirmation");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&pemptus_fixture(), &mut Numbers(7))
+            .unwrap();
+        for (designation, delivery_failed, observation, expected) in [
+            (
+                "Guild A",
+                false,
+                Ok(Some("guild a".to_owned())),
+                GuildOutcome::Accepted,
+            ),
+            (
+                "Guild B",
+                true,
+                Ok(Some("GUILD B".to_owned())),
+                GuildOutcome::Accepted,
+            ),
+            ("", false, Ok(None), GuildOutcome::Accepted),
+            (
+                "Invalid",
+                false,
+                Ok(Some("Old Guild".to_owned())),
+                GuildOutcome::Indeterminate,
+            ),
+            ("Guild A", false, Ok(None), GuildOutcome::Indeterminate),
+            (
+                "Guild A",
+                false,
+                Err(DesktopTransportError::DeliveryFailed),
+                GuildOutcome::Indeterminate,
+            ),
+            (
+                "",
+                false,
+                Ok(Some("Still Guild".to_owned())),
+                GuildOutcome::Indeterminate,
+            ),
+        ] {
+            let previous = store.profile(&registered.id).unwrap().guild;
+            let confirmed = observation
+                .as_ref()
+                .ok()
+                .cloned()
+                .flatten()
+                .unwrap_or_default();
+            let calls = Arc::new(Mutex::new(vec![]));
+            let transport = ObservedGuildTransport {
+                native: PemptusTransport {
+                    path: directory.0.clone(),
+                    id: registered.id.clone(),
+                    calls: calls.clone(),
+                    fail: delivery_failed,
+                },
+                observation,
+            };
+            let result =
+                crate::reporting::set_guild(&mut store, &registered.id, designation, &transport)
+                    .unwrap();
+            assert_eq!(result.outcome, expected);
+            assert_eq!(
+                store.profile(&registered.id).unwrap().guild,
+                if expected == GuildOutcome::Accepted {
+                    confirmed
+                } else {
+                    previous
+                }
+            );
+            assert_eq!(
+                calls.lock().unwrap().as_slice(),
+                [
+                    format!("guild:{designation}"),
+                    format!("public:{}", result.identity.name),
+                ]
+            );
+        }
     }
 
     #[test]
@@ -3767,7 +4111,7 @@ mod tests {
                 crate::reporting::set_guild(&mut store, &registered.id, "Invalid", &transport)
                     .unwrap()
                     .outcome,
-                GuildOutcome::Rejected
+                GuildOutcome::Indeterminate
             );
             assert_eq!(store.profile(&registered.id).unwrap().guild, "Guild B");
             assert_eq!(
@@ -3784,7 +4128,7 @@ mod tests {
             assert_eq!(calls.lock().unwrap().len(), before);
             assert_eq!(store.profile(&registered.id).unwrap().motto, "");
         });
-        assert_eq!(calls.lock().unwrap().len(), 7);
+        assert_eq!(calls.lock().unwrap().len(), 11);
         let mut non_ascii = pemptus_fixture();
         non_ascii.profile.motto = "\u{e9}".to_owned();
         let other = store.register_desktop(&non_ascii, &mut Numbers(8)).unwrap();
@@ -3796,6 +4140,245 @@ mod tests {
                 .compatibility
                 .online_eligibility
         );
+    }
+
+    #[test]
+    fn pemptus_placeholder_inspection_runtime_and_reporting_select_original_path() {
+        use crate::desktop_evidence::{
+            synthetic_pemptus_evidence, synthetic_pemptus_evidence_for_import,
+            with_synthetic_desktop_evidence,
+        };
+        let path = vec![crate::compatibility::DesktopAdaptation::LegacyQuestPlaceholder];
+        let directory = TestDirectory::new("pemptus-placeholder");
+        let mut save = pemptus_placeholder_fixture();
+        let level = desktop_level_report_fixture();
+        save.current_task = level.current_task;
+        save.activity = level.activity;
+        save.queue = level.queue;
+        save.bars = level.bars;
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&save, &mut Numbers(0x1357_9bdf))
+            .unwrap();
+        let before = store.get_desktop(&registered.id).unwrap().import_metadata;
+        let mut records: Vec<_> = [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+        ]
+        .into_iter()
+        .map(|operation| synthetic_pemptus_evidence_for_import(operation, None, path.clone()))
+        .collect();
+        records.extend(
+            [
+                DesktopOnlineOperation::ManualBrag,
+                DesktopOnlineOperation::Motto,
+            ]
+            .into_iter()
+            .map(|operation| synthetic_pemptus_evidence(operation, None)),
+        );
+        with_synthetic_desktop_evidence(records, || {
+            let inspection = save::inspect_desktop(&save);
+            assert_eq!(
+                inspection.online_eligibility,
+                store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility
+            );
+            for value in inspection.online_eligibility {
+                assert_eq!(value.decision, DesktopEligibilityDecision::Eligible);
+            }
+            assert_eq!(
+                store.profile(&registered.id).unwrap().motto,
+                save.profile.motto
+            );
+            let unadapted = store
+                .register_desktop(&pemptus_fixture(), &mut Numbers(8))
+                .unwrap();
+            let gates = store
+                .managed_inspection(&unadapted.id)
+                .unwrap()
+                .compatibility
+                .online_eligibility;
+            assert!(
+                gates
+                    .iter()
+                    .filter(|value| matches!(
+                        value.operation,
+                        DesktopOnlineOperation::AutomaticLevel
+                            | DesktopOnlineOperation::AutomaticAct
+                    ))
+                    .all(|value| value.decision == DesktopEligibilityDecision::Eligible)
+            );
+            for spelling in [true, false] {
+                let mut combined = save.clone();
+                combined.adaptations.spelling_patch_applied = spelling;
+                combined.adaptations.legacy_prologue_62 = !spelling;
+                let registered = store.register_desktop(&combined, &mut Numbers(9)).unwrap();
+                let gates = store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility;
+                assert_eq!(gates, save::inspect_desktop(&combined).online_eligibility);
+                assert!(
+                    gates
+                        .iter()
+                        .all(|value| value.decision != DesktopEligibilityDecision::Eligible)
+                );
+                assert!(
+                    crate::reporting::submit(&store, &registered.id, &RejectNetworkTransport)
+                        .is_err()
+                );
+            }
+            let calls = Arc::new(Mutex::new(vec![]));
+            let transport = PemptusTransport {
+                path: directory.0.clone(),
+                id: registered.id.clone(),
+                calls: calls.clone(),
+                fail: false,
+            };
+            let mut worker = Worker::start_with_transport(
+                Store::open_at(&directory.0).unwrap(),
+                registered.id.clone(),
+                transport,
+            )
+            .unwrap();
+            worker.advance_elapsed(Duration::ZERO).unwrap();
+            assert_eq!(calls.lock().unwrap().as_slice(), ["l"]);
+            let persisted = worker.store.get_desktop(&registered.id).unwrap();
+            let mut expected_metadata = before.clone();
+            expected_metadata.measured_since_import.tasks_completed += 1;
+            assert_eq!(persisted.import_metadata, expected_metadata);
+            assert_eq!(persisted.import_metadata.provenance.adaptations, path);
+            assert!(!matches!(
+                persisted.state.quest,
+                DesktopQuestMarker::LegacyPlaceholder { .. }
+            ));
+            assert_eq!(
+                worker
+                    .store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility,
+                save::inspect_desktop(&save).online_eligibility
+            );
+            drop(worker);
+            let reopened = Store::open_at(&directory.0).unwrap();
+            assert_eq!(
+                reopened
+                    .get_desktop(&registered.id)
+                    .unwrap()
+                    .import_metadata,
+                expected_metadata
+            );
+        });
+        with_synthetic_desktop_evidence(vec![], || {
+            assert!(
+                store
+                    .managed_inspection(&registered.id)
+                    .unwrap()
+                    .compatibility
+                    .online_eligibility
+                    .iter()
+                    .filter(|value| value.operation != DesktopOnlineOperation::Guild)
+                    .all(|value| value.decision != DesktopEligibilityDecision::Eligible)
+            );
+        });
+    }
+
+    #[test]
+    fn pemptus_placeholder_missing_either_automatic_record_forks_permanently() {
+        use crate::desktop_evidence::{
+            synthetic_pemptus_evidence_for_import, with_synthetic_desktop_evidence,
+        };
+        let path = vec![crate::compatibility::DesktopAdaptation::LegacyQuestPlaceholder];
+        for available in [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+        ] {
+            let directory = TestDirectory::new("pemptus-placeholder-fork");
+            let mut store = Store::open_at(&directory.0).unwrap();
+            let source = pemptus_placeholder_fixture();
+            let registered = store.register_desktop(&source, &mut Numbers(7)).unwrap();
+            let untouched = store.register_desktop(&source, &mut Numbers(8)).unwrap();
+            with_synthetic_desktop_evidence(
+                vec![synthetic_pemptus_evidence_for_import(
+                    available,
+                    None,
+                    path.clone(),
+                )],
+                || {
+                    let mut worker = Worker::start_with_transport(
+                        Store::open_at(&directory.0).unwrap(),
+                        registered.id.clone(),
+                        RejectNetworkTransport,
+                    )
+                    .unwrap();
+                    worker.advance_elapsed(Duration::from_millis(1)).unwrap();
+                    assert_eq!(
+                        worker
+                            .store
+                            .get_desktop(&registered.id)
+                            .unwrap()
+                            .import_metadata
+                            .advancement_provenance,
+                        DesktopAdvancementProvenance::LocalOnly
+                    );
+                },
+            );
+            let records = [
+                DesktopOnlineOperation::AutomaticLevel,
+                DesktopOnlineOperation::AutomaticAct,
+            ]
+            .into_iter()
+            .map(|operation| synthetic_pemptus_evidence_for_import(operation, None, path.clone()))
+            .collect();
+            with_synthetic_desktop_evidence(records, || {
+                let reopened = Store::open_at(&directory.0).unwrap();
+                assert!(
+                    reopened
+                        .managed_inspection(&registered.id)
+                        .unwrap()
+                        .compatibility
+                        .online_eligibility
+                        .iter()
+                        .all(|value| value.decision
+                            == DesktopEligibilityDecision::Ineligible(
+                                DesktopIneligibilityReason::FreshOfficialClientImportRequired
+                            ))
+                );
+                assert!(
+                    reopened
+                        .managed_inspection(&untouched.id)
+                        .unwrap()
+                        .compatibility
+                        .online_eligibility
+                        .iter()
+                        .filter(|value| matches!(
+                            value.operation,
+                            DesktopOnlineOperation::AutomaticLevel
+                                | DesktopOnlineOperation::AutomaticAct
+                        ))
+                        .all(|value| value.decision == DesktopEligibilityDecision::Eligible)
+                );
+                assert_eq!(
+                    reopened
+                        .get_desktop(&registered.id)
+                        .unwrap()
+                        .import_metadata
+                        .provenance
+                        .adaptations,
+                    path
+                );
+                assert!(
+                    crate::reporting::submit(&reopened, &registered.id, &RejectNetworkTransport)
+                        .is_err()
+                );
+            });
+        }
     }
 
     #[test]

@@ -33,6 +33,14 @@ const PEMPTUS_MOTTO_EVIDENCE: &str =
     include_str!("../tests/fixtures/pemptus-motto-operation-evidence.json");
 const PEMPTUS_MOTTO_EVIDENCE_INTEGRITY: &str =
     "10ca6efa9d2411dcb91c67d89281e428d743b00574694faa38f759011db8efd6";
+const PEMPTUS_PLACEHOLDER_LEVEL_EVIDENCE: &str =
+    include_str!("../tests/fixtures/pemptus-placeholder-level-operation-evidence.json");
+const PEMPTUS_PLACEHOLDER_LEVEL_EVIDENCE_INTEGRITY: &str =
+    "15ca8cb23f43f382392d4587640b8d53fdbd9819c1d42bbe8ab303ea119b353a";
+const PEMPTUS_PLACEHOLDER_ACT_EVIDENCE: &str =
+    include_str!("../tests/fixtures/pemptus-placeholder-act-operation-evidence.json");
+const PEMPTUS_PLACEHOLDER_ACT_EVIDENCE_INTEGRITY: &str =
+    "c258dbfe95d5d16fa97613389c8ec9278cfe90128eed6de715abbf72f4d25ee0";
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopEvidenceError {
@@ -56,6 +64,8 @@ pub enum DesktopEvidenceError {
     EndpointMismatch,
     #[error("desktop online evidence operation does not match")]
     OperationMismatch,
+    #[error("desktop online evidence import path does not match")]
+    ImportPathMismatch,
     #[error("desktop online evidence result is not conclusively passing")]
     Inconclusive,
 }
@@ -279,7 +289,15 @@ pub fn validate_desktop_evidence(
             || envelope.payload.encoding.as_deref() != Some("ascii")
             || envelope.payload.accepted_cases.as_deref()
                 != Some(DesktopEvidenceCase::required(expected.operation))
-            || !envelope.payload.import_path.adaptations.is_empty()
+            || !(envelope.payload.import_path.adaptations.is_empty()
+                || (contract.realm == "Pemptus"
+                    && matches!(
+                        expected.operation,
+                        DesktopOnlineOperation::AutomaticLevel
+                            | DesktopOnlineOperation::AutomaticAct
+                    )
+                    && envelope.payload.import_path.adaptations
+                        == [DesktopAdaptation::LegacyQuestPlaceholder]))
         {
             return Err(DesktopEvidenceError::Inconclusive);
         }
@@ -338,20 +356,62 @@ pub fn validate_production_desktop_evidence(
 pub(crate) struct DesktopEvidenceRecord<'a> {
     pub contract: crate::desktop_contract::DesktopRealmContract,
     pub operation: DesktopOnlineOperation,
+    pub adaptations: &'a [DesktopAdaptation],
     pub content: &'a str,
     pub integrity: &'a str,
 }
 
+#[cfg(test)]
 pub(crate) fn select_desktop_evidence(
     records: &[DesktopEvidenceRecord<'_>],
     contract: crate::desktop_contract::DesktopRealmContract,
     operation: DesktopOnlineOperation,
     current_date: &str,
 ) -> Result<ValidatedDesktopEvidence, DesktopEvidenceError> {
-    let mut matching = records
-        .iter()
-        .filter(|record| record.contract == contract && record.operation == operation);
-    let record = matching.next().ok_or(DesktopEvidenceError::Unavailable)?;
+    select_desktop_evidence_for_import(records, contract, operation, &[], current_date)
+}
+
+pub(crate) fn select_desktop_evidence_for_import(
+    records: &[DesktopEvidenceRecord<'_>],
+    contract: crate::desktop_contract::DesktopRealmContract,
+    operation: DesktopOnlineOperation,
+    adaptations: &[DesktopAdaptation],
+    current_date: &str,
+) -> Result<ValidatedDesktopEvidence, DesktopEvidenceError> {
+    let has_matching_path = records.iter().any(|record| {
+        record.contract == contract
+            && record.operation == operation
+            && crate::desktop_eligibility::adaptations_match_evidence(
+                adaptations,
+                record.adaptations,
+            )
+    });
+    let mut matching = records.iter().filter(|record| {
+        record.contract == contract
+            && record.operation == operation
+            && if has_matching_path {
+                crate::desktop_eligibility::adaptations_match_evidence(
+                    adaptations,
+                    record.adaptations,
+                )
+            } else {
+                crate::desktop_eligibility::pemptus_import_paths_equivalent(
+                    contract.realm,
+                    adaptations,
+                    record.adaptations,
+                )
+            }
+    });
+    let record = matching.next().ok_or_else(|| {
+        if records
+            .iter()
+            .any(|record| record.contract == contract && record.operation == operation)
+        {
+            DesktopEvidenceError::ImportPathMismatch
+        } else {
+            DesktopEvidenceError::Unavailable
+        }
+    })?;
     if matching.next().is_some() {
         return Err(DesktopEvidenceError::Malformed);
     }
@@ -369,12 +429,24 @@ pub(crate) fn select_desktop_evidence(
     if validated.payload.credential_mode != contract.credential_mode {
         return Err(DesktopEvidenceError::IdentityMismatch);
     }
+    if validated.payload.import_path.adaptations != record.adaptations {
+        return Err(DesktopEvidenceError::ImportPathMismatch);
+    }
     Ok(validated)
 }
 
+#[cfg(test)]
 pub(crate) fn production_desktop_evidence(
     contract: crate::desktop_contract::DesktopRealmContract,
     operation: DesktopOnlineOperation,
+) -> Result<ValidatedDesktopEvidence, DesktopEvidenceError> {
+    production_desktop_evidence_for_import(contract, operation, &[])
+}
+
+pub(crate) fn production_desktop_evidence_for_import(
+    contract: crate::desktop_contract::DesktopRealmContract,
+    operation: DesktopOnlineOperation,
+    adaptations: &[DesktopAdaptation],
 ) -> Result<ValidatedDesktopEvidence, DesktopEvidenceError> {
     #[cfg(test)]
     if let Some(result) = TEST_EVIDENCE.with(|records| {
@@ -384,19 +456,27 @@ pub(crate) fn production_desktop_evidence(
                 .map(|record| DesktopEvidenceRecord {
                     contract: record.contract,
                     operation: record.operation,
+                    adaptations: &record.adaptations,
                     content: &record.content,
                     integrity: &record.integrity,
                 })
                 .collect();
-            select_desktop_evidence(&borrowed, contract, operation, &current_utc_date())
+            select_desktop_evidence_for_import(
+                &borrowed,
+                contract,
+                operation,
+                adaptations,
+                &current_utc_date(),
+            )
         })
     }) {
         return result;
     }
-    select_desktop_evidence(
+    select_desktop_evidence_for_import(
         &production_records(),
         contract,
         operation,
+        adaptations,
         &current_utc_date(),
     )
 }
@@ -412,6 +492,7 @@ fn production_records() -> Vec<DesktopEvidenceRecord<'static>> {
     .map(|operation| DesktopEvidenceRecord {
         contract: crate::desktop_contract::SPOLTOG,
         operation,
+        adaptations: &[],
         content: PRODUCTION_DESKTOP_EVIDENCE,
         integrity: PRODUCTION_DESKTOP_EVIDENCE_INTEGRITY,
     })
@@ -419,13 +500,29 @@ fn production_records() -> Vec<DesktopEvidenceRecord<'static>> {
     records.extend([
         DesktopEvidenceRecord {
             contract: crate::desktop_contract::PEMPTUS,
+            operation: DesktopOnlineOperation::AutomaticLevel,
+            adaptations: &[DesktopAdaptation::LegacyQuestPlaceholder],
+            content: PEMPTUS_PLACEHOLDER_LEVEL_EVIDENCE,
+            integrity: PEMPTUS_PLACEHOLDER_LEVEL_EVIDENCE_INTEGRITY,
+        },
+        DesktopEvidenceRecord {
+            contract: crate::desktop_contract::PEMPTUS,
+            operation: DesktopOnlineOperation::AutomaticAct,
+            adaptations: &[DesktopAdaptation::LegacyQuestPlaceholder],
+            content: PEMPTUS_PLACEHOLDER_ACT_EVIDENCE,
+            integrity: PEMPTUS_PLACEHOLDER_ACT_EVIDENCE_INTEGRITY,
+        },
+        DesktopEvidenceRecord {
+            contract: crate::desktop_contract::PEMPTUS,
             operation: DesktopOnlineOperation::ManualBrag,
+            adaptations: &[],
             content: PEMPTUS_MANUAL_EVIDENCE,
             integrity: PEMPTUS_MANUAL_EVIDENCE_INTEGRITY,
         },
         DesktopEvidenceRecord {
             contract: crate::desktop_contract::PEMPTUS,
             operation: DesktopOnlineOperation::Motto,
+            adaptations: &[],
             content: PEMPTUS_MOTTO_EVIDENCE,
             integrity: PEMPTUS_MOTTO_EVIDENCE_INTEGRITY,
         },
@@ -438,6 +535,7 @@ fn production_records() -> Vec<DesktopEvidenceRecord<'static>> {
 pub(crate) struct SyntheticDesktopEvidence {
     pub contract: crate::desktop_contract::DesktopRealmContract,
     pub operation: DesktopOnlineOperation,
+    pub adaptations: Vec<DesktopAdaptation>,
     pub content: String,
     pub integrity: String,
 }
@@ -468,6 +566,15 @@ pub(crate) fn synthetic_pemptus_evidence(
     operation: DesktopOnlineOperation,
     fingerprints: Option<DesktopGuildFingerprints>,
 ) -> SyntheticDesktopEvidence {
+    synthetic_pemptus_evidence_for_import(operation, fingerprints, vec![])
+}
+
+#[cfg(test)]
+pub(crate) fn synthetic_pemptus_evidence_for_import(
+    operation: DesktopOnlineOperation,
+    fingerprints: Option<DesktopGuildFingerprints>,
+    adaptations: Vec<DesktopAdaptation>,
+) -> SyntheticDesktopEvidence {
     let contract = crate::desktop_contract::PEMPTUS;
     let payload = DesktopEvidencePayload {
         status: "passing".to_owned(),
@@ -482,7 +589,7 @@ pub(crate) fn synthetic_pemptus_evidence(
         import_path: DesktopEvidenceImportPath {
             source_format: SourceFormat::DesktopDelphiComponentStream,
             layout: DesktopLayout::SupportedComponentStream,
-            adaptations: vec![],
+            adaptations: adaptations.clone(),
         },
         realm: contract.realm.to_owned(),
         saved_endpoint: contract.saved_endpoint.to_owned(),
@@ -513,6 +620,7 @@ pub(crate) fn synthetic_pemptus_evidence(
     SyntheticDesktopEvidence {
         contract,
         operation,
+        adaptations,
         content,
         integrity,
     }
@@ -530,6 +638,7 @@ pub(crate) struct DesktopGuildFingerprints {
 pub(crate) struct DesktopOperationEvidenceObservation {
     pub contract: crate::desktop_contract::DesktopRealmContract,
     pub operation: DesktopOnlineOperation,
+    pub adaptations: Vec<DesktopAdaptation>,
     pub accepted_cases: Vec<DesktopEvidenceCase>,
     pub guild_fingerprints: Option<DesktopGuildFingerprints>,
     pub observed_on: String,
@@ -556,7 +665,7 @@ pub(crate) fn encode_operation_evidence(
         import_path: DesktopEvidenceImportPath {
             source_format: SourceFormat::DesktopDelphiComponentStream,
             layout: DesktopLayout::SupportedComponentStream,
-            adaptations: vec![],
+            adaptations: observation.adaptations,
         },
         realm: contract.realm.to_owned(),
         saved_endpoint: contract.saved_endpoint.to_owned(),
@@ -815,6 +924,148 @@ mod tests {
     }
 
     #[test]
+    fn bundled_placeholder_automatic_records_keep_observed_paths_and_share_approved_coverage() {
+        let contract = crate::desktop_contract::PEMPTUS;
+        let placeholder = [DesktopAdaptation::LegacyQuestPlaceholder];
+        for operation in [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+        ] {
+            let records = production_records();
+            let selected = select_desktop_evidence_for_import(
+                &records,
+                contract,
+                operation,
+                &placeholder,
+                "2026-10-02",
+            )
+            .unwrap();
+            assert_eq!(selected.eligibility().adaptations, placeholder);
+            assert_eq!(selected.eligibility().operations, [operation]);
+            assert!(selected.guild_fingerprints().is_none());
+            for path in [&[][..], &[DesktopAdaptation::LoadSpellingPatch][..]] {
+                let equivalent = select_desktop_evidence_for_import(
+                    &records,
+                    contract,
+                    operation,
+                    path,
+                    "2026-10-02",
+                )
+                .unwrap();
+                assert_eq!(equivalent.eligibility().adaptations, placeholder);
+            }
+            for path in [
+                &[
+                    DesktopAdaptation::LegacyQuestPlaceholder,
+                    DesktopAdaptation::LoadSpellingPatch,
+                ][..],
+                &[
+                    DesktopAdaptation::LegacyQuestPlaceholder,
+                    DesktopAdaptation::LegacyPrologue62,
+                ][..],
+            ] {
+                assert!(
+                    select_desktop_evidence_for_import(
+                        &records,
+                        contract,
+                        operation,
+                        path,
+                        "2026-10-02"
+                    )
+                    .is_err()
+                );
+            }
+            assert!(matches!(
+                select_desktop_evidence_for_import(
+                    &records,
+                    contract,
+                    operation,
+                    &placeholder,
+                    "2027-10-03"
+                ),
+                Err(DesktopEvidenceError::Stale)
+            ));
+            let remaining: Vec<_> = records
+                .into_iter()
+                .filter(|record| {
+                    !(record.contract == contract
+                        && record.operation == operation
+                        && record.adaptations == placeholder)
+                })
+                .collect();
+            assert!(
+                select_desktop_evidence_for_import(
+                    &remaining,
+                    contract,
+                    operation,
+                    &placeholder,
+                    "2026-10-02"
+                )
+                .is_err()
+            );
+            let other = if operation == DesktopOnlineOperation::AutomaticLevel {
+                DesktopOnlineOperation::AutomaticAct
+            } else {
+                DesktopOnlineOperation::AutomaticLevel
+            };
+            assert!(
+                select_desktop_evidence_for_import(
+                    &remaining,
+                    contract,
+                    other,
+                    &placeholder,
+                    "2026-10-02"
+                )
+                .is_ok()
+            );
+            assert!(
+                select_desktop_evidence_for_import(
+                    &remaining,
+                    contract,
+                    DesktopOnlineOperation::ManualBrag,
+                    &[],
+                    "2026-10-02"
+                )
+                .is_ok()
+            );
+        }
+        for operation in [
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+        ] {
+            assert!(
+                select_desktop_evidence_for_import(
+                    &production_records(),
+                    contract,
+                    operation,
+                    &placeholder,
+                    "2026-10-02"
+                )
+                .is_ok()
+            );
+        }
+        assert!(
+            production_desktop_evidence_for_import(
+                contract,
+                DesktopOnlineOperation::Guild,
+                &placeholder,
+            )
+            .is_err()
+        );
+        with_synthetic_desktop_evidence(vec![], || {
+            for operation in [
+                DesktopOnlineOperation::AutomaticLevel,
+                DesktopOnlineOperation::AutomaticAct,
+            ] {
+                assert!(
+                    production_desktop_evidence_for_import(contract, operation, &placeholder)
+                        .is_err()
+                );
+            }
+        });
+    }
+
+    #[test]
     fn bundled_pemptus_records_are_independent_pinned_and_fail_closed_when_removed_or_stale() {
         let contract = crate::desktop_contract::PEMPTUS;
         let mut records = production_records();
@@ -863,6 +1114,37 @@ mod tests {
                 assert!(production_desktop_evidence(contract, operation).is_err());
             }
         });
+    }
+
+    #[test]
+    fn offline_quest_placeholder_study_cannot_be_promoted_as_operation_evidence() {
+        let content = include_str!("../tests/fixtures/desktop-quest-placeholder-study.json");
+        assert!(
+            validate_fixture(Path::new("desktop-quest-placeholder-study.json"), content).is_ok()
+        );
+        for operation in [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+            DesktopOnlineOperation::Guild,
+        ] {
+            assert!(matches!(
+                select_desktop_evidence(
+                    &[DesktopEvidenceRecord {
+                        contract: crate::desktop_contract::PEMPTUS,
+                        operation,
+                        adaptations: &[],
+                        content,
+                        integrity: PEMPTUS_MANUAL_EVIDENCE_INTEGRITY,
+                    }],
+                    crate::desktop_contract::PEMPTUS,
+                    operation,
+                    "2026-10-01",
+                ),
+                Err(DesktopEvidenceError::Malformed)
+            ));
+        }
     }
 
     #[test]
@@ -1002,6 +1284,7 @@ mod tests {
             &[DesktopEvidenceRecord {
                 contract: crate::desktop_contract::PEMPTUS,
                 operation,
+                adaptations: &[],
                 content: &content,
                 integrity: &integrity,
             }],
@@ -1009,6 +1292,284 @@ mod tests {
             operation,
             "2026-09-25",
         )
+    }
+
+    fn operation_record<'a>(
+        operation: DesktopOnlineOperation,
+        adaptations: &'a [DesktopAdaptation],
+        document: &'a (String, String),
+    ) -> DesktopEvidenceRecord<'a> {
+        DesktopEvidenceRecord {
+            contract: crate::desktop_contract::PEMPTUS,
+            operation,
+            adaptations,
+            content: &document.0,
+            integrity: &document.1,
+        }
+    }
+
+    #[test]
+    fn placeholder_records_retain_automatic_only_observations_with_equivalent_readiness() {
+        let contract = crate::desktop_contract::PEMPTUS;
+        let placeholder = [DesktopAdaptation::LegacyQuestPlaceholder];
+        for operation in [
+            DesktopOnlineOperation::AutomaticLevel,
+            DesktopOnlineOperation::AutomaticAct,
+            DesktopOnlineOperation::ManualBrag,
+            DesktopOnlineOperation::Motto,
+            DesktopOnlineOperation::Guild,
+        ] {
+            let mut payload = operation_payload(operation);
+            payload.import_path.adaptations = placeholder.to_vec();
+            let document = operation_document(payload);
+            let record = operation_record(operation, &placeholder, &document);
+            let automatic = matches!(
+                operation,
+                DesktopOnlineOperation::AutomaticLevel | DesktopOnlineOperation::AutomaticAct
+            );
+            assert_eq!(
+                select_desktop_evidence_for_import(
+                    &[record],
+                    contract,
+                    operation,
+                    &placeholder,
+                    "2026-09-25"
+                )
+                .is_ok(),
+                automatic
+            );
+            for other in [
+                &[][..],
+                &[DesktopAdaptation::LoadSpellingPatch][..],
+                &[
+                    DesktopAdaptation::LegacyQuestPlaceholder,
+                    DesktopAdaptation::LoadSpellingPatch,
+                ][..],
+                &[DesktopAdaptation::LegacyPrologue62][..],
+            ] {
+                assert_eq!(
+                    select_desktop_evidence_for_import(
+                        &[operation_record(operation, &placeholder, &document)],
+                        contract,
+                        operation,
+                        other,
+                        "2026-09-25"
+                    )
+                    .is_ok(),
+                    automatic && crate::desktop_eligibility::pemptus_import_path_supported(other),
+                );
+            }
+        }
+        for adaptations in [
+            vec![
+                DesktopAdaptation::LegacyQuestPlaceholder,
+                DesktopAdaptation::LoadSpellingPatch,
+            ],
+            vec![DesktopAdaptation::LegacyPrologue62],
+            vec![
+                DesktopAdaptation::LegacyQuestPlaceholder,
+                DesktopAdaptation::LegacyQuestPlaceholder,
+            ],
+        ] {
+            let mut payload = operation_payload(DesktopOnlineOperation::AutomaticLevel);
+            payload.import_path.adaptations = adaptations.clone();
+            let document = operation_document(payload);
+            assert!(
+                select_desktop_evidence_for_import(
+                    &[operation_record(
+                        DesktopOnlineOperation::AutomaticLevel,
+                        &adaptations,
+                        &document
+                    )],
+                    contract,
+                    DesktopOnlineOperation::AutomaticLevel,
+                    &adaptations,
+                    "2026-09-25"
+                )
+                .is_err()
+            );
+        }
+        let mut spoltog = operation_payload(DesktopOnlineOperation::AutomaticLevel);
+        spoltog.realm = crate::desktop_contract::SPOLTOG.realm.to_owned();
+        spoltog.saved_endpoint = crate::desktop_contract::SPOLTOG.saved_endpoint.to_owned();
+        spoltog.verified_https_endpoint =
+            crate::desktop_contract::SPOLTOG.https_endpoint.to_owned();
+        spoltog.credential_mode = crate::desktop_contract::SPOLTOG.credential_mode;
+        spoltog.implementation_identity = crate::desktop_contract::SPOLTOG
+            .implementation_identity
+            .to_owned();
+        spoltog.import_path.adaptations = placeholder.to_vec();
+        let document = operation_document(spoltog);
+        assert!(
+            validate_desktop_evidence(
+                &document.0,
+                &DesktopEvidenceExpectation {
+                    realm: crate::desktop_contract::SPOLTOG.realm,
+                    saved_endpoint: crate::desktop_contract::SPOLTOG.saved_endpoint,
+                    verified_https_endpoint: crate::desktop_contract::SPOLTOG.https_endpoint,
+                    operation: DesktopOnlineOperation::AutomaticLevel,
+                    current_date: "2026-09-25",
+                    integrity_sha256: &document.1,
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn exact_path_selection_coexists_rejects_duplicates_and_never_hides_invalid_records() {
+        let contract = crate::desktop_contract::PEMPTUS;
+        let operation = DesktopOnlineOperation::AutomaticLevel;
+        let placeholder = [DesktopAdaptation::LegacyQuestPlaceholder];
+        let plain = operation_document(operation_payload(operation));
+        let mut payload = operation_payload(operation);
+        payload.import_path.adaptations = placeholder.to_vec();
+        let adapted = operation_document(payload.clone());
+        for path in [
+            &[][..],
+            &placeholder[..],
+            &[DesktopAdaptation::LoadSpellingPatch][..],
+        ] {
+            let result = select_desktop_evidence_for_import(
+                &[
+                    operation_record(operation, &[], &plain),
+                    operation_record(operation, &placeholder, &adapted),
+                ],
+                contract,
+                operation,
+                path,
+                "2026-09-25",
+            )
+            .unwrap();
+            assert_eq!(
+                result.eligibility().adaptations,
+                if path == placeholder {
+                    &placeholder[..]
+                } else {
+                    &[][..]
+                }
+            );
+        }
+        assert!(matches!(
+            select_desktop_evidence_for_import(
+                &[
+                    operation_record(operation, &[], &plain),
+                    operation_record(operation, &placeholder, &adapted),
+                    operation_record(operation, &placeholder, &adapted),
+                ],
+                contract,
+                operation,
+                &placeholder,
+                "2026-09-25"
+            ),
+            Err(DesktopEvidenceError::Malformed)
+        ));
+        assert!(
+            select_desktop_evidence_for_import(
+                &[operation_record(operation, &[], &plain),],
+                contract,
+                operation,
+                &placeholder,
+                "2026-09-25"
+            )
+            .is_ok()
+        );
+        assert!(
+            select_desktop_evidence_for_import(
+                &[operation_record(operation, &placeholder, &plain),],
+                contract,
+                operation,
+                &placeholder,
+                "2026-09-25"
+            )
+            .is_err()
+        );
+        for variant in 0..4 {
+            let mut invalid = payload.clone();
+            match variant {
+                0 => invalid.valid_through = "2026-09-24".to_owned(),
+                1 => invalid.status = "inconclusive".to_owned(),
+                2 => invalid.cleanup_complete = false,
+                _ => invalid.source_identity.commit = "0".repeat(40),
+            }
+            let invalid = operation_document(invalid);
+            assert!(
+                select_desktop_evidence_for_import(
+                    &[operation_record(operation, &placeholder, &invalid)],
+                    contract,
+                    operation,
+                    &[],
+                    "2026-09-25",
+                )
+                .is_err()
+            );
+            let records = [
+                operation_record(operation, &[], &plain),
+                operation_record(operation, &placeholder, &invalid),
+            ];
+            assert!(
+                select_desktop_evidence_for_import(
+                    &records,
+                    contract,
+                    operation,
+                    &placeholder,
+                    "2026-09-25"
+                )
+                .is_err()
+            );
+            assert!(
+                select_desktop_evidence_for_import(
+                    &records,
+                    contract,
+                    operation,
+                    &[],
+                    "2026-09-25"
+                )
+                .is_ok()
+            );
+        }
+        let tampered = (
+            adapted.0.replace("\"normal\"", "\"cheater\""),
+            adapted.1.clone(),
+        );
+        assert!(matches!(
+            select_desktop_evidence_for_import(
+                &[
+                    operation_record(operation, &[], &plain),
+                    operation_record(operation, &placeholder, &tampered),
+                ],
+                contract,
+                operation,
+                &placeholder,
+                "2026-09-25"
+            ),
+            Err(DesktopEvidenceError::Integrity)
+        ));
+        for document in [&adapted, &tampered] {
+            assert!(
+                select_desktop_evidence_for_import(
+                    &[
+                        operation_record(operation, &placeholder, document),
+                        operation_record(operation, &placeholder, &adapted),
+                    ],
+                    contract,
+                    operation,
+                    &[],
+                    "2026-09-25",
+                )
+                .is_err()
+            );
+        }
+        assert!(matches!(
+            select_desktop_evidence_for_import(
+                &[operation_record(operation, &placeholder, &tampered)],
+                contract,
+                operation,
+                &[],
+                "2026-09-25",
+            ),
+            Err(DesktopEvidenceError::Integrity)
+        ));
     }
 
     #[test]
@@ -1045,10 +1606,7 @@ mod tests {
                 assert_eq!(
                     production_desktop_evidence(crate::desktop_contract::PEMPTUS, operation)
                         .is_ok(),
-                    matches!(
-                        operation,
-                        DesktopOnlineOperation::ManualBrag | DesktopOnlineOperation::Motto
-                    )
+                    operation != DesktopOnlineOperation::Guild
                 );
                 assert!(
                     production_desktop_evidence(crate::desktop_contract::SPOLTOG, operation)
@@ -1106,6 +1664,7 @@ mod tests {
                 &[DesktopEvidenceRecord {
                     contract: crate::desktop_contract::PEMPTUS,
                     operation,
+                    adaptations: &[],
                     content: &content,
                     integrity: &integrity,
                 }],
@@ -1131,12 +1690,14 @@ mod tests {
             DesktopEvidenceRecord {
                 contract,
                 operation: DesktopOnlineOperation::ManualBrag,
+                adaptations: &[],
                 content: &manual,
                 integrity: &manual_integrity,
             },
             DesktopEvidenceRecord {
                 contract,
                 operation: DesktopOnlineOperation::Guild,
+                adaptations: &[],
                 content: &guild,
                 integrity: &guild_integrity,
             },

@@ -36,6 +36,13 @@ and the concise uniform-state desktop summary SHALL remain unchanged.
 - **THEN** the dashboard retains a concise overall summary without unnecessary
   mixed-operation detail
 
+#### Scenario: Showing usable supported Pemptus operations
+
+- **WHEN** an otherwise eligible unadapted, spelling-only, or placeholder-only
+  Pemptus import has valid reporting/motto coverage and public-confirmation guild readiness
+- **THEN** all five operations are available with existing controls and no
+  obsolete import-path mismatch or automatic-fork warning
+
 #### Scenario: Showing a local-only Pemptus timeline
 
 - **WHEN** a Pemptus managed timeline has durable local-only provenance

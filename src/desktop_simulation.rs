@@ -1645,6 +1645,69 @@ mod tests {
     }
 
     #[test]
+    fn quest_placeholder_study_monster_selection_uses_nonempty_marker_and_exact_index() {
+        let mut selected_quest_monster = false;
+        let mut mismatched_index_changes_selection = false;
+        for index in 0..bundled().tables.monsters.len() {
+            for seed in 0..64 {
+                let mut placeholder = state("heading", 4_000);
+                placeholder.quest = DesktopQuestMarker::LegacyPlaceholder { index };
+                let mut canonical = placeholder.clone();
+                canonical.quest = DesktopQuestMarker::Value {
+                    marker: bundled().tables.monsters[index].clone(),
+                    index,
+                };
+                let mut left_random = DelphiRandom::from_state(DesktopRandomState(seed));
+                let mut right_random = left_random;
+                select_combat_task(&mut placeholder, &mut left_random).unwrap();
+                select_combat_task(&mut canonical, &mut right_random).unwrap();
+                assert_eq!(placeholder.current_task, canonical.current_task);
+                assert_eq!(placeholder.activity, canonical.activity);
+                assert_eq!(placeholder.bars, canonical.bars);
+                assert_eq!(left_random.state(), right_random.state());
+                selected_quest_monster |= placeholder.current_task
+                    == format!("kill|{}", bundled().tables.monsters[index]);
+
+                if index == 0 {
+                    let mut mismatched = state("heading", 4_000);
+                    mismatched.quest = DesktopQuestMarker::Value {
+                        marker: bundled().tables.monsters[0].clone(),
+                        index: 1,
+                    };
+                    let mut random = DelphiRandom::from_state(DesktopRandomState(seed));
+                    select_combat_task(&mut mismatched, &mut random).unwrap();
+                    mismatched_index_changes_selection |=
+                        mismatched.current_task != placeholder.current_task;
+                }
+            }
+        }
+        assert!(selected_quest_monster);
+        assert!(mismatched_index_changes_selection);
+    }
+
+    #[test]
+    fn quest_placeholder_study_resolution_rejects_invalid_indexes_and_preserves_unknown_markers() {
+        for index in [bundled().tables.monsters.len(), usize::MAX] {
+            let mut candidate = state("heading", 4_000);
+            candidate.quest = DesktopQuestMarker::LegacyPlaceholder { index };
+            let original = candidate.clone();
+            assert_eq!(
+                resolve_legacy_quest_marker(&mut candidate),
+                Err(DesktopProgressionError::InvalidNumber("quest index"))
+            );
+            assert_eq!(candidate, original);
+        }
+        let mut unknown = state("heading", 4_000);
+        unknown.quest = DesktopQuestMarker::Value {
+            marker: "Unknown synthetic caption".to_owned(),
+            index: 1,
+        };
+        let original = unknown.clone();
+        resolve_legacy_quest_marker(&mut unknown).unwrap();
+        assert_eq!(unknown, original);
+    }
+
+    #[test]
     fn resolves_carried_forward_quest_placeholder_by_pinned_index() {
         let mut state = state("kill|Rat|1|tail", 5_114);
         state.quest = DesktopQuestMarker::LegacyPlaceholder { index: 1 };

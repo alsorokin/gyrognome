@@ -21,6 +21,8 @@ struct Args {
     #[arg(long)]
     allow_existing_disposable: bool,
     #[arg(long)]
+    allow_quest_placeholder: bool,
+    #[arg(long)]
     initial_guild_leave: bool,
     #[arg(long)]
     preparation_reconciliation_seconds: Option<u64>,
@@ -72,6 +74,7 @@ fn main() {
         operations: args.operations,
         max_mutation_attempts: args.max_mutation_attempts,
         allow_existing_disposable: args.allow_existing_disposable,
+        allow_quest_placeholder: args.allow_quest_placeholder,
         initial_guild_leave: args.initial_guild_leave,
         preparation_reconciliation_seconds: args.preparation_reconciliation_seconds,
         confirm_preparation_reconciliation: args.confirm_preparation_reconciliation,
@@ -134,6 +137,11 @@ mod tests {
         );
         assert_eq!(args.max_mutation_attempts, Some(7));
         assert!(!args.confirm_live_submission);
+        assert!(!args.allow_quest_placeholder);
+        let placeholder =
+            Args::try_parse_from(arguments.into_iter().chain(["--allow-quest-placeholder"]))
+                .unwrap();
+        assert!(placeholder.allow_quest_placeholder);
         let existing = Args::try_parse_from(arguments.into_iter().chain([
             "--allow-existing-disposable",
             "--initial-guild-leave",

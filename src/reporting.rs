@@ -830,7 +830,11 @@ fn set_desktop_guild(
     } else {
         DesktopGuildOperation::JoinOrChange
     };
-    let rules = DesktopGuildResponseRules::production(&target.authentication.realm, operation)?;
+    let rules = DesktopGuildResponseRules::production_for_import(
+        &target.authentication.realm,
+        operation,
+        &target.adaptations,
+    )?;
     let desktop_outcome = apply_desktop_guild_action(
         &mut target.state.profile.clone(),
         Some(designation),

@@ -69,6 +69,7 @@ pub struct DesktopLiveExperimentOptions {
     pub operations: Vec<crate::desktop_eligibility::DesktopOnlineOperation>,
     pub max_mutation_attempts: Option<usize>,
     pub allow_existing_disposable: bool,
+    pub allow_quest_placeholder: bool,
     pub initial_guild_leave: bool,
     pub preparation_reconciliation_seconds: Option<u64>,
     pub confirm_preparation_reconciliation: bool,
@@ -458,6 +459,7 @@ fn validate_options(
         || !options.guild_designation.is_ascii()
         || !options.operations.is_empty()
         || options.allow_existing_disposable
+        || options.allow_quest_placeholder
         || options.initial_guild_leave
         || options.preparation_reconciliation_seconds.is_some()
         || options.confirm_preparation_reconciliation
@@ -1246,6 +1248,7 @@ mod tests {
     fn options_require_full_live_scope() {
         let mut options = DesktopLiveExperimentOptions {
             allow_existing_disposable: false,
+            allow_quest_placeholder: false,
             initial_guild_leave: false,
             preparation_reconciliation_seconds: None,
             confirm_preparation_reconciliation: false,
@@ -1273,6 +1276,12 @@ mod tests {
             classification_poll_seconds: 60,
         };
         assert!(validate_options(&options).is_ok());
+        options.allow_quest_placeholder = true;
+        assert!(matches!(
+            validate_options(&options),
+            Err(DesktopLiveExperimentError::InvalidScope)
+        ));
+        options.allow_quest_placeholder = false;
         options.confirm_cleanup = false;
         assert!(matches!(
             validate_options(&options),

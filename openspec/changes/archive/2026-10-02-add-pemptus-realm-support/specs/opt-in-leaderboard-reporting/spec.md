@@ -5,8 +5,9 @@
 ### Requirement: Evidence-scoped Pemptus desktop reporting
 
 The system SHALL support reporting from managed Pemptus desktop-6.4.4 imports
-only when matching current passing evidence covers the requested operation,
-import/adaptation path, encoding, and authentication contract. The Pemptus
+when current passing evidence covers the requested operation through exact or
+explicitly approved equivalent import coverage, encoding, and authentication
+contract. The Pemptus
 contract SHALL require a valid passkey, empty account/password fields, the exact
 realm `Pemptus`, and the exact saved endpoint
 `http://progressquest.com/pemptus.php?`, delivered to
@@ -17,6 +18,16 @@ gated independently. Inspection and runtime SHALL agree on those gates for
 equivalent inputs. Neither an endpoint mapping nor evidence for another realm,
 credential mode, or operation SHALL confer eligibility. Unsupported
 destinations, credentials, and encoding SHALL fail before transport.
+
+Unadapted, load-spelling-only, and exact indexed quest-placeholder-only Pemptus
+imports SHALL share the explicitly approved readiness family for automatic and
+manual reporting. Inspection, runtime, and requested-operation callers SHALL
+agree, including previously imported unadvanced records. Exact matching records
+SHALL take precedence; stale, invalid, inconclusive, or duplicate matching
+records SHALL NOT be bypassed with equivalent coverage. Selected evidence SHALL
+retain its true observed adaptation path. Original import provenance SHALL
+remain authoritative after existing runtime marker resolution. Unsupported
+or combined adaptations SHALL remain excluded.
 
 Pemptus reporting SHALL retain the existing persistence, serialization,
 no-retry, callback timing, and durable local-only provenance contracts.
@@ -59,12 +70,12 @@ account/password reporting SHALL retain their existing behavior.
 - **THEN** advancement and local-only provenance are persisted atomically and
   later passing evidence cannot reconnect that timeline
 
-#### Scenario: Advancing without guild evidence
+#### Scenario: Advancing independently of guild verification
 
 - **WHEN** all other operations, including level and act reporting, are eligible
-  but guild evidence is absent
-- **THEN** the runtime retains online provenance and only guild actions are
-  blocked by the missing guild evidence
+  but a guild action's public confirmation fails
+- **THEN** the runtime retains online provenance and automatic reporting remains
+  available without treating the guild result as an automatic-evidence failure
 
 #### Scenario: Preserving existing reporting paths
 
@@ -72,3 +83,43 @@ account/password reporting SHALL retain their existing behavior.
   currently valid supported contracts
 - **THEN** request construction, authentication, explicit-action behavior, and
   automatic-report ordering remain unchanged
+
+#### Scenario: Enabling automatic reporting across the supported family
+
+- **WHEN** current valid placeholder level/act records cover a supported
+  unadapted, spelling-only, or placeholder-only Pemptus import
+- **THEN** inspection and runtime agree that automatic reporting is eligible
+  without changing the records' declared observation paths
+
+#### Scenario: Reusing manual and motto coverage for supported placeholder imports
+
+- **WHEN** current valid unadapted Pemptus manual/motto records cover an otherwise
+  eligible placeholder-only import through the approved policy
+- **THEN** manual and motto actions are available without relabeling those records
+
+#### Scenario: Supporting an existing unadvanced Izot-equivalent import
+
+- **WHEN** an existing unadapted or spelling-only Pemptus managed import with
+  valid credentials and no local-only history receives the revised readiness policy
+- **THEN** it becomes eligible without reimport, and normal advancement does not
+  fork local-only solely because its original path differs from automatic evidence
+
+#### Scenario: Retaining adapted-import provenance after marker resolution
+
+- **WHEN** an eligible placeholder-only runtime resolves its indexed marker
+  during ordinary task completion
+- **THEN** later eligibility still uses its recorded placeholder import path,
+  not an invented unadapted history
+
+#### Scenario: Keeping combined adaptations outside placeholder coverage
+
+- **WHEN** an import combines quest-placeholder with spelling correction or
+  legacy prologue despite a passing placeholder automatic record
+- **THEN** the combined path remains ineligible before transport
+
+#### Scenario: Preserving local-only permanence when placeholder coverage changes
+
+- **WHEN** a placeholder-only managed import advances without either automatic
+  record and matching records are installed afterward
+- **THEN** its local-only provenance remains permanent and all online actions
+  stay blocked

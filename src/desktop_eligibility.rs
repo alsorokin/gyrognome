@@ -144,7 +144,31 @@ pub(crate) fn evaluate_production_desktop_eligibility(
     ) {
         return DesktopEligibilityDecision::Ineligible(reason);
     }
-    let evidence = crate::desktop_evidence::production_desktop_evidence(contract, input.operation);
+    if contract == crate::desktop_contract::PEMPTUS
+        && input.operation == DesktopOnlineOperation::Guild
+    {
+        return if input.source_format == SourceFormat::DesktopDelphiComponentStream
+            && input.layout == DesktopLayout::SupportedComponentStream
+            && pemptus_import_path_supported(input.adaptations)
+        {
+            DesktopEligibilityDecision::Eligible
+        } else {
+            DesktopEligibilityDecision::Ineligible(DesktopIneligibilityReason::ImportPathMismatch)
+        };
+    }
+    let evidence = crate::desktop_evidence::production_desktop_evidence_for_import(
+        contract,
+        input.operation,
+        input.adaptations,
+    );
+    if matches!(
+        evidence,
+        Err(crate::desktop_evidence::DesktopEvidenceError::ImportPathMismatch)
+    ) {
+        return DesktopEligibilityDecision::Ineligible(
+            DesktopIneligibilityReason::ImportPathMismatch,
+        );
+    }
     evaluate_desktop_eligibility(
         input,
         evidence
@@ -191,7 +215,12 @@ pub(crate) fn evaluate_desktop_eligibility(
     }
     if evidence.source_format != input.source_format
         || evidence.layout != input.layout
-        || !adaptations_match_evidence(input.adaptations, evidence.adaptations)
+        || !(adaptations_match_evidence(input.adaptations, evidence.adaptations)
+            || pemptus_import_paths_equivalent(
+                input.realm,
+                input.adaptations,
+                evidence.adaptations,
+            ))
     {
         return Ineligible(ImportPathMismatch);
     }
@@ -215,8 +244,28 @@ pub(crate) fn evaluate_desktop_eligibility(
     Eligible
 }
 
-fn adaptations_match_evidence(input: &[DesktopAdaptation], evidence: &[DesktopAdaptation]) -> bool {
+pub(crate) fn adaptations_match_evidence(
+    input: &[DesktopAdaptation],
+    evidence: &[DesktopAdaptation],
+) -> bool {
     input == evidence || (evidence.is_empty() && input == [DesktopAdaptation::LoadSpellingPatch])
+}
+
+pub(crate) fn pemptus_import_path_supported(adaptations: &[DesktopAdaptation]) -> bool {
+    matches!(
+        adaptations,
+        [] | [DesktopAdaptation::LoadSpellingPatch] | [DesktopAdaptation::LegacyQuestPlaceholder]
+    )
+}
+
+pub(crate) fn pemptus_import_paths_equivalent(
+    realm: &str,
+    input: &[DesktopAdaptation],
+    evidence: &[DesktopAdaptation],
+) -> bool {
+    realm == crate::desktop_contract::PEMPTUS.realm
+        && pemptus_import_path_supported(input)
+        && pemptus_import_path_supported(evidence)
 }
 
 pub(crate) fn desktop_request_text_is_ascii(
@@ -299,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn pemptus_production_gates_open_only_manual_and_motto_on_supported_fresh_imports() {
+    fn pemptus_production_gates_cover_all_five_operations_on_supported_paths() {
         let contract = crate::desktop_contract::PEMPTUS;
         for operation in [
             DesktopOnlineOperation::AutomaticLevel,
@@ -308,7 +357,11 @@ mod tests {
             DesktopOnlineOperation::Motto,
             DesktopOnlineOperation::Guild,
         ] {
-            for adaptations in [&[][..], &[DesktopAdaptation::LoadSpellingPatch][..]] {
+            for adaptations in [
+                &[][..],
+                &[DesktopAdaptation::LoadSpellingPatch][..],
+                &[DesktopAdaptation::LegacyQuestPlaceholder][..],
+            ] {
                 let mut value = input();
                 value.realm = contract.realm;
                 value.endpoint = contract.saved_endpoint;
@@ -316,14 +369,9 @@ mod tests {
                 value.password = "";
                 value.operation = operation;
                 value.adaptations = adaptations;
-                let available = matches!(
-                    operation,
-                    DesktopOnlineOperation::ManualBrag | DesktopOnlineOperation::Motto
-                );
                 assert_eq!(
-                    evaluate_production_desktop_eligibility(&value)
-                        == DesktopEligibilityDecision::Eligible,
-                    available,
+                    evaluate_production_desktop_eligibility(&value),
+                    DesktopEligibilityDecision::Eligible,
                 );
                 value.advancement = DesktopAdvancementProvenance::LocalOnly;
                 assert_eq!(
@@ -334,6 +382,14 @@ mod tests {
                 );
                 value.advancement = DesktopAdvancementProvenance::Unadvanced;
                 value.adaptations = &[DesktopAdaptation::LegacyPrologue62];
+                assert_ne!(
+                    evaluate_production_desktop_eligibility(&value),
+                    DesktopEligibilityDecision::Eligible
+                );
+                value.adaptations = &[
+                    DesktopAdaptation::LegacyQuestPlaceholder,
+                    DesktopAdaptation::LoadSpellingPatch,
+                ];
                 assert_ne!(
                     evaluate_production_desktop_eligibility(&value),
                     DesktopEligibilityDecision::Eligible

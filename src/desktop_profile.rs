@@ -55,9 +55,16 @@ pub struct DesktopGuildEvidence<'a> {
 }
 
 pub struct DesktopGuildResponseRules {
-    accepted_fingerprint: String,
-    change_accepted_fingerprint: Option<String>,
-    rejected_fingerprint: Option<String>,
+    verification: DesktopGuildVerification,
+}
+
+enum DesktopGuildVerification {
+    Fingerprints {
+        accepted_fingerprint: String,
+        change_accepted_fingerprint: Option<String>,
+        rejected_fingerprint: Option<String>,
+    },
+    PublicMembership,
 }
 
 impl DesktopGuildResponseRules {
@@ -65,11 +72,27 @@ impl DesktopGuildResponseRules {
         realm: &str,
         operation: DesktopGuildOperation,
     ) -> Result<Self, DesktopProfileError> {
+        Self::production_for_import(realm, operation, &[])
+    }
+
+    pub(crate) fn production_for_import(
+        realm: &str,
+        operation: DesktopGuildOperation,
+        adaptations: &[crate::compatibility::DesktopAdaptation],
+    ) -> Result<Self, DesktopProfileError> {
         let contract = crate::desktop_contract::realm_contract(realm)
             .map_err(|_| DesktopProfileError::RealmMismatch)?;
-        let evidence = crate::desktop_evidence::production_desktop_evidence(
+        if contract == crate::desktop_contract::PEMPTUS
+            && crate::desktop_eligibility::pemptus_import_path_supported(adaptations)
+        {
+            return Ok(Self {
+                verification: DesktopGuildVerification::PublicMembership,
+            });
+        }
+        let evidence = crate::desktop_evidence::production_desktop_evidence_for_import(
             contract,
             crate::desktop_eligibility::DesktopOnlineOperation::Guild,
+            adaptations,
         )
         .map_err(|_| DesktopProfileError::EvidenceUnavailable)?;
         let fingerprints = evidence
@@ -78,16 +101,18 @@ impl DesktopGuildResponseRules {
         if fingerprints.normalization != DESKTOP_RESPONSE_FINGERPRINT_VERSION {
             return Err(DesktopProfileError::EvidenceUnavailable);
         }
-        Ok(match operation {
-            DesktopGuildOperation::JoinOrChange => Self {
-                accepted_fingerprint: fingerprints.join,
-                change_accepted_fingerprint: fingerprints.change,
-                rejected_fingerprint: Some(fingerprints.rejected),
-            },
-            DesktopGuildOperation::Leave => Self {
-                accepted_fingerprint: fingerprints.leave,
-                change_accepted_fingerprint: None,
-                rejected_fingerprint: None,
+        Ok(Self {
+            verification: match operation {
+                DesktopGuildOperation::JoinOrChange => DesktopGuildVerification::Fingerprints {
+                    accepted_fingerprint: fingerprints.join,
+                    change_accepted_fingerprint: fingerprints.change,
+                    rejected_fingerprint: Some(fingerprints.rejected),
+                },
+                DesktopGuildOperation::Leave => DesktopGuildVerification::Fingerprints {
+                    accepted_fingerprint: fingerprints.leave,
+                    change_accepted_fingerprint: None,
+                    rejected_fingerprint: None,
+                },
             },
         })
     }
@@ -121,9 +146,11 @@ impl DesktopGuildResponseRules {
             return Err(DesktopProfileError::EvidenceUnavailable);
         }
         Ok(Self {
-            accepted_fingerprint: evidence.accepted_fingerprint.to_ascii_lowercase(),
-            change_accepted_fingerprint: None,
-            rejected_fingerprint: Some(evidence.rejected_fingerprint.to_ascii_lowercase()),
+            verification: DesktopGuildVerification::Fingerprints {
+                accepted_fingerprint: evidence.accepted_fingerprint.to_ascii_lowercase(),
+                change_accepted_fingerprint: None,
+                rejected_fingerprint: Some(evidence.rejected_fingerprint.to_ascii_lowercase()),
+            },
         })
     }
 
@@ -133,19 +160,25 @@ impl DesktopGuildResponseRules {
         body: &[u8],
         dynamic_values: &DesktopGuildFingerprintValues<'_>,
     ) -> DesktopGuildOutcome {
+        let DesktopGuildVerification::Fingerprints {
+            accepted_fingerprint,
+            change_accepted_fingerprint,
+            rejected_fingerprint,
+        } = &self.verification
+        else {
+            return DesktopGuildOutcome::Indeterminate;
+        };
         if !(200..300).contains(&status) || body.len() > MAX_DESKTOP_GUILD_RESPONSE_BYTES {
             return DesktopGuildOutcome::Indeterminate;
         }
         let fingerprint = dynamic_values.fingerprint(body);
-        if fingerprint == self.accepted_fingerprint
-            || self
-                .change_accepted_fingerprint
+        if fingerprint == *accepted_fingerprint
+            || change_accepted_fingerprint
                 .as_ref()
                 .is_some_and(|value| value == &fingerprint)
         {
             DesktopGuildOutcome::Accepted
-        } else if self
-            .rejected_fingerprint
+        } else if rejected_fingerprint
             .as_ref()
             .is_some_and(|rejected| fingerprint == *rejected)
         {
@@ -504,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn pemptus_rules_select_their_own_join_change_leave_and_rejected_evidence() {
+    fn pemptus_rules_require_public_confirmation_even_with_synthetic_fingerprints() {
         use crate::desktop_evidence::{
             DesktopGuildFingerprints, synthetic_pemptus_evidence, with_synthetic_desktop_evidence,
         };
@@ -527,15 +560,15 @@ mod tests {
             .unwrap();
             assert_eq!(
                 rules.classify(200, b"Joined New Guild", &values),
-                DesktopGuildOutcome::Accepted
+                DesktopGuildOutcome::Indeterminate
             );
             assert_eq!(
                 rules.classify(200, b"Changed New Guild", &values),
-                DesktopGuildOutcome::Accepted
+                DesktopGuildOutcome::Indeterminate
             );
             assert_eq!(
                 rules.classify(200, b"Rejected New Guild", &values),
-                DesktopGuildOutcome::Rejected
+                DesktopGuildOutcome::Indeterminate
             );
             assert_eq!(
                 rules.classify(200, b"Unknown", &values),
@@ -546,7 +579,7 @@ mod tests {
                     .unwrap();
             assert_eq!(
                 leave.classify(200, b"Left Old Guild", &values),
-                DesktopGuildOutcome::Accepted
+                DesktopGuildOutcome::Indeterminate
             );
             assert!(
                 DesktopGuildResponseRules::production(
@@ -558,8 +591,24 @@ mod tests {
         });
         assert!(
             DesktopGuildResponseRules::production("Pemptus", DesktopGuildOperation::JoinOrChange)
-                .is_err()
+                .is_ok()
         );
+        for adaptations in [
+            &[crate::compatibility::DesktopAdaptation::LegacyPrologue62][..],
+            &[
+                crate::compatibility::DesktopAdaptation::LegacyQuestPlaceholder,
+                crate::compatibility::DesktopAdaptation::LoadSpellingPatch,
+            ][..],
+        ] {
+            assert!(
+                DesktopGuildResponseRules::production_for_import(
+                    "Pemptus",
+                    DesktopGuildOperation::JoinOrChange,
+                    adaptations,
+                )
+                .is_err()
+            );
+        }
     }
 
     #[test]

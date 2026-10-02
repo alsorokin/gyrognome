@@ -10,6 +10,15 @@ githubCopilot:
 #     Tech stack: TypeScript, React, Node.js
 #     We use conventional commits
 #     Domain: e-commerce platform
+context: |
+  Gyrognome is a small personal project, not an enterprise-grade product.
+  Prioritize quick delivery of a useful, working end-to-end result over process,
+  exhaustive assurance, speculative hardening, or architectural perfection.
+  Prefer simple implementations and existing patterns. Pragmatic shortcuts and
+  technical debt are acceptable when their tradeoffs are clear and bounded.
+  Cut ceremony and nonessential scope, not the user's practical goal. Do not
+  redefine a requested feature as complete merely because a narrower checklist
+  passes; describe actual limitations plainly.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
@@ -20,6 +29,17 @@ githubCopilot:
 #       - Always include a "Non-goals" section
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - Lead with the smallest useful outcome that can be delivered quickly.
+    - Keep scope and risks concise; distinguish essential work from optional polish.
+    - Do not default to exhaustive conformance studies, validation matrices, staged experiments, or enterprise-style approval gates.
+  design:
+    - Prefer the simplest adequate solution; avoid speculative abstractions and defensive complexity.
+    - State meaningful shortcuts and tradeoffs briefly rather than designing away every possible edge case.
+  tasks:
+    - Use a short, actionable task list aimed at delivering the user-visible result.
+    - Include only checks proportionate to the change; do not make exhaustive validation a default completion requirement.
 
 # Per-operation guidance (optional)
 # Add advisory guidance for how apply and archive work should be conducted.
@@ -33,6 +53,11 @@ githubCopilot:
 #       guidance:
 #         - Summarize the archive outcome before finishing
 operations:
+  apply:
+    guidance:
+      - Deliver the smallest working change promptly; avoid unnecessary process and repeated checks.
+      - Run targeted checks relevant to the change. Reserve full suites and broader audits for cross-cutting changes, demonstrated problems, or explicit requests.
+      - Keep existing safety and data-preservation guarantees, and be honest about remaining limitations; pragmatic delivery is not permission to fabricate evidence or claim unsupported behavior.
   archive:
     guidance:
       - For all non-trivial changes, after archiving, update CHANGELOG.md under Unreleased; avoid duplicate entries.

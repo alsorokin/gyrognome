@@ -39,18 +39,24 @@ available for developers with Rust installed.
 - Provides separate browser and `desktop-6.4.4` continuation profiles plus an
   opt-in local runtime that schedules and persists explicitly registered
   characters without mutating source saves.
-- Enables classic desktop level, act, manual brag, motto, and guild operations
-  only for fresh `desktop-6.4.4` Spoltog imports covered by bundled passing
-  evidence. Unadapted imports and imports recording only the deterministic
+- Enables all five classic desktop online operations (level, act, manual brag,
+  motto, and guild) for fresh `desktop-6.4.4` Spoltog imports covered by bundled
+  passing evidence. Unadapted imports and imports recording only the deterministic
   `load-spelling-patch` normalization are covered; unsupported contracts,
   adaptations, encodings, and local-only forks remain closed.
-- Provides realm-aware Pemptus passkey-only transport and separately scoped
-  development conformance stages. Bundled independent evidence enables manual
-  brag and motto set/clear for fresh, unadapted or spelling-only-normalized
-  `desktop-6.4.4` Pemptus imports. Automatic level/act and guild operations remain
-  gated. Any local advancement permanently forks the managed Pemptus timeline
-  local-only because automatic evidence is absent; manual/motto availability
-  does not prevent this. The earlier diagnostic is still non-enabling.
+- Supports all five online operations for otherwise eligible `desktop-6.4.4`
+  Pemptus imports: unadapted, spelling-only, and exact indexed quest-placeholder-only.
+  Existing unadvanced imports gain support without reimport. Reporting and motto
+  reuse pinned native observations across this explicitly approved equivalent
+  family; guild actions use one native request and one bounded public membership
+  confirmation. Unconfirmed guild results preserve previous membership without
+  retry. Unsupported/combined paths and permanent local-only forks stay excluded.
+- Supports explicit `--allow-quest-placeholder` admission for a separately
+  approved Pemptus progression experiment with the exact indexed `fQuest` marker
+  as its sole adaptation. New automatic evidence must declare that original
+  import path, even though production readiness can share coverage within the
+  supported family. Combined adaptations remain excluded; the flag alone does
+  not authorize live requests.
 - Allows an explicitly approved older disposable Pemptus character in the
   immediate conformance stage, with exact baseline checks, separately counted
   initial guild cleanup, and preservation of original save files. This does
@@ -65,6 +71,13 @@ available for developers with Rust installed.
 See [Classic desktop save compatibility](docs/classic-desktop-compatibility.md)
 for supported save layouts, continuation behavior, normalization, online
 eligibility, local-only forks, and evidence boundaries.
+
+Pemptus readiness uses existing live observations and narrow source/synthetic
+equivalence, not exhaustive per-path Delphi or anti-cheat certification. The
+missing historical guild fingerprint audit remains non-conclusive; public
+confirmation does not manufacture that evidence. Public state can lag, so a guild
+action may report uncertainty even if the server applied it. No new live
+validation is required or authorized by this readiness policy.
 
 ## Deterministic simulation
 

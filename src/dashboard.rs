@@ -2751,6 +2751,14 @@ mod tests {
         for enabled in [
             &[DesktopOnlineOperation::ManualBrag][..],
             &[DesktopOnlineOperation::Motto][..],
+            &[
+                DesktopOnlineOperation::ManualBrag,
+                DesktopOnlineOperation::Motto,
+            ][..],
+            &[
+                DesktopOnlineOperation::AutomaticLevel,
+                DesktopOnlineOperation::AutomaticAct,
+            ][..],
             &DesktopOnlineOperation::ALL[..],
             &[][..],
         ] {
@@ -2772,6 +2780,11 @@ mod tests {
                 .join("\n");
             let partial = !enabled.is_empty() && enabled.len() < 5;
             assert_eq!(details.contains("partially eligible"), partial);
+            if enabled.len() == 5 {
+                assert!(details.contains("Online eligibility: eligible"));
+                assert!(!details.contains("import path"));
+                assert!(!details.contains("local-only"));
+            }
             for operation in DesktopOnlineOperation::ALL {
                 assert_eq!(
                     online_action_blocked(&snapshot.character, operation).is_none(),

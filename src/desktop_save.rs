@@ -1923,6 +1923,275 @@ mod tests {
     }
 
     #[test]
+    fn quest_placeholder_study_compares_callbacks_requests_and_preserves_provenance() {
+        use crate::{
+            compatibility::{DesktopAdaptation, DesktopRandomState},
+            desktop_callback::DesktopCallbackCheckpoint,
+            desktop_simulation::{
+                DesktopReportTrigger, SourceDerivedDesktopHooks, resolve_legacy_quest_marker,
+            },
+        };
+
+        let study: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/desktop-quest-placeholder-study.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            study["source"]["commit"],
+            crate::desktop_rules::SOURCE_COMMIT
+        );
+        assert_eq!(
+            study["source"]["sha256"],
+            crate::desktop_rules::MAIN_PAS_SHA256
+        );
+        assert_eq!(study["syntheticResults"]["questTransitions"]["seeds"], 64);
+        assert_eq!(
+            study["syntheticResults"]["questTransitions"]["transitionsPerSeed"],
+            3
+        );
+        assert_eq!(
+            study["syntheticResults"]["questTransitions"]["initialAndSubsequentQuestPairs"],
+            true
+        );
+        assert_eq!(study["decision"]["changesEligibility"], false);
+        assert_eq!(study["decision"]["authorizesRequests"], false);
+        assert_eq!(study["decision"]["activeTimeEvidence"], false);
+
+        let mut mapped = map_desktop_document(&mapped_document("plot|2|Loading")).unwrap();
+        mapped.current_task = Some(b"kill|Rat|1|tail".to_vec());
+        mapped.queue.clear();
+        mapped.private.realm = Some(b"Pemptus".to_vec());
+        mapped.private.endpoint = Some(b"http://progressquest.com/pemptus.php?".to_vec());
+        mapped.private.account = None;
+        mapped.private.password = None;
+        let placeholder_save = validate_desktop_save(&mapped).unwrap();
+        let index = 1;
+        let mut canonical_mapped = mapped.clone();
+        canonical_mapped.quest_marker = Some(
+            crate::desktop_rules::bundled().tables.monsters[index]
+                .as_bytes()
+                .to_vec(),
+        );
+        let canonical_save = validate_desktop_save(&canonical_mapped).unwrap();
+        let metadata = DesktopImportMetadata::from_validated(&placeholder_save.adaptations);
+        assert_eq!(
+            metadata.provenance.adaptations,
+            [DesktopAdaptation::LegacyQuestPlaceholder]
+        );
+        assert!(
+            DesktopImportMetadata::from_validated(&canonical_save.adaptations)
+                .provenance
+                .adaptations
+                .is_empty()
+        );
+        let mut resolved = DesktopCanonicalState::from(&placeholder_save);
+        resolve_legacy_quest_marker(&mut resolved).unwrap();
+        assert_eq!(resolved, DesktopCanonicalState::from(&canonical_save));
+        assert_eq!(
+            DesktopImportMetadata::from_validated(&placeholder_save.adaptations),
+            metadata
+        );
+
+        fn compare_unsigned(left: &DesktopCanonicalState, right: &DesktopCanonicalState) {
+            let authentication = DesktopAccountAuthentication::new("", "");
+            for (operation, motto) in [
+                (DesktopReportOperation::Manual, "Synthetic motto"),
+                (DesktopReportOperation::Level, "Synthetic motto"),
+                (DesktopReportOperation::Act, "Synthetic motto"),
+                (DesktopReportOperation::Motto, "Synthetic set"),
+                (DesktopReportOperation::Motto, ""),
+            ] {
+                let left =
+                    report(left, operation, "Pemptus", motto, 4_242, &authentication).unwrap();
+                let right =
+                    report(right, operation, "Pemptus", motto, 4_242, &authentication).unwrap();
+                assert_eq!(left.query_before_validator, right.query_before_validator);
+                assert_eq!(left.fields_after_validator, right.fields_after_validator);
+                assert!(
+                    !left
+                        .fields_before_validator
+                        .iter()
+                        .any(|field| field.name == "p")
+                );
+                assert!(!left.authentication.credentials_present);
+            }
+            for guild in ["Synthetic Guild A", "Synthetic Guild B", ""] {
+                let left = guild_request(left, "Pemptus", guild, 4_242, &authentication).unwrap();
+                let right = guild_request(right, "Pemptus", guild, 4_242, &authentication).unwrap();
+                assert_eq!(left.query_before_validator, right.query_before_validator);
+                assert!(
+                    !left
+                        .fields_before_validator
+                        .iter()
+                        .any(|field| field.name == "p")
+                );
+                assert!(!left.authentication.credentials_present);
+            }
+        }
+
+        compare_unsigned(
+            &DesktopCanonicalState::from(&placeholder_save),
+            &DesktopCanonicalState::from(&canonical_save),
+        );
+        let mut monster_quest = false;
+        let mut non_monster_quest = false;
+        for seed in 0..64 {
+            for initial in [false, true] {
+                let mut left = DesktopCallbackCheckpoint {
+                    state: DesktopCanonicalState::from(&placeholder_save),
+                    random: DesktopRandomState(seed),
+                };
+                let mut right = DesktopCallbackCheckpoint {
+                    state: DesktopCanonicalState::from(&canonical_save),
+                    random: DesktopRandomState(seed),
+                };
+                if initial {
+                    left.state.quests.clear();
+                    right.state.quests.clear();
+                }
+                for _ in 0..3 {
+                    for checkpoint in [&mut left, &mut right] {
+                        checkpoint.state.current_task = "kill|Rat|1|tail".to_owned();
+                        checkpoint.state.queue.clear();
+                        checkpoint.state.bars.task.position = checkpoint.state.bars.task.maximum;
+                        checkpoint.state.bars.quest.position = checkpoint.state.bars.quest.maximum;
+                    }
+                    let mut left_hooks = SourceDerivedDesktopHooks::traced();
+                    let mut right_hooks = SourceDerivedDesktopHooks::traced();
+                    assert_eq!(
+                        left.apply_progression_callback(100, &mut left_hooks)
+                            .unwrap(),
+                        right
+                            .apply_progression_callback(100, &mut right_hooks)
+                            .unwrap()
+                    );
+                    assert_eq!(left, right);
+                    assert_eq!(left_hooks.reports(), right_hooks.reports());
+                    compare_unsigned(&left.state, &right.state);
+                    monster_quest |= matches!(left.state.quest, DesktopQuestMarker::Value { .. });
+                    non_monster_quest |= matches!(left.state.quest, DesktopQuestMarker::None);
+                }
+            }
+        }
+        assert!(monster_quest && non_monster_quest);
+
+        let mut left = DesktopCallbackCheckpoint {
+            state: DesktopCanonicalState::from(&placeholder_save),
+            random: DesktopRandomState(1),
+        };
+        left.state.bars.task.position = left.state.bars.task.maximum;
+        left.state.bars.experience.position = left.state.bars.experience.maximum;
+        left.state.queue = vec![DesktopQueueCommand {
+            kind: DesktopQueueKind::Plot,
+            duration_seconds: 2,
+            caption: "Synthetic act transition".to_owned(),
+        }];
+        let mut right = left.clone();
+        right.state.quest = DesktopCanonicalState::from(&canonical_save).quest;
+        let mut left_hooks = SourceDerivedDesktopHooks::traced();
+        let mut right_hooks = SourceDerivedDesktopHooks::traced();
+        left.apply_progression_callback(100, &mut left_hooks)
+            .unwrap();
+        right
+            .apply_progression_callback(100, &mut right_hooks)
+            .unwrap();
+        assert_eq!(left, right);
+        assert_eq!(left_hooks.reports(), right_hooks.reports());
+        assert_eq!(
+            left_hooks
+                .reports()
+                .iter()
+                .map(|snapshot| snapshot.trigger)
+                .collect::<Vec<_>>(),
+            [DesktopReportTrigger::Level, DesktopReportTrigger::Act]
+        );
+        for (left, right) in left_hooks.reports().iter().zip(right_hooks.reports()) {
+            compare_unsigned(&left.state, &right.state);
+        }
+        crate::desktop_evidence::with_synthetic_desktop_evidence(vec![], || {
+            assert!(
+                crate::save::inspect_desktop(&placeholder_save)
+                    .online_eligibility
+                    .iter()
+                    .filter(|operation| operation.operation
+                        != crate::desktop_eligibility::DesktopOnlineOperation::Guild)
+                    .all(|operation| !matches!(
+                        operation.decision,
+                        crate::desktop_eligibility::DesktopEligibilityDecision::Eligible
+                    ))
+            )
+        });
+    }
+
+    #[test]
+    fn quest_placeholder_study_boundary_imports_do_not_gain_eligibility() {
+        use crate::compatibility::DesktopAdaptation;
+        let mut base = map_desktop_document(&mapped_document("plot|2|Loading")).unwrap();
+        base.private.realm = Some(b"Pemptus".to_vec());
+        base.private.endpoint = Some(b"http://progressquest.com/pemptus.php?".to_vec());
+        base.private.account = None;
+        base.private.password = None;
+        for index in [
+            -1,
+            crate::desktop_rules::bundled().tables.monsters.len() as i64,
+        ] {
+            let mut candidate = base.clone();
+            candidate.quest_index = Some(index);
+            assert!(validate_desktop_save(&candidate).is_err());
+        }
+        let mut unsupported_task = base.clone();
+        unsupported_task.current_task = Some(b"fTask".to_vec());
+        assert_eq!(
+            validate_desktop_save(&unsupported_task),
+            Err(DesktopValidationError::InvalidTask)
+        );
+        let mut spelling = base.clone();
+        spelling.spells[1].caption = b"Innoculate".to_vec();
+        let mut prologue = base.clone();
+        prologue.current_task = None;
+        prologue.activity = Some(b"Loading....".to_vec());
+        prologue.queue = vec![b"task|2|Loading".to_vec()];
+        for candidate in [&base, &spelling, &prologue] {
+            let save = validate_desktop_save(candidate).unwrap();
+            let metadata = DesktopImportMetadata::from_validated(&save.adaptations);
+            assert!(
+                metadata
+                    .provenance
+                    .adaptations
+                    .contains(&DesktopAdaptation::LegacyQuestPlaceholder)
+            );
+            crate::desktop_evidence::with_synthetic_desktop_evidence(vec![], || {
+                assert!(
+                    crate::save::inspect_desktop(&save)
+                        .online_eligibility
+                        .iter()
+                        .all(|operation| {
+                            matches!(
+                                operation.decision,
+                                crate::desktop_eligibility::DesktopEligibilityDecision::Eligible
+                            ) == (operation.operation
+                                == crate::desktop_eligibility::DesktopOnlineOperation::Guild
+                                && metadata.provenance.adaptations
+                                    == [DesktopAdaptation::LegacyQuestPlaceholder])
+                        })
+                )
+            });
+        }
+        assert!(
+            validate_desktop_save(&spelling)
+                .unwrap()
+                .adaptations
+                .spelling_patch_applied
+        );
+        assert!(
+            validate_desktop_save(&prologue)
+                .unwrap()
+                .adaptations
+                .legacy_prologue_62
+        );
+    }
+
+    #[test]
     fn spelling_patch_converges_to_canonical_state_and_protocol_with_distinct_provenance() {
         let mut pre_correction = map_desktop_document(&mapped_document("plot|2|Loading")).unwrap();
         pre_correction.quest_marker = None;

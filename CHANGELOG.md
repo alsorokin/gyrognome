@@ -6,6 +6,16 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Added
 
+- Pemptus desktop online support for unadapted, spelling-only, and exact indexed
+  quest-placeholder-only imports, including existing unadvanced managed characters:
+  automatic level/act reporting, manual brag, motto set/clear, and guild
+  join/change/leave. Reporting reuses pinned observations through explicit
+  supported-path equivalence; guild actions use one native request and bounded
+  public confirmation without mutation retries. Unsupported combinations and
+  permanent local-only histories remain excluded.
+- Independent classic operation eligibility and dashboard presentation of partial
+  availability, plus separately authorized native Pemptus conformance stages with
+  preserved source provenance and credential-free operation evidence.
 - Development-only, feature-gated Pemptus manual-report probe with passkey-only
   HTTPS delivery, explicit disposable-character handoff, no mutation retries,
   and bounded credential-safe public observations. The diagnostic distinguishes

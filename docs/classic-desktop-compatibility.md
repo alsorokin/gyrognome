@@ -36,9 +36,30 @@ only `load-spelling-patch` produces the same canonical state and unsigned
 level, act, manual brag, motto, and guild requests as an already-canonical
 import. Its adaptation remains visible in provenance.
 
-Legacy prologue and quest-placeholder adaptations affect progression semantics
-and do not inherit online eligibility from the canonical path. Unknown or
-combined adaptations also fail closed.
+An offline quest-placeholder study also compares the exact `fQuest` marker
+with the pinned monster-table row at its valid saved index. Source inspection
+shows that monster selection tests non-empty marker presence and uses the saved
+index, not the caption text. Synthetic tests compare selection before resolution,
+subsequent quest callbacks/RNG use, report ordering, and unsigned operation
+shapes. Canonical state converges through the existing native task-completion
+resolution; official `LoadGame` does not perform that normalization.
+
+This narrowly scoped study is **not operation evidence**. A separately approved
+readiness policy combines it with existing actual observations to share coverage
+within the three supported Pemptus paths. Placeholder provenance remains visible;
+combinations with spelling normalization or legacy prologue remain gated.
+Unsupported `fTask`, unknown captions, and wrong indexes are not covered.
+The study does not prove Delphi
+component-stream runtime equivalence, identify the executable that wrote a save,
+or authorize any live request.
+
+Legacy prologue, unknown, and combined adaptations fail closed. For Pemptus,
+unadapted, spelling-only, and singleton `legacy-quest-placeholder` imports form
+an explicitly approved equivalent readiness family. Existing actual automatic
+records retain their observed placeholder path; manual/motto records retain
+their unadapted path. They enable the same operation across the supported family
+without relabeling evidence. Guild readiness instead uses public confirmation.
+Original provenance remains authoritative after normal runtime marker resolution.
 
 ## Random continuation and history
 
@@ -89,10 +110,12 @@ queries are needed to display availability.
 Each operation requires all of the following:
 
 - the `desktop-6.4.4` profile and supported component-stream layout;
-- an unadapted import or only `load-spelling-patch`;
+- an unadapted import or only `load-spelling-patch`; Pemptus also supports the
+  exact indexed singleton quest-placeholder path;
 - an exact supported realm/endpoint/authentication contract and valid passkey;
 - ASCII request data;
-- current passing evidence for the requested operation; and
+- current passing exact or approved-equivalent operation evidence, or the
+  supported Pemptus public-confirmation guild strategy; and
 - no local-only advancement provenance.
 
 | Realm | Exact saved endpoint | Fixed HTTPS destination | Authentication |
@@ -101,19 +124,56 @@ Each operation requires all of the following:
 | Pemptus | `http://progressquest.com/pemptus.php?` | `https://progressquest.com/pemptus.php` | Both account/password empty; no Authorization header |
 
 Recognizing a contract does not enable reporting. Bundled passing evidence
-currently covers all five Spoltog operations and only Pemptus manual brag and
-motto set/clear. The two Pemptus records were independently observed in the
-approved immediate stage and promoted after final no-guild/private cleanup.
-They have separate integrity pins and are valid through October 1, 2027.
-Pemptus automatic level/act and guild actions remain gated; the operator-accepted
-join has no original response fingerprint and cannot provide guild evidence.
-This is partial support, not imported Pemptus parity. Operation-scoped evidence
-does not require unrelated operation coverage or guild fingerprints
-for non-guild actions; the original Spoltog v2 envelope retains its original
-integrity and scope.
+currently covers all five Spoltog operations. Supported Pemptus imports have
+usable five-operation coverage:
+
+| Pemptus import path | Automatic level/act | Manual brag/motto | Guild |
+|---|---|---|---|
+| Unadapted or spelling-only | Eligible | Eligible | Public confirmation |
+| Quest-placeholder only | Eligible | Eligible | Public confirmation |
+| Other or combined adaptations | Gated | Gated | Gated |
+
+The manual/motto records were independently observed in the approved immediate
+stage and promoted after final no-guild/private cleanup, with separate integrity
+pins valid through October 1, 2027. The placeholder automatic records followed
+13 native attempts (12 accepted level reports and one accepted act report) over
+22,429.7 active seconds, followed by fresh normal/no-guild checks and approved
+private cleanup. Level evidence is valid through October 1, 2027; act evidence
+through October 2, 2027. Original saves remained unchanged. No mutation or
+progression callback was repeated during the packaging correction/finalization.
+The operator-accepted guild join has no original response fingerprint and cannot
+provide guild evidence. Guild change, rejection, and final leave completed,
+but their response fingerprints were not retained after private cleanup.
+The original guild fingerprint audit therefore remains non-conclusive despite
+completed lifecycle checks; it is not a fingerprint-based enabling record.
+
+Pemptus guild join/change/leave sends one native request, then makes one bounded,
+credential-free public observation in the same realm for the exact character.
+Only confirmed requested membership is persisted, with ASCII-case-insensitive
+designation matching and observed canonical spelling. Leave requires confirmed
+no-guild state. Empty responses/HTTP success alone are insufficient. Invalid
+designations, missing/ambiguous/malformed rows, or observation failures leave the
+previous membership intact and return a safe non-success outcome. Public state
+can lag; uncertain delivery can still be confirmed without retry. A matching
+pre-existing membership confirms desired state, not unique request consumption.
+
+This is usable support based on existing observations and narrow equivalence,
+not exhaustive live validation of every path/subcase, Delphi runtime equivalence,
+or anti-cheat certification. It requires no repeated live campaign and authorizes
+no experiment/replay. The original Spoltog v2 integrity, scope, and fingerprint
+verification remain unchanged.
+
+Evidence selection prefers matching contract/operation/path coverage, preserving
+spelling equivalence. Only absent matching coverage permits another supported
+Pemptus family path for that same operation. Stale, invalid, inconclusive, or
+duplicate matching records cannot be bypassed; ambiguous or invalid equivalent
+selections also fail closed. Actual payload adaptations must still match their
+registered observation path, and all integrity/freshness/cleanup checks remain.
+Already imported, unadvanced supported records gain readiness without reimport;
+existing local-only history remains excluded.
 
 Redirects, other realms or endpoint aliases, mismatched credential modes,
-unsupported text encoding, incomplete credentials, substantive adaptations,
+unsupported text encoding, incomplete credentials, unevidenced adaptation paths,
 and local-only forks are rejected before transport.
 
 ## Local-only advancement
@@ -128,9 +188,11 @@ does not make local advancement safe for later online use if either automatic
 operation is gated.
 
 With current bundled Pemptus coverage, manual brag and motto actions are available
-on an untouched supported import, but its first local advancement permanently
-closes every online operation. Automatic evidence installed later cannot reconnect
-that managed timeline.
+on an untouched unadapted/spelling-only import, but its first local advancement
+permanently closes every online operation. Automatic evidence installed later
+cannot reconnect that managed timeline. Placeholder-only imports with both
+automatic records passing can advance without a local-only fork; their missing
+manual/profile coverage does not cause one.
 
 This is permanent for that record because classic reports describe exact level
 and act transitions rather than a general current-state synchronization.
@@ -309,8 +371,9 @@ Operator acceptance is lifecycle completion, not a timely automated join
 observation or guild production evidence. After final no-guild state and
 approved private-only cleanup, the runner emits only independently complete
 manual/motto records and explicitly reports guild exclusion because its
-original join response fingerprint is absent. Production guild gates remain
-closed; originals remain untouched. This does not authorize progression or
+original join response fingerprint is absent. That audit remains non-conclusive;
+the separate production public-confirmation strategy does not depend on it.
+Originals remain untouched. This does not authorize progression or
 general recovery of a primary operation.
 
 Place only that disposable `.pq`, its matching optional `.bak`, and
@@ -370,6 +433,26 @@ and control-motto flags. Progression uses actual callbacks capped at 100 ms,
 without acceleration or stopped-time catch-up. Observation requests have
 bounded timeouts and sleeps clipped to the remaining deadline.
 
+For an explicitly approved placeholder-only progression source, also pass
+`--allow-quest-placeholder`. This flag is refused outside Pemptus progression
+with both automatic operations, or unless the validated original source has
+exactly `[legacy-quest-placeholder]`, the exact `fQuest` marker, a valid pinned
+monster-table index, and otherwise supported state. Unadapted flag use, unknown
+captions, unsupported `fTask`, spelling/prologue combinations, and missing
+confirmations fail before network activity. Unadapted progression omits the flag.
+The flag, original source/state, saved index, and adaptation path are bound into
+the checkpoint; changed scopes and uncertain primary requests cannot replay.
+Neither the importer nor original source/history is rewritten.
+
+Planning approval and offline study results do not authorize this live scope.
+Freshly reconfirm the exact disposable identity/source, exclusive stopped
+reporters, original preservation, private-only cleanup, and bounded requests,
+active time, and observations; validate offline with `--validate-only` first.
+The approved proposed bounds are 32 attempts, 28,800 active seconds, and
+60-second observations (`--classification-poll-seconds 60`). No additional
+official-client preparation or repetition of completed immediate checks is
+authorized by the placeholder policy.
+
 The runner records intent before mutation. An uncertain request or interrupted
 callback cannot be replayed on restart. Inconclusive stages retain private
 state and emit a non-enabling safe diagnostic; obtain new guidance/approval
@@ -379,10 +462,21 @@ agreeing row are not acceptance evidence.
 Successful stages verify normal classification and no-guild cleanup, remove
 only the approved disposable save/backup and native checkpoint, and emit a JSON
 collection of individually validated v3 operation records. Their dates refer
-to actual operation observations, not a later restart. Only reviewed records
-with pinned integrity and matching scope can be bundled into production.
+to actual operation observations, not a later restart, and their adaptation
+arrays come from the validated original source, not the later resolved state.
+Only reviewed records with pinned integrity and matching scope can be bundled
+into production.
 Partial coverage enables only proven operations, and complete Pemptus support
-is not claimed until all five operations and required subcases pass.
+is not claimed until all five operations and required subcases pass for the
+same import path, not a union of adapted automatic and unadapted profile records.
+
+Progression can accept several level reports before its first act transition.
+The ledger retains every distinct native intent and observation; each operation
+record lists its required acceptance case once. Duplicate immediate cases,
+repeated intents, unobserved requests, and pending callbacks still fail closed.
+An already complete, fully observed progression ledger can be finalized after
+fresh explicit approval of read-only checks and private cleanup, without further
+callbacks or mutation replay; this is not uncertain-request recovery.
 
 Spoltog's existing invocation remains the default legacy mode. Stage-specific
 operation/attempt options cannot silently narrow that legacy experiment: use

@@ -11,10 +11,12 @@ record SHALL retain the existing source/implementation identity, integrity,
 freshness, normal-classification, and completed-cleanup requirements.
 
 Non-guild evidence SHALL NOT require guild-response fingerprints. New
-operation-scoped guild evidence SHALL require complete matching
+operation-scoped fingerprint-based guild evidence SHALL require complete matching
 join/change/leave and rejection coverage using the shared versioned normalization
 contract. Missing, stale, malformed, or mismatched guild-only evidence SHALL NOT
-invalidate independently valid non-guild evidence.
+invalidate independently valid non-guild evidence. Supported Pemptus guild
+actions SHALL instead use the explicit public-confirmation readiness contract;
+the absence of such fingerprints SHALL NOT block that strategy.
 
 Previously bundled Spoltog evidence SHALL remain usable within its original
 scope only when its evidence-relevant behavior remains unchanged. Evidence
@@ -32,12 +34,13 @@ contract.
 
 - **WHEN** independently valid level, act, manual, or motto evidence exists
   alongside invalid guild-only evidence
-- **THEN** the non-guild evidence remains valid and guild eligibility fails
+- **THEN** the non-guild evidence remains valid and a fingerprint-based guild
+  strategy cannot use that invalid record
 
 #### Scenario: Rejecting evidence outside its contract
 
 - **WHEN** an evidence record differs from the requested realm, endpoint,
-  credential mode, operation, import path, implementation/source identity,
+  credential mode, operation, approved import coverage, implementation/source identity,
   integrity, or validity period
 - **THEN** it cannot enable the requested operation
 
@@ -47,6 +50,53 @@ contract.
   evidence-relevant behavior is unchanged
 - **THEN** its covered account/password operations remain eligible without
   granting Pemptus coverage
+
+### Requirement: Usable Pemptus delivery under explicit equivalence
+
+Otherwise eligible Pemptus imports on the unadapted, load-spelling-only, and
+exact quest-placeholder-only paths SHALL support automatic level, automatic act,
+manual brag, motto set/clear, and guild join/change/leave. The exact placeholder
+SHALL require a valid saved pinned-table index and otherwise supported state.
+Other or combined adaptations SHALL remain excluded.
+
+The approved readiness policy SHALL reuse existing current valid level/act/
+manual/motto observations across that narrow equivalent family, preserving
+actual source-path metadata, integrity, freshness, classification, and cleanup.
+It SHALL NOT relabel records, manufacture observations, share another realm's
+coverage, or treat an offline study alone as live evidence. Supported guild
+actions SHALL use one native attempt and bounded public confirmation without
+requiring missing historical fingerprints.
+
+Completion SHALL require usable five-operation coverage on every supported path,
+consistent inspection/runtime/UI behavior, preserved local-only history, and
+directly affected compatibility/privacy regressions. It SHALL NOT require a new
+per-path live campaign. Documentation SHALL distinguish readiness from exhaustive
+live/Delphi/anti-cheat certification and preserve the non-conclusive guild
+fingerprint audit. This revision SHALL NOT authorize a live experiment or replay.
+
+#### Scenario: Delivering all five operations on each supported path
+
+- **WHEN** current valid bundled records and the public-confirmation strategy
+  apply to an otherwise eligible Pemptus import on any supported path
+- **THEN** all five gates are eligible, with original adaptation provenance intact
+
+#### Scenario: Completing usable support without another live campaign
+
+- **WHEN** supported-path behavior and focused preservation regressions pass
+- **THEN** this change can finish without repeating completed cases or claiming
+  that every path/subcase received independent live certification
+
+#### Scenario: Preserving the historical guild audit gap
+
+- **WHEN** a supported guild action uses public confirmation but historical
+  response fingerprints remain absent
+- **THEN** the action is available without inventing a guild evidence record
+  or retrospectively marking the fingerprint audit conclusive
+
+#### Scenario: Refusing arbitrary evidence inheritance
+
+- **WHEN** an import uses another realm, unknown adaptation, or combined path
+- **THEN** the Pemptus family policy does not confer eligibility
 
 ### Requirement: Non-enabling offline adaptation studies
 
@@ -97,6 +147,97 @@ existing gates closed.
 - **WHEN** paired states or observations are retained for the offline study
 - **THEN** they contain synthetic data only, preserve adaptation provenance, and
   do not contain a real save, credential, or signed leaderboard request
+
+### Requirement: Explicit placeholder-only progression conformance
+
+The development runner MAY accept a freshly approved Pemptus progression source
+with exactly `[legacy-quest-placeholder]` recorded as its adaptation path, using
+the explicit `--allow-quest-placeholder` scope flag and requesting both automatic
+level and act operations. It SHALL validate the original exact `fQuest` marker
+and valid saved monster-table index before the existing task-completion
+resolution. All other fresh-handoff and realm/authentication requirements SHALL
+remain mandatory.
+
+The flag SHALL be refused for an unadapted source, another realm or stage,
+missing authorization, an unknown marker caption, unsupported task form, invalid
+index, or any combined/other adaptation. The original source/state, saved index,
+adaptation path, and flag SHALL be bound into the checkpoint scope. Source
+provenance SHALL remain visible and unchanged after runtime marker resolution;
+neither real-save edits nor importer/task-normalization changes are authorized.
+Changed scope or uncertain primary requests SHALL NOT be resumed by replay.
+
+Successful live coverage MAY emit new automatic-operation v3 records declaring
+the actual original-source singleton adaptation path. The validator SHALL accept
+that path only for Pemptus automatic level/act operations, with all existing
+integrity, source/implementation identity, freshness, attributable acceptance,
+normal-classification, and completed-cleanup requirements. The offline study
+SHALL remain non-enabling. Existing records SHALL NOT be relabeled or widened.
+
+Record validation SHALL match registered and actual declared source paths.
+Readiness selection SHALL prefer an exact contract/operation/path record and
+preserve established spelling equivalence. Only absence of a matching record
+SHALL permit the explicitly approved Pemptus family equivalence for that same
+operation. Stale, invalid, inconclusive, or duplicate matching records SHALL
+block that operation without fallback. Ambiguous or invalid equivalent
+selections SHALL likewise fail closed. Combined paths SHALL remain excluded.
+
+Planning approval of this policy SHALL NOT authorize live execution. A fresh
+matching identity/source/exclusive handoff and explicit bounded live scope SHALL
+still be required. No completed immediate case SHALL be repeated. Existing
+active-time, no-acceleration, no-retry, observation, and private-only cleanup
+requirements SHALL remain unchanged.
+
+#### Scenario: Validating an explicitly scoped placeholder-only source
+
+- **WHEN** a freshly approved Pemptus progression source has the exact indexed
+  placeholder as its sole adaptation and the explicit flag is present
+- **THEN** offline validation can accept that path while retaining original
+  provenance, without sending requests or emitting enabling evidence
+
+#### Scenario: Refusing implicit or broader placeholder admission
+
+- **WHEN** the flag is absent, the stage/realm is wrong, the marker/index is
+  invalid, or the source combines placeholder with spelling/prologue adaptation
+- **THEN** the runner rejects placeholder admission before network activity
+
+#### Scenario: Refusing a changed placeholder checkpoint scope
+
+- **WHEN** an input source, saved index, adaptation path, or admission flag
+  differs from the bound checkpoint scope
+- **THEN** continuation fails without replaying a request or rewriting provenance
+
+#### Scenario: Emitting actual adapted automatic evidence
+
+- **WHEN** approved placeholder-only automatic cases pass live acceptance,
+  normal classification, and final cleanup
+- **THEN** their new records declare `[legacy-quest-placeholder]`, not an empty
+  adaptation array inferred from the later canonical callback state
+
+#### Scenario: Selecting independently pinned records for distinct paths
+
+- **WHEN** valid unadapted and placeholder records exist for the same automatic
+  operation
+- **THEN** each import prefers its matching path,
+  and duplicate records for one matching scope fail closed
+
+#### Scenario: Refusing equivalent fallback after matching-record expiry
+
+- **WHEN** the requested placeholder record exists but is invalid, stale, or
+  inconclusive while another path's operation record passes
+- **THEN** that other record cannot enable the placeholder operation
+
+#### Scenario: Reusing approved equivalent coverage when an exact record is absent
+
+- **WHEN** a supported Pemptus import lacks an exact-path operation record but
+  has one unambiguous current valid record on an approved equivalent path
+- **THEN** that operation is eligible without altering the record's observed
+  path or the import's original provenance
+
+#### Scenario: Rejecting placeholder records outside the automatic scope
+
+- **WHEN** a candidate placeholder record claims manual brag, motto, guild,
+  another realm, or a combined adaptation path
+- **THEN** validation rejects it without weakening independently valid records
 
 ### Requirement: Separately authorized Pemptus live conformance
 
@@ -178,8 +319,8 @@ recovery.
 Confirmed final no-guild state and approved private-only cleanup MAY permit
 promotion of independently complete manual/motto records. Operator-accepted
 join lifecycle completion SHALL NOT provide guild production evidence;
-missing join fingerprints SHALL keep guild coverage closed, with explicit
-diagnostic reporting. Original source/backup preservation and all other
+missing join fingerprints SHALL remain an explicit diagnostic audit gap, not
+block the separately approved public-confirmation strategy. Original source/backup preservation and all other
 production evidence requirements SHALL remain unchanged.
 
 Immediate-operation and automatic-progression stages SHALL be independently
@@ -195,8 +336,9 @@ Attempts SHALL be recorded before mutation so interrupted or uncertain requests
 are not replayed. Rejected, ambiguous, missing, expired, or abnormal observations
 SHALL leave affected evidence non-passing. Only credential-free, conclusive
 operation records with confirmed cleanup SHALL be eligible for production
-promotion. Partial coverage SHALL enable only its proven operations; complete
-Pemptus support SHALL NOT be claimed until every required operation passes.
+promotion. Live records SHALL claim only their actually proven operation/path.
+Usable-support completion SHALL follow the explicit equivalence/public-confirmation
+readiness requirement, not be represented as exhaustive per-path live certification.
 The archived acceptance probe SHALL remain diagnostic evidence only.
 
 #### Scenario: Running local validation without live approval
@@ -315,7 +457,7 @@ The archived acceptance probe SHALL remain diagnostic evidence only.
 - **WHEN** approved immediate operations pass and their cleanup is confirmed
   but automatic level/act coverage has not passed
 - **THEN** only the proven immediate operations can receive enabling evidence
-  and complete Pemptus support remains unfinished
+  and absent valid automatic coverage leaves usable Pemptus support unfinished
 
 #### Scenario: Bounding a progression experiment
 
