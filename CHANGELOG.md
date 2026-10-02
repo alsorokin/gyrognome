@@ -21,6 +21,9 @@ All notable changes to Gyrognome are documented in this file.
   and bounded credential-safe public observations. The diagnostic distinguishes
   delivery from independently established acceptance and does not enable
   production Pemptus reporting.
+- Keyboard and mouse-wheel scrolling for overflowing full-layout dashboard
+  panes and compact Character content, with independent clamped offsets and
+  visible keyboard focus.
 
 ### Changed
 

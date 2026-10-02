@@ -8,7 +8,10 @@ use std::{
 };
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEventKind,
+    },
     execute,
     terminal::{
         BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
@@ -23,7 +26,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     symbols,
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 use thiserror::Error;
 
@@ -771,7 +774,18 @@ enum Command {
     Edit(ProfileField),
     Insert(char),
     Backspace,
+    FocusNextPane,
+    FocusPreviousPane,
+    ScrollLine(ScrollDirection),
+    ScrollPage(ScrollDirection),
+    MouseScroll(ScrollDirection, u16, u16),
     None,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScrollDirection {
+    Up,
+    Down,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -844,30 +858,135 @@ impl PaneVisibility {
     }
 }
 
+/// Per-pane keyboard scroll focus and vertical scroll offsets for the full
+/// layout, plus a single offset for the compact layout's combined
+/// Character pane.
+#[derive(Debug, Default)]
+struct PaneScroll {
+    offsets: [u16; Pane::ALL.len()],
+    focused: Option<Pane>,
+    compact: u16,
+}
+
+impl PaneScroll {
+    fn offset(&self, pane: Pane) -> u16 {
+        self.offsets[pane.index()]
+    }
+
+    fn set_offset(&mut self, pane: Pane, value: u16) {
+        self.offsets[pane.index()] = value;
+    }
+
+    fn is_focused(&self, pane: Pane) -> bool {
+        self.focused == Some(pane)
+    }
+
+    /// Keep focus on an expanded pane, moving it forward to the next
+    /// expanded pane if the previously focused pane just collapsed.
+    fn reconcile_focus(&mut self, panes: &PaneVisibility) {
+        match self.focused {
+            Some(pane) if !panes.is_collapsed(pane) => {}
+            Some(pane) => self.focused = cycle_focus(panes, pane, true),
+            None => self.focused = first_expanded(panes),
+        }
+    }
+
+    fn focus_next(&mut self, panes: &PaneVisibility) {
+        self.focused = match self.focused {
+            Some(pane) => cycle_focus(panes, pane, true),
+            None => first_expanded(panes),
+        };
+    }
+
+    fn focus_previous(&mut self, panes: &PaneVisibility) {
+        self.focused = match self.focused {
+            Some(pane) => cycle_focus(panes, pane, false),
+            None => first_expanded(panes),
+        };
+    }
+}
+
+fn first_expanded(panes: &PaneVisibility) -> Option<Pane> {
+    Pane::ALL.into_iter().find(|&pane| !panes.is_collapsed(pane))
+}
+
+/// Finds the next (or previous) expanded pane after `current`, wrapping
+/// around at either end. Returns `None` only when no pane is expanded.
+fn cycle_focus(panes: &PaneVisibility, current: Pane, forward: bool) -> Option<Pane> {
+    let all = Pane::ALL;
+    let len = all.len();
+    let start = current.index();
+    (1..=len)
+        .map(|step| if forward { (start + step) % len } else { (start + len - step) % len })
+        .map(|index| all[index])
+        .find(|&pane| !panes.is_collapsed(pane))
+}
+
+/// The rendered rectangle and scroll bounds recorded for a pane during the
+/// most recent render, used to clamp keyboard scrolling and to route mouse
+/// wheel events to the pane under the pointer.
+#[derive(Debug, Clone, Copy)]
+struct PaneViewport {
+    rect: Rect,
+    max_offset: u16,
+    inner_height: u16,
+}
+
+#[derive(Debug, Default)]
+struct ScrollLayout {
+    full_layout: bool,
+    panes: [Option<PaneViewport>; Pane::ALL.len()],
+    compact: Option<PaneViewport>,
+}
+
+fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
+    column >= rect.x
+        && column < rect.x.saturating_add(rect.width)
+        && row >= rect.y
+        && row < rect.y.saturating_add(rect.height)
+}
+
 fn command(event: Event) -> Command {
-    let Event::Key(key) = event else {
-        return Command::None;
-    };
-    if key.kind != KeyEventKind::Press {
-        return Command::None;
-    }
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        return Command::Quit;
-    }
-    match key.code {
-        KeyCode::Char('q') => Command::Quit,
-        KeyCode::Char('b') => Command::Brag,
-        KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
-        KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
-        KeyCode::Char('s') => Command::ToggleLifecycle,
-        KeyCode::Enter => Command::ConfirmAction,
-        KeyCode::Esc => Command::Cancel,
-        KeyCode::F(1) => Command::TogglePane(Pane::Activity),
-        KeyCode::F(2) => Command::TogglePane(Pane::Progress),
-        KeyCode::F(3) => Command::TogglePane(Pane::Equipment),
-        KeyCode::F(4) => Command::TogglePane(Pane::Details),
-        KeyCode::F(5) => Command::TogglePane(Pane::Adventure),
-        KeyCode::F(6) => Command::TogglePane(Pane::Journal),
+    match event {
+        Event::Mouse(mouse) => match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                Command::MouseScroll(ScrollDirection::Up, mouse.column, mouse.row)
+            }
+            MouseEventKind::ScrollDown => {
+                Command::MouseScroll(ScrollDirection::Down, mouse.column, mouse.row)
+            }
+            _ => Command::None,
+        },
+        Event::Key(key) => {
+            if key.kind != KeyEventKind::Press {
+                return Command::None;
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                return Command::Quit;
+            }
+            match key.code {
+                KeyCode::Char('q') => Command::Quit,
+                KeyCode::Char('b') => Command::Brag,
+                KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
+                KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
+                KeyCode::Char('s') => Command::ToggleLifecycle,
+                KeyCode::Enter => Command::ConfirmAction,
+                KeyCode::Esc => Command::Cancel,
+                KeyCode::Tab => Command::FocusNextPane,
+                KeyCode::BackTab => Command::FocusPreviousPane,
+                KeyCode::Up => Command::ScrollLine(ScrollDirection::Up),
+                KeyCode::Down => Command::ScrollLine(ScrollDirection::Down),
+                KeyCode::PageUp => Command::ScrollPage(ScrollDirection::Up),
+                KeyCode::PageDown => Command::ScrollPage(ScrollDirection::Down),
+                KeyCode::F(1) => Command::TogglePane(Pane::Activity),
+                KeyCode::F(2) => Command::TogglePane(Pane::Progress),
+                KeyCode::F(3) => Command::TogglePane(Pane::Equipment),
+                KeyCode::F(4) => Command::TogglePane(Pane::Details),
+                KeyCode::F(5) => Command::TogglePane(Pane::Adventure),
+                KeyCode::F(6) => Command::TogglePane(Pane::Journal),
+                _ => Command::None,
+            }
+        }
         _ => Command::None,
     }
 }
@@ -917,6 +1036,8 @@ pub fn run<P: DashboardProvider>(
                 &state.updates,
                 state.confirmation,
                 &state.panes,
+                &mut state.scroll,
+                &mut state.layout,
             );
             if let Some(editor) = &state.editor {
                 render_editor(frame, editor);
@@ -942,6 +1063,8 @@ struct DashboardState {
     confirmation: Option<LifecycleAction>,
     editor: Option<ProfileEditor>,
     panes: PaneVisibility,
+    scroll: PaneScroll,
+    layout: ScrollLayout,
     task_anchor: TaskAnchor,
     next_combined_refresh: Instant,
     refresh_interval: Duration,
@@ -950,13 +1073,20 @@ struct DashboardState {
 impl DashboardState {
     fn new(current: DashboardSnapshot, now: Instant, refresh_interval: Duration) -> Self {
         let task_anchor = TaskAnchor::from_snapshot(&current, now);
+        let panes = PaneVisibility::default();
+        let scroll = PaneScroll {
+            focused: first_expanded(&panes),
+            ..PaneScroll::default()
+        };
         Self {
             current,
             action_message: None,
             updates: RecentTaskUpdates::default(),
             confirmation: None,
             editor: None,
-            panes: PaneVisibility::default(),
+            panes,
+            scroll,
+            layout: ScrollLayout::default(),
             task_anchor,
             next_combined_refresh: now.checked_add(refresh_interval).unwrap_or(now),
             refresh_interval,
@@ -1216,6 +1346,7 @@ impl DashboardState {
             }
             Command::TogglePane(pane) => {
                 self.panes.toggle(pane);
+                self.scroll.reconcile_focus(&self.panes);
                 false
             }
             Command::ConfirmAction => {
@@ -1238,7 +1369,102 @@ impl DashboardState {
                 }
                 false
             }
+            Command::FocusNextPane => {
+                self.scroll.focus_next(&self.panes);
+                false
+            }
+            Command::FocusPreviousPane => {
+                self.scroll.focus_previous(&self.panes);
+                false
+            }
+            Command::ScrollLine(direction) => {
+                self.scroll_active(direction, 1);
+                false
+            }
+            Command::ScrollPage(direction) => {
+                self.scroll_active_page(direction);
+                false
+            }
+            Command::MouseScroll(direction, column, row) => {
+                self.scroll_at_position(direction, column, row);
+                false
+            }
             Command::None | Command::Insert(_) | Command::Backspace => false,
+        }
+    }
+
+    fn scroll_pane(&mut self, pane: Pane, direction: ScrollDirection, amount: u16) {
+        let max_offset = self
+            .layout
+            .panes
+            .get(pane.index())
+            .and_then(|viewport| *viewport)
+            .map(|viewport| viewport.max_offset)
+            .unwrap_or(0);
+        let current = self.scroll.offset(pane).min(max_offset);
+        let next = match direction {
+            ScrollDirection::Up => current.saturating_sub(amount),
+            ScrollDirection::Down => current.saturating_add(amount).min(max_offset),
+        };
+        self.scroll.set_offset(pane, next);
+    }
+
+    fn scroll_compact(&mut self, direction: ScrollDirection, amount: u16) {
+        let max_offset = self
+            .layout
+            .compact
+            .map(|viewport| viewport.max_offset)
+            .unwrap_or(0);
+        let current = self.scroll.compact.min(max_offset);
+        self.scroll.compact = match direction {
+            ScrollDirection::Up => current.saturating_sub(amount),
+            ScrollDirection::Down => current.saturating_add(amount).min(max_offset),
+        };
+    }
+
+    /// Scrolls the keyboard-focused pane in the full layout, or the
+    /// combined Character pane in the compact layout, by `amount` rows.
+    fn scroll_active(&mut self, direction: ScrollDirection, amount: u16) {
+        if self.layout.full_layout {
+            if let Some(pane) = self.scroll.focused {
+                self.scroll_pane(pane, direction, amount);
+            }
+        } else {
+            self.scroll_compact(direction, amount);
+        }
+    }
+
+    fn scroll_active_page(&mut self, direction: ScrollDirection) {
+        let amount = if self.layout.full_layout {
+            self.scroll
+                .focused
+                .and_then(|pane| self.layout.panes[pane.index()])
+                .map(|viewport| viewport.inner_height)
+                .unwrap_or(1)
+        } else {
+            self.layout
+                .compact
+                .map(|viewport| viewport.inner_height)
+                .unwrap_or(1)
+        }
+        .max(1);
+        self.scroll_active(direction, amount);
+    }
+
+    fn scroll_at_position(&mut self, direction: ScrollDirection, column: u16, row: u16) {
+        if self.layout.full_layout {
+            for pane in Pane::ALL {
+                if let Some(viewport) = self.layout.panes[pane.index()] {
+                    if rect_contains(viewport.rect, column, row) {
+                        self.scroll_pane(pane, direction, 1);
+                        return;
+                    }
+                }
+            }
+        } else if let Some(viewport) = self.layout.compact {
+            if rect_contains(viewport.rect, column, row) {
+                self.scroll_compact(direction, 1);
+            }
         }
     }
 }
@@ -1283,7 +1509,7 @@ impl TerminalSession {
     pub(crate) fn enter() -> Result<Self, DashboardError> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        if let Err(error) = execute!(stdout, EnterAlternateScreen) {
+        if let Err(error) = execute!(stdout, EnterAlternateScreen, EnableMouseCapture) {
             let _ = disable_raw_mode();
             return Err(error.into());
         }
@@ -1291,7 +1517,7 @@ impl TerminalSession {
             Ok(terminal) => Ok(Self { terminal }),
             Err(error) => {
                 let mut stdout = io::stdout();
-                let _ = execute!(stdout, LeaveAlternateScreen);
+                let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
                 let _ = disable_raw_mode();
                 Err(error.into())
             }
@@ -1312,7 +1538,11 @@ impl TerminalSession {
 impl Drop for TerminalSession {
     fn drop(&mut self) {
         let _ = self.terminal.show_cursor();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = disable_raw_mode();
     }
 }
@@ -1324,6 +1554,8 @@ fn render(
     updates: &RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     panes: &PaneVisibility,
+    scroll: &mut PaneScroll,
+    layout: &mut ScrollLayout,
 ) {
     let area = frame.area();
     if area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT {
@@ -1332,10 +1564,12 @@ fn render(
                 .block(Block::default().borders(Borders::ALL).title("Gyrognome")),
             area,
         );
+        *layout = ScrollLayout::default();
         return;
     }
 
     let full_layout = area.width >= 90;
+    layout.full_layout = full_layout;
     let header_height = if header_uses_single_line(&snapshot.character, area.width) {
         3
     } else {
@@ -1401,7 +1635,17 @@ fn render(
             .constraints(full_bottom_constraints())
             .split(rows[2]);
         render_header(frame, snapshot, updates, rows[0]);
-        render_full(frame, snapshot, task_percent, updates, rows[1], panes);
+        render_full(
+            frame,
+            snapshot,
+            task_percent,
+            updates,
+            rows[1],
+            panes,
+            scroll,
+            layout,
+        );
+        layout.compact = None;
         let keys = if let Some(line) = normal_keys {
             Paragraph::new(line)
         } else {
@@ -1440,7 +1684,10 @@ fn render(
             ])
             .split(area);
         render_header(frame, snapshot, updates, rows[0]);
-        render_compact(frame, snapshot, task_percent, updates, rows[1]);
+        render_compact(frame, snapshot, task_percent, updates, rows[1], scroll, layout);
+        for viewport in layout.panes.iter_mut() {
+            *viewport = None;
+        }
         frame.render_widget(
             Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
                 .block(Block::default().borders(Borders::ALL).title("Status"))
@@ -1645,6 +1892,8 @@ fn render_compact(
     task_percent: u64,
     updates: &RecentTaskUpdates,
     area: Rect,
+    scroll: &mut PaneScroll,
+    layout: &mut ScrollLayout,
 ) {
     let state = &snapshot.character;
     let mut content = vec![
@@ -1666,10 +1915,26 @@ fn render_compact(
         state.plot.act, state.plot.bestplot
     )));
     content.push(Line::from(format!("Quests: {}", state.quests.join(", "))));
+    let paragraph = Paragraph::new(content).wrap(Wrap { trim: true });
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let content_rows = paragraph.line_count(inner.width);
+    let max_offset = content_rows
+        .saturating_sub(usize::from(inner.height))
+        .min(usize::from(u16::MAX)) as u16;
+    let offset = scroll.compact.min(max_offset);
+    scroll.compact = offset;
+    layout.compact = Some(PaneViewport {
+        rect: area,
+        max_offset,
+        inner_height: inner.height,
+    });
     frame.render_widget(
-        Paragraph::new(content)
-            .block(Block::default().borders(Borders::ALL).title("Character"))
-            .wrap(Wrap { trim: true }),
+        paragraph
+            .scroll((offset, 0))
+            .block(Block::default().borders(Borders::ALL).title("Character")),
         area,
     );
 }
@@ -1681,6 +1946,8 @@ fn render_full(
     updates: &RecentTaskUpdates,
     area: Rect,
     panes: &PaneVisibility,
+    scroll: &mut PaneScroll,
+    layout: &mut ScrollLayout,
 ) {
     let columns = Layout::default()
         .direction(Direction::Horizontal)
@@ -1718,9 +1985,15 @@ fn render_full(
             activity_text(&state.activity),
             state.activity.tasks,
         )),
+        scroll,
+        layout,
     );
     if panes.is_collapsed(Pane::Progress) {
-        frame.render_widget(pane_block("Progress", Pane::Progress), left[1]);
+        frame.render_widget(
+            pane_block("Progress", Pane::Progress, scroll.is_focused(Pane::Progress)),
+            left[1],
+        );
+        layout.panes[Pane::Progress.index()] = None;
     } else {
         render_progress(
             frame,
@@ -1728,6 +2001,8 @@ fn render_full(
             task_percent,
             left[1],
             Pane::Progress,
+            scroll,
+            layout,
         );
     }
     render_pane(
@@ -1737,6 +2012,8 @@ fn render_full(
         Pane::Equipment,
         panes,
         Paragraph::new(equipment_lines(&state.equipment, updates)),
+        scroll,
+        layout,
     );
     render_pane(
         frame,
@@ -1745,6 +2022,8 @@ fn render_full(
         Pane::Details,
         panes,
         Paragraph::new(details),
+        scroll,
+        layout,
     );
     render_pane(
         frame,
@@ -1758,6 +2037,8 @@ fn render_full(
             panes.is_collapsed(Pane::Journal),
         ))
         .wrap(Wrap { trim: true }),
+        scroll,
+        layout,
     );
     render_pane(
         frame,
@@ -1766,6 +2047,8 @@ fn render_full(
         Pane::Journal,
         panes,
         Paragraph::new(journal_lines(state)).wrap(Wrap { trim: true }),
+        scroll,
+        layout,
     );
 }
 
@@ -2003,11 +2286,18 @@ fn right_pane_constraints(visibility: &PaneVisibility) -> [Constraint; 2] {
     }
 }
 
-fn pane_block(title: &str, pane: Pane) -> Block<'_> {
-    Block::default()
+fn pane_block(title: &str, pane: Pane, focused: bool) -> Block<'_> {
+    let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
-        .title(Line::from(pane.hotkey()).right_aligned())
+        .title(Line::from(pane.hotkey()).right_aligned());
+    if focused {
+        block
+            .border_type(BorderType::Double)
+            .border_style(Style::default().fg(Color::Cyan))
+    } else {
+        block
+    }
 }
 
 fn render_pane(
@@ -2017,12 +2307,34 @@ fn render_pane(
     pane: Pane,
     visibility: &PaneVisibility,
     content: Paragraph<'_>,
+    scroll: &mut PaneScroll,
+    layout: &mut ScrollLayout,
 ) {
+    let focused = scroll.is_focused(pane);
     if visibility.is_collapsed(pane) {
-        frame.render_widget(pane_block(title, pane), area);
-    } else {
-        frame.render_widget(content.block(pane_block(title, pane)), area);
+        frame.render_widget(pane_block(title, pane, focused), area);
+        layout.panes[pane.index()] = None;
+        return;
     }
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+    let content_rows = content.line_count(inner.width);
+    let max_offset = content_rows
+        .saturating_sub(usize::from(inner.height))
+        .min(usize::from(u16::MAX)) as u16;
+    let offset = scroll.offset(pane).min(max_offset);
+    scroll.set_offset(pane, offset);
+    layout.panes[pane.index()] = Some(PaneViewport {
+        rect: area,
+        max_offset,
+        inner_height: inner.height,
+    });
+    frame.render_widget(
+        content.scroll((offset, 0)).block(pane_block(title, pane, focused)),
+        area,
+    );
 }
 
 fn render_progress(
@@ -2031,6 +2343,8 @@ fn render_progress(
     task_percent: u64,
     area: Rect,
     pane: Pane,
+    scroll: &PaneScroll,
+    layout: &mut ScrollLayout,
 ) {
     let bars = [
         ("Experience", progress.experience.percent),
@@ -2039,14 +2353,20 @@ fn render_progress(
         ("Quest", progress.quest.percent),
         ("Task", task_percent),
     ];
+    let inner = area.inner(ratatui::layout::Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints(vec![Constraint::Length(1); bars.len()])
-        .split(area.inner(ratatui::layout::Margin {
-            horizontal: 1,
-            vertical: 1,
-        }));
-    frame.render_widget(pane_block("Progress", pane), area);
+        .split(inner);
+    frame.render_widget(pane_block("Progress", pane, scroll.is_focused(pane)), area);
+    layout.panes[pane.index()] = Some(PaneViewport {
+        rect: area,
+        max_offset: 0,
+        inner_height: inner.height,
+    });
     for ((label, percent), row) in bars.into_iter().zip(rows.iter().copied()) {
         let label = format!("{label} {percent}%");
         frame.render_widget(
@@ -2606,7 +2926,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
             terminal
                 .draw(|frame| {
-                    render(
+                    render_test(
                         frame,
                         &snapshot,
                         0,
@@ -2636,7 +2956,7 @@ mod tests {
                     let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
                     terminal
                         .draw(|frame| {
-                            render(
+                            render_test(
                                 frame,
                                 &snapshot,
                                 0,
@@ -2722,7 +3042,7 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     0,
@@ -2804,7 +3124,7 @@ mod tests {
                     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                     terminal
                         .draw(|frame| {
-                            render(
+                            render_test(
                                 frame,
                                 &snapshot,
                                 0,
@@ -3130,6 +3450,11 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let task_percent = snapshot.character.progress.task.percent;
+        let mut scroll = PaneScroll {
+            focused: first_expanded(panes),
+            ..PaneScroll::default()
+        };
+        let mut layout = ScrollLayout::default();
         terminal
             .draw(|frame| {
                 render(
@@ -3139,6 +3464,8 @@ mod tests {
                     &RecentTaskUpdates::default(),
                     None,
                     panes,
+                    &mut scroll,
+                    &mut layout,
                 )
             })
             .unwrap();
@@ -3153,6 +3480,33 @@ mod tests {
 
     fn rendered(width: u16, height: u16) -> String {
         rendered_with_panes(width, height, &PaneVisibility::default())
+    }
+
+    /// Test convenience wrapper that renders with fresh scroll state,
+    /// matching the pre-scrolling `render` signature used across tests.
+    fn render_test(
+        frame: &mut ratatui::Frame<'_>,
+        snapshot: &DashboardSnapshot,
+        task_percent: u64,
+        updates: &RecentTaskUpdates,
+        confirmation: Option<LifecycleAction>,
+        panes: &PaneVisibility,
+    ) {
+        let mut scroll = PaneScroll {
+            focused: first_expanded(panes),
+            ..PaneScroll::default()
+        };
+        let mut layout = ScrollLayout::default();
+        render(
+            frame,
+            snapshot,
+            task_percent,
+            updates,
+            confirmation,
+            panes,
+            &mut scroll,
+            &mut layout,
+        );
     }
 
     #[test]
@@ -3527,7 +3881,7 @@ mod tests {
             let mut terminal = Terminal::new(backend).unwrap();
             terminal
                 .draw(|frame| {
-                    render(
+                    render_test(
                         frame,
                         &snapshot,
                         75,
@@ -3772,7 +4126,7 @@ mod tests {
         let mut wide_terminal = Terminal::new(wide_backend).unwrap();
         wide_terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     snapshot.character.progress.task.percent,
@@ -3792,7 +4146,7 @@ mod tests {
         let mut narrow_terminal = Terminal::new(narrow_backend).unwrap();
         narrow_terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     snapshot.character.progress.task.percent,
@@ -3879,7 +4233,7 @@ mod tests {
         snapshot.character.progress.experience.percent = 100;
         terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     snapshot.character.progress.task.percent,
@@ -3905,7 +4259,7 @@ mod tests {
         snapshot.character.progress.experience.percent = 0;
         terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     snapshot.character.progress.task.percent,
@@ -3929,7 +4283,7 @@ mod tests {
         snapshot.character.progress.experience.percent = 50;
         terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &snapshot,
                     snapshot.character.progress.task.percent,
@@ -4161,7 +4515,7 @@ mod tests {
                 let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
                 terminal
                     .draw(|frame| {
-                        render(
+                        render_test(
                             frame,
                             &snapshot,
                             snapshot.character.progress.task.percent,
@@ -4275,7 +4629,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render(
+                render_test(
                     frame,
                     &state.current,
                     state.displayed_task_percent(now),
@@ -4838,5 +5192,297 @@ mod tests {
             missing,
             DashboardError::Storage(StorageError::NotFound(_))
         ));
+    }
+
+    fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> Event {
+        Event::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    /// Renders the current state into a backend of the given size,
+    /// populating `state.layout` and clamping `state.scroll` the same way
+    /// the live dashboard loop does on every frame.
+    fn render_state(state: &mut DashboardState, width: u16, height: u16) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let task_percent = state.displayed_task_percent(Instant::now());
+        terminal
+            .draw(|frame| {
+                render(
+                    frame,
+                    &state.current,
+                    task_percent,
+                    &state.updates,
+                    state.confirmation,
+                    &state.panes,
+                    &mut state.scroll,
+                    &mut state.layout,
+                )
+            })
+            .unwrap();
+    }
+
+    /// A snapshot with enough quest history that the Journal pane (full
+    /// layout) and the Character pane (compact layout) both overflow their
+    /// visible area at common terminal sizes.
+    fn overflowing_snapshot() -> DashboardSnapshot {
+        let mut snapshot = sample();
+        snapshot.character.quests = (0..200).map(|index| format!("Quest {index}")).collect();
+        snapshot.character.current_quest = "Quest 0".to_owned();
+        snapshot
+    }
+
+    #[test]
+    fn focused_pane_uses_a_double_border() {
+        let area = Rect::new(0, 0, 20, 5);
+        for (focused, horizontal, vertical) in [(true, "═", "║"), (false, "─", "│")] {
+            let mut buffer = Buffer::empty(area);
+            pane_block("Activity", Pane::Activity, focused).render(area, &mut buffer);
+            assert_eq!(buffer[(1, 4)].symbol(), horizontal);
+            assert_eq!(buffer[(0, 1)].symbol(), vertical);
+        }
+    }
+
+    #[test]
+    fn tab_and_shift_tab_cycle_focus_through_expanded_panes_and_wrap() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.focused, Some(Pane::Activity));
+
+        for expected in [
+            Pane::Progress,
+            Pane::Equipment,
+            Pane::Details,
+            Pane::Adventure,
+            Pane::Journal,
+            Pane::Activity,
+        ] {
+            state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+            assert_eq!(state.scroll.focused, Some(expected));
+        }
+
+        state.handle_event(&provider, &id, key_event(KeyCode::BackTab), now);
+        assert_eq!(state.scroll.focused, Some(Pane::Journal));
+    }
+
+    #[test]
+    fn toggling_the_focused_pane_moves_focus_to_the_next_expanded_pane() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.focused, Some(Pane::Activity));
+
+        state.handle_event(&provider, &id, key_event(KeyCode::F(1)), now);
+        assert!(state.panes.is_collapsed(Pane::Activity));
+        assert_eq!(state.scroll.focused, Some(Pane::Progress));
+    }
+
+    #[test]
+    fn collapsing_every_pane_clears_focus_and_expanding_one_restores_it() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+
+        for pane in Pane::ALL {
+            state.handle_event(&provider, &id, key_event(KeyCode::F((pane.index() + 1) as u8)), now);
+        }
+        assert_eq!(state.scroll.focused, None);
+
+        state.handle_event(&provider, &id, key_event(KeyCode::F(3)), now);
+        assert!(!state.panes.is_collapsed(Pane::Equipment));
+        assert_eq!(state.scroll.focused, Some(Pane::Equipment));
+    }
+
+    #[test]
+    fn up_down_and_page_keys_scroll_the_focused_pane_within_its_content_range() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+        for _ in 0..5 {
+            state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+        }
+        assert_eq!(state.scroll.focused, Some(Pane::Journal));
+        render_state(&mut state, 120, 40);
+        let max_offset = state.layout.panes[Pane::Journal.index()]
+            .expect("journal pane is rendered")
+            .max_offset;
+        assert!(max_offset > 0, "expected Journal content to overflow");
+
+        state.handle_event(&provider, &id, key_event(KeyCode::Down), now);
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.offset(Pane::Journal), 1);
+
+        state.handle_event(&provider, &id, key_event(KeyCode::Up), now);
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.offset(Pane::Journal), 0);
+
+        // Up at the top boundary stays clamped at zero.
+        state.handle_event(&provider, &id, key_event(KeyCode::Up), now);
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.offset(Pane::Journal), 0);
+
+        // PageDown repeatedly clamps at the pane's maximum offset.
+        for _ in 0..50 {
+            state.handle_event(&provider, &id, key_event(KeyCode::PageDown), now);
+            render_state(&mut state, 120, 40);
+        }
+        assert_eq!(state.scroll.offset(Pane::Journal), max_offset);
+
+        state.handle_event(&provider, &id, key_event(KeyCode::PageUp), now);
+        render_state(&mut state, 120, 40);
+        assert!(state.scroll.offset(Pane::Journal) < max_offset);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_the_pane_under_the_pointer_without_moving_focus() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 120, 40);
+        let journal_rect = state.layout.panes[Pane::Journal.index()]
+            .expect("journal pane is rendered")
+            .rect;
+        let focus_before = state.scroll.focused;
+
+        state.handle_event(
+            &provider,
+            &id,
+            mouse_event(
+                MouseEventKind::ScrollDown,
+                journal_rect.x + 1,
+                journal_rect.y + 1,
+            ),
+            now,
+        );
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.offset(Pane::Journal), 1);
+        assert_eq!(state.scroll.focused, focus_before);
+
+        // Scrolling over a different pane leaves Journal untouched.
+        let activity_rect = state.layout.panes[Pane::Activity.index()]
+            .expect("activity pane is rendered")
+            .rect;
+        state.handle_event(
+            &provider,
+            &id,
+            mouse_event(
+                MouseEventKind::ScrollDown,
+                activity_rect.x + 1,
+                activity_rect.y + 1,
+            ),
+            now,
+        );
+        render_state(&mut state, 120, 40);
+        assert_eq!(state.scroll.offset(Pane::Journal), 1);
+    }
+
+    #[test]
+    fn compact_layout_scrolls_the_combined_character_pane_with_keyboard_and_mouse() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        render_state(&mut state, 70, 30);
+        assert!(!state.layout.full_layout);
+        let max_offset = state.layout.compact.expect("compact pane is rendered").max_offset;
+        assert!(max_offset > 0, "expected Character content to overflow");
+
+        state.handle_event(&provider, &id, key_event(KeyCode::Down), now);
+        render_state(&mut state, 70, 30);
+        assert_eq!(state.scroll.compact, 1);
+
+        let rect = state.layout.compact.expect("compact pane is rendered").rect;
+        state.handle_event(
+            &provider,
+            &id,
+            mouse_event(MouseEventKind::ScrollDown, rect.x + 1, rect.y + 1),
+            now,
+        );
+        render_state(&mut state, 70, 30);
+        assert_eq!(state.scroll.compact, 2);
+
+        state.handle_event(&provider, &id, key_event(KeyCode::Up), now);
+        render_state(&mut state, 70, 30);
+        assert_eq!(state.scroll.compact, 1);
+    }
+
+    #[test]
+    fn growing_the_terminal_clamps_scroll_offset_to_the_smaller_content_range() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+
+        render_state(&mut state, 120, 20);
+        for _ in 0..5 {
+            state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+        }
+        assert_eq!(state.scroll.focused, Some(Pane::Journal));
+        for _ in 0..200 {
+            state.handle_event(&provider, &id, key_event(KeyCode::Down), now);
+            render_state(&mut state, 120, 20);
+        }
+        let small_height_offset = state.scroll.offset(Pane::Journal);
+        assert!(small_height_offset > 0);
+
+        render_state(&mut state, 120, 60);
+        let max_offset_large = state.layout.panes[Pane::Journal.index()]
+            .expect("journal pane is rendered")
+            .max_offset;
+        assert!(max_offset_large < small_height_offset);
+        assert_eq!(state.scroll.offset(Pane::Journal), max_offset_large);
+    }
+
+    #[test]
+    fn scrolling_never_changes_character_state_or_pane_collapse_state() {
+        let now = Instant::now();
+        let snapshot = overflowing_snapshot();
+        let expected_tasks = snapshot.character.activity.tasks;
+        let expected_task_text = snapshot.character.activity.task.clone();
+        let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+
+        render_state(&mut state, 120, 40);
+        for _ in 0..5 {
+            state.handle_event(&provider, &id, key_event(KeyCode::Tab), now);
+        }
+        state.handle_event(&provider, &id, key_event(KeyCode::Down), now);
+        state.handle_event(&provider, &id, key_event(KeyCode::PageDown), now);
+        render_state(&mut state, 120, 40);
+        let journal_rect = state.layout.panes[Pane::Journal.index()]
+            .expect("journal pane is rendered")
+            .rect;
+        state.handle_event(
+            &provider,
+            &id,
+            mouse_event(
+                MouseEventKind::ScrollDown,
+                journal_rect.x + 1,
+                journal_rect.y + 1,
+            ),
+            now,
+        );
+        render_state(&mut state, 120, 40);
+
+        assert_eq!(state.current.character.activity.tasks, expected_tasks);
+        assert_eq!(state.current.character.activity.task, expected_task_text);
+        for pane in Pane::ALL {
+            assert!(!state.panes.is_collapsed(pane));
+        }
     }
 }

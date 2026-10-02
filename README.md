@@ -393,6 +393,18 @@ nonempty; it no longer shows Quest target. Narrow terminals retain the compact
 character view; their Keys pane likewise uses one content row when the shortcut
 line fits and two only when it wraps.
 
+Content that overflows a pane's visible area can be scrolled. In the full
+layout, `Tab` and `Shift+Tab` move keyboard scroll focus forward and backward
+among the expanded panes, wrapping at either end; the focused pane has a cyan
+double-line border. `Up`/`Down` scroll the focused pane by one row, and
+`PageUp`/`PageDown` scroll it by one visible page. Collapsing the focused
+pane moves focus to the next expanded pane. The mouse wheel scrolls whichever
+expanded pane is under the pointer, independent of keyboard focus. In the
+compact layout, `Up`/`Down`, `PageUp`/`PageDown`, and the mouse wheel all
+scroll the combined Character pane. Scroll offsets are independent per pane,
+stay within the available content as the terminal is resized, and never
+change character state or pane collapse state.
+
 ## Reference fixtures
 
 `tests/fixtures/browser-reference.json` records the observed browser client
