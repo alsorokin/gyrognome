@@ -308,18 +308,70 @@ These changes SHALL NOT change full-layout presentation.
 - **AND** the bar and separator rows scroll with the rest of the content,
   without overwriting borders or other content
 
+### Requirement: Visible rested progression
+
+Both full and compact dashboards SHALL display the available rested duration.
+Details and the character-selection list SHALL display only
+`Rested: <time>`, without an "available" suffix or multiplier. Compact
+Character content SHALL retain the active progression multiplier. Stopped
+characters SHALL show banked rest without claiming active boosted progression.
+Active characters with rest SHALL show 2x in compact Character content;
+exhausted banks SHALL show normal 1x there. Rested status SHALL remain
+available without changing existing dashboard pane height contracts. Details
+SHALL omit technical ID and compatibility-profile rows. Dashboard views SHALL
+omit the rested-timeline leaderboard acceptance notice; managed inspection
+and documentation SHALL retain that disclosure.
+
+Rested presentation SHALL be read-only. Local countdown or pending-accrual
+estimates SHALL NOT consume or persist rest, advance game state, reset timing
+baselines, or issue requests.
+
+#### Scenario: Viewing a boosted character
+
+- **WHEN** a running character has five hours of rest available
+- **THEN** both layouts display its remaining rested duration, and compact
+  Character content also displays the active 2x multiplier
+
+#### Scenario: Viewing an inactive rested character
+
+- **WHEN** a stopped character has earned rest
+- **THEN** both layouts show the available bank without treating it as
+  currently progressing, and compact Character content displays 1x
+
+#### Scenario: Viewing an exhausted bank
+
+- **WHEN** a refreshed or display-estimated bank reaches zero
+- **THEN** the dashboard shows normal-speed status without fabricating task
+  completion
+
+#### Scenario: Selecting a rested character
+
+- **WHEN** the character-selection list is opened
+- **THEN** each entry shows only `Rested: <time>` using its read-only
+  projected rested duration, including pending stopped-time accrual
+
+#### Scenario: Viewing simplified character details
+
+- **WHEN** a character's dashboard is shown
+- **THEN** Details omits ID and compatibility-profile rows and both layouts
+  omit the rested-timeline acceptance notice while retaining rested status
+  and actionable online eligibility guidance
+
 ### Requirement: Predicted current-task progress
 
 The dashboard SHALL display a predicted position for the current task progress
 bar between persisted state reads, derived from monotonic time elapsed since it
-observed the most recent persisted state. The prediction SHALL be computed from
-the observed persisted task position, task duration, and the character's
-compatibility profile alone; it SHALL NOT invoke the simulation, acquire a
-character lock, or write character state.
+observed the most recent persisted state. Prediction SHALL use observed task
+position, duration, compatibility profile, and rested timing information; it
+SHALL NOT invoke simulation, acquire a character lock, or write character
+state.
 
-For browser characters, the predicted position SHALL advance at wall-clock
-rate. For desktop characters, it SHALL advance at the desktop callback credit
-rate of 100 milliseconds per 109.375 milliseconds of elapsed time.
+For browser characters, normal prediction SHALL advance at wall-clock rate.
+For desktop characters, normal prediction SHALL advance at 100 task
+milliseconds per 109.375 elapsed milliseconds. While rest is available, the
+applicable rate SHALL be doubled. Prediction SHALL split elapsed time at
+estimated rest exhaustion, using normal rate thereafter. It SHALL NOT apply a
+full 2x rate beyond the observed bank's remaining duration.
 
 The prediction SHALL be display-only. It SHALL NOT be persisted, included in
 any leaderboard report, or used to determine task completion, the
@@ -336,9 +388,9 @@ The predicted position SHALL NOT exceed the current task's duration. When the
 predicted position reaches that duration, the dashboard SHALL display a full
 task bar and SHALL hold it there until a newer persisted state is read.
 
-The dashboard SHALL predict only while a local runtime owns the character. When
-the character is not owned, or ownership cannot be determined, the dashboard
-SHALL display the persisted task position unchanged.
+The dashboard SHALL predict only while a local runtime owns the character. If
+not owned, or ownership is unknown, it SHALL show persisted task position
+unchanged.
 
 When the dashboard reads a newer persisted state, it SHALL discard the previous
 prediction and re-anchor to the newly observed state.
@@ -396,6 +448,26 @@ percentages it did not draw.
   for
 - **THEN** the dashboard displays the currently predicted percentage instead of
   replaying the intermediate percentages
+
+#### Scenario: Predicting boosted browser progress
+
+- **WHEN** an owned browser character has at least one second of rest and its
+  task has sufficient remaining duration
+- **THEN** one elapsed second predicts 2,000 task milliseconds
+
+#### Scenario: Predicting boosted desktop progress
+
+- **WHEN** an owned desktop character has sufficient rest and 10,000 task
+  milliseconds remaining
+- **THEN** the predicted bar reaches full after about 5,469 elapsed
+  milliseconds
+
+#### Scenario: Predicting across bank exhaustion
+
+- **WHEN** an owned browser character is observed with 250 milliseconds of
+  rest and has sufficient task duration
+- **THEN** one elapsed second predicts 1,250 task milliseconds rather than
+  2,000
 
 ### Requirement: Live persisted-state refresh
 

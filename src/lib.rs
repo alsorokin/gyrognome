@@ -26,6 +26,7 @@ pub mod newguy_wizard;
 pub mod pemptus_acceptance_probe;
 pub mod protocol;
 pub mod reporting;
+pub mod rested;
 pub mod rng;
 pub mod ruleset;
 pub mod runtime;

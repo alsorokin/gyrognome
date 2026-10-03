@@ -244,6 +244,13 @@ pub fn run() -> Result<(), CliError> {
                         );
                     }
                 }
+                println!(
+                    "Rested: {} ms available | {}x",
+                    inspection.rested.available_ms, inspection.rested.active_multiplier,
+                );
+                if let Some(notice) = inspection.rested_online_notice {
+                    println!("{notice}");
+                }
             }
         }
         Command::Worker { id, interval_ms } => {

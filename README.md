@@ -282,14 +282,51 @@ stops cleanly on `SIGINT` or `SIGTERM`.
 gyro worker <character-id> --interval-ms 1000
 ```
 
-Only time spent in an active worker is advanced. Starting a worker later does
-**not** apply downtime as catch-up progression. The worker wakes at the earlier
-of its configured interval and the current task's completion, so
-`--interval-ms` (1000 by default) remains an upper bound on how long it sleeps
-and how much time one update contributes. Scheduler delay and suspension time
-beyond that bound are discarded, not carried into a later callback. A second
-worker for the same character exits with an "already running" error; the
-advisory lock is released automatically when its owner exits or crashes.
+Only time spent in an active worker advances game state. Every managed character
+automatically earns **rested time** while its worker is stopped or the computer
+sleeps/hibernates, up to a **12-hour bank**. Each banked second buys one real
+second of **2x progression**: tasks, experience, loot, quests, and plots all
+progress faster through their unchanged game rules. Twelve hours banked gives
+twelve real hours boosted, not six. Stopping preserves unused rest and adds
+subsequent downtime up to the cap; starting never grants instant offline rewards.
+
+New registrations start with an empty bank. Existing characters also start empty
+when their database is first migrated; old update timestamps do not grant
+retroactive rest. Motto/guild edits do not reset the bank. Rested metadata stays
+in the managed store and is not carried in official save exports.
+
+Browser workers service stable 100 ms virtual ticks and retain fractional
+virtual time across updates and restarts. They wake at the earlier of the
+configured interval, tick-aligned task completion, rest exhaustion, and a
+one-second checkpoint. `--interval-ms` (1000 by default) bounds contributing
+**real** time; the boost can earn twice that virtual time, with a previous
+fractional remainder available to complete a tick.
+
+Desktop workers retain their original callback rules: each callback credits at
+most 100 game milliseconds, and a full bar completes only on a later callback.
+Normal cadence is 109.375 real milliseconds; rested cadence is 54.6875 ms.
+Partial progress and accounting are checkpointed at least once per awake second
+while the loop is serviced, as well as at completion, report, provenance, and
+graceful-stop boundaries.
+
+Awake scheduler stalls, persistence, and report delivery do not earn rest.
+They still spend available rested time, and discarded delays never become
+catch-up progression. Linux suspend-inclusive and suspend-exclusive clocks
+distinguish actual computer sleep from these delays. Stopped-time accrual uses
+the local wall clock: forward adjustments can add capped rest, while backward
+adjustments do not credit already-accounted time again. After a crash, downtime
+is estimated from the last durable timing checkpoint; a crash during a long
+blocked operation can leave a larger uncertain interval.
+
+This applies to otherwise eligible online characters too, without a new
+rested-evidence gate. Existing reporting restrictions, local-only history,
+request construction, and no-retry behavior remain unchanged. **Official
+leaderboard acceptance and classification of rested timelines are unverified.**
+No live verification is required or automatically performed. Development
+conformance runners retain their original, unaccelerated timing.
+
+A second worker for the same character exits with an "already running" error;
+the advisory lock is released automatically when its owner exits or crashes.
 
 ### systemd user-service lifecycle
 
@@ -338,6 +375,10 @@ gyro dashboard
 gyro dashboard <character-id>
 ```
 
+The character-selection list shows each character's available rested time as
+`Rested: <time>`, without a progression multiplier,
+alongside its identity, last access, and service activity.
+
 The dashboard reads the persisted canonical state and `systemctl --user`
 status every second by default; change that interval with `--refresh-ms`
 (100 through 60000). While a local runtime owns the character, the Task bar
@@ -350,8 +391,19 @@ write only profile metadata. It displays only credential-safe canonical fields
 and profile values, never browser passkeys, the retained original save, raw
 endpoint responses, or unrecognized source fields.
 
-For desktop records, Details shows `desktop-6.4.4`, one overall online
-eligibility result, and counters measured since import. Unadvanced provenance
+Full Details shows remaining rested time as `Rested: <time>`. Compact Character
+content also shows the active 1x/2x multiplier. A stopped character can have a bank without being
+actively boosted. Task-bar prediction follows the profile's boosted rate only
+for the estimated remaining rest, then returns to normal rate; it still cannot
+complete tasks or award rewards. Managed inspection retains the unverified
+rested-leaderboard notice without cluttering the dashboard.
+`gyro managed-inspect <character-id> --json` exposes
+`rested.availableMs` and `rested.activeMultiplier` without credentials; inspecting
+a stopped character projects pending rest without writing or resetting it.
+
+For desktop records, Details shows one overall online eligibility result
+and counters measured since import, without technical identifier or
+compatibility-profile rows. Unadvanced provenance
 is hidden; a local-only record instead shows the actionable fresh
 official-client import requirement. Start and recover confirmations repeat the
 permanent local-only warning for an online-originated import that would advance

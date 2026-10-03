@@ -72,6 +72,7 @@ pub struct DashboardCharacter {
     pub current_quest: String,
     pub profile: OnlineProfile,
     pub compatibility: ManagedCompatibilityPresentation,
+    pub rested: crate::rested::RestedView,
 }
 
 #[derive(Debug, Clone)]
@@ -127,6 +128,7 @@ impl DashboardCharacter {
             current_quest: character.state.bestquest,
             profile: character.state.profile,
             compatibility,
+            rested: Default::default(),
         }
     }
 
@@ -231,6 +233,7 @@ impl DashboardCharacter {
                 guild: state.profile.guild.clone(),
             },
             compatibility,
+            rested: Default::default(),
         })
     }
 }
@@ -281,16 +284,17 @@ fn dashboard_character(
     store: &Store,
     id: &CharacterId,
 ) -> Result<DashboardCharacter, StorageError> {
-    let compatibility = store.managed_compatibility(id)?;
-    match compatibility.profile {
-        CompatibilityProfile::Browser => Ok(DashboardCharacter::from_browser(
-            store.get(id)?,
-            compatibility,
-        )),
-        CompatibilityProfile::Desktop644 => {
-            DashboardCharacter::from_desktop(store.get_desktop(id)?, compatibility)
+    let inspection = store.managed_inspection(id)?;
+    let mut character = match inspection.state {
+        crate::runtime::ManagedInspectionState::Browser(character) => {
+            DashboardCharacter::from_browser(character, inspection.compatibility)
         }
-    }
+        crate::runtime::ManagedInspectionState::Desktop644(character) => {
+            DashboardCharacter::from_desktop(character, inspection.compatibility)?
+        }
+    };
+    character.rested = inspection.rested;
+    Ok(character)
 }
 
 #[derive(Debug, Clone)]
@@ -431,6 +435,7 @@ struct TaskAnchor {
     observed_at: Instant,
     /// Task milliseconds credited per wall-clock millisecond.
     rate: f64,
+    boost_remaining: Duration,
 }
 
 impl TaskAnchor {
@@ -448,6 +453,11 @@ impl TaskAnchor {
             },
             observed_at,
             rate: task_prediction_rate(character.compatibility.profile),
+            boost_remaining: if character.rested.active_multiplier == 2 {
+                Duration::from_millis(character.rested.available_ms)
+            } else {
+                Duration::ZERO
+            },
         }
     }
 }
@@ -467,7 +477,9 @@ fn predicted_task_position(anchor: TaskAnchor, elapsed: Duration) -> f64 {
     if anchor.duration_ms == 0 {
         return 0.0;
     }
-    (anchor.position_ms + elapsed.as_millis() as f64 * anchor.rate).min(anchor.duration_ms as f64)
+    let virtual_ms =
+        (elapsed.as_secs_f64() + elapsed.min(anchor.boost_remaining).as_secs_f64()) * 1_000.0;
+    (anchor.position_ms + virtual_ms * anchor.rate).min(anchor.duration_ms as f64)
 }
 
 fn task_percent(position_ms: f64, duration_ms: u64) -> u64 {
@@ -493,8 +505,12 @@ fn next_task_percent_boundary(anchor: TaskAnchor, elapsed: Duration) -> Option<D
     let percent = task_percent(position, anchor.duration_ms);
     let target_position =
         ((u128::from(percent + 1) * u128::from(anchor.duration_ms)).div_ceil(100)) as f64;
+    let virtual_time =
+        Duration::from_secs_f64(((target_position - position) / anchor.rate / 1_000.0).max(0.0));
+    let real =
+        crate::rested::real_duration(virtual_time, anchor.boost_remaining.saturating_sub(elapsed));
     Some(Duration::from_millis(
-        ((target_position - position) / anchor.rate).max(1.0).ceil() as u64,
+        real.as_nanos().div_ceil(1_000_000).max(1) as u64,
     ))
 }
 
@@ -626,6 +642,7 @@ pub struct SelectorEntry {
     pub identity: CharacterIdentity,
     pub last_accessed_unix_ms: i64,
     pub activity: SelectorActivity,
+    pub rested: crate::rested::RestedView,
 }
 
 /// Orders selector entries from most recently accessed to least recently
@@ -650,13 +667,16 @@ pub fn selector_entries(
     let mut entries = store
         .list_managed()?
         .into_iter()
-        .map(|character| SelectorEntry {
-            activity: activity(&character.id),
-            id: character.id,
-            identity: character.identity,
-            last_accessed_unix_ms: character.updated_at_unix_ms,
+        .map(|character| {
+            Ok(SelectorEntry {
+                activity: activity(&character.id),
+                rested: store.rested_view(&character.id)?,
+                id: character.id,
+                identity: character.identity,
+                last_accessed_unix_ms: character.updated_at_unix_ms,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, StorageError>>()?;
     sort_by_last_accessed(&mut entries);
     Ok(entries)
 }
@@ -682,6 +702,10 @@ fn selector_entry_lines(entry: &SelectorEntry, width: usize) -> Vec<Line<'static
             entry.activity.label().to_owned(),
             width,
         ),
+        Line::from(format!(
+            "Rested: {}",
+            format_elapsed(entry.rested.available_ms / 1_000)
+        )),
     ]
 }
 
@@ -1058,10 +1082,11 @@ pub fn run<P: DashboardProvider>(
     loop {
         let now = Instant::now();
         let predicted_task_percent = state.displayed_task_percent(now);
+        let displayed = state.displayed_snapshot(now);
         session.draw_synchronized(|frame| {
             render(
                 frame,
-                &state.current,
+                &displayed,
                 predicted_task_percent,
                 &state.updates,
                 state.confirmation,
@@ -1146,6 +1171,7 @@ impl DashboardState {
         let mut next_anchor = TaskAnchor::from_character(&character, now);
         if next_anchor.identity == self.task_anchor.identity
             && self.current.runtime_owned == Some(true)
+            && character.rested == self.current.character.rested
         {
             next_anchor.position_ms = next_anchor
                 .position_ms
@@ -1156,6 +1182,26 @@ impl DashboardState {
         }
         self.current.character = character;
         self.task_anchor = next_anchor;
+    }
+
+    fn displayed_snapshot(&self, now: Instant) -> DashboardSnapshot {
+        let mut snapshot = self.current.clone();
+        let elapsed = now.saturating_duration_since(self.task_anchor.observed_at);
+        if self.current.runtime_owned == Some(true)
+            && snapshot.character.rested.active_multiplier == 2
+        {
+            snapshot.character.rested.available_ms = self
+                .task_anchor
+                .boost_remaining
+                .saturating_sub(elapsed)
+                .as_millis() as u64;
+            if snapshot.character.rested.available_ms == 0 {
+                snapshot.character.rested.active_multiplier = 1;
+            }
+        } else {
+            snapshot.character.rested.active_multiplier = 1;
+        }
+        snapshot
     }
 
     fn refresh<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
@@ -1207,6 +1253,10 @@ impl DashboardState {
             Err(error) => {
                 let displayed = self.displayed_task_position(now);
                 self.current.message = Some(format!("Could not refresh character state: {error}"));
+                self.task_anchor.boost_remaining = self
+                    .task_anchor
+                    .boost_remaining
+                    .saturating_sub(now.saturating_duration_since(self.task_anchor.observed_at));
                 self.task_anchor.observed_at = now;
                 self.task_anchor.position_ms = displayed;
             }
@@ -1217,13 +1267,17 @@ impl DashboardState {
         if self.current.runtime_owned != Some(true) {
             return None;
         }
-        let remaining_ms = ((self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
+        let virtual_ms = ((self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
             .max(0.0)
             / self.task_anchor.rate)
             .ceil() as u64;
+        let remaining = crate::rested::real_duration(
+            Duration::from_millis(virtual_ms),
+            self.task_anchor.boost_remaining,
+        );
         self.task_anchor
             .observed_at
-            .checked_add(Duration::from_millis(remaining_ms))
+            .checked_add(remaining)
             .and_then(|saturation| saturation.checked_add(SETTLING_INTERVAL))
     }
 
@@ -1236,7 +1290,12 @@ impl DashboardState {
         let settling = self
             .settling_deadline()
             .map(|deadline| deadline.saturating_duration_since(now));
-        select_poll_timeout(boundary, refresh, settling, self.refresh_interval)
+        let timeout = select_poll_timeout(boundary, refresh, settling, self.refresh_interval);
+        if self.current.runtime_owned == Some(true) && !self.task_anchor.boost_remaining.is_zero() {
+            timeout.min(Duration::from_secs(1))
+        } else {
+            timeout
+        }
     }
 
     fn handle_deadline<P: DashboardProvider>(
@@ -1935,6 +1994,7 @@ fn render_compact(
     let mut content = vec![
         Line::from(format!("Activity: {}", activity_text(&state.activity))),
         Line::from(format!("Tasks completed: {}", state.activity.tasks)),
+        Line::from(rested_text(state.rested)),
     ];
     if partially_online_eligible(&state.compatibility.online_eligibility) {
         let mut eligibility = vec![Line::from("Online eligibility: partially eligible")];
@@ -2202,29 +2262,23 @@ fn left_pane_constraints_with_details(
 }
 
 fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(format!("ID: {}", character.id)),
-        Line::from(format!(
-            "Last task elapsed: {}",
-            format_elapsed(character.activity.elapsed)
-        )),
-    ];
+    let mut lines = vec![Line::from(format!(
+        "Last task elapsed: {}",
+        format_elapsed(character.activity.elapsed)
+    ))];
     if !character.profile.motto.is_empty() {
         lines.push(Line::from(format!("Motto: {}", character.profile.motto)));
     }
     if !character.profile.guild.is_empty() {
         lines.push(Line::from(format!("Guild: {}", character.profile.guild)));
     }
-    lines.push(Line::from(format!(
-        "Compatibility: {}",
-        match character.compatibility.profile {
-            CompatibilityProfile::Browser => "browser",
-            CompatibilityProfile::Desktop644 => "desktop-6.4.4",
-        }
-    )));
     if let Some(realm) = &character.compatibility.realm {
         lines.push(Line::from(format!("Realm: {realm}")));
     }
+    lines.push(Line::from(format!(
+        "Rested: {}",
+        format_elapsed(character.rested.available_ms / 1_000)
+    )));
     if let Some(eligibility) =
         overall_online_eligibility(&character.compatibility.online_eligibility)
     {
@@ -2251,6 +2305,14 @@ fn details_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
         lines.push(Line::from(notice.clone()));
     }
     lines
+}
+
+fn rested_text(rested: crate::rested::RestedView) -> String {
+    format!(
+        "Rested: {} available | {}x",
+        format_elapsed(rested.available_ms / 1_000),
+        rested.active_multiplier,
+    )
 }
 
 fn operation_eligibility_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
@@ -3036,7 +3098,9 @@ mod tests {
                         .iter()
                         .map(|cell| cell.symbol())
                         .collect();
-                    assert!(output.contains("ID:"));
+                    assert!(!output.contains("ID:"));
+                    assert!(!output.contains("Compatibility:"));
+                    assert!(!output.contains("Rested-timeline"));
                     assert!(output.contains("Last task elapsed:"));
                     assert!(output.contains("Realm: Alpaquil"));
                     assert_eq!(output.contains("Motto:"), !motto.is_empty());
@@ -3084,7 +3148,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(details.contains("Compatibility: desktop-6.4.4"));
+        assert!(!details.contains("Compatibility:"));
         assert!(details.contains(
             "Online eligibility: ineligible (matching desktop operation evidence is unavailable)"
         ));
@@ -3467,6 +3531,7 @@ mod tests {
                     advancement_provenance: None,
                     notice: None,
                 },
+                rested: Default::default(),
             },
             service: Some(ServiceState::Inactive),
             runtime_owned: Some(false),
@@ -3567,6 +3632,123 @@ mod tests {
     }
 
     #[test]
+    fn rested_prediction_splits_at_exhaustion_for_both_profiles() {
+        let now = Instant::now();
+        let mut snapshot = active_snapshot(0.0, 10_000);
+        snapshot.character.rested = crate::rested::RestedView {
+            available_ms: 250,
+            active_multiplier: 2,
+        };
+        let anchor = TaskAnchor::from_snapshot(&snapshot, now);
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(1)),
+            1_250.0
+        );
+        assert_eq!(
+            next_task_percent_boundary(anchor, Duration::ZERO),
+            Some(Duration::from_millis(50))
+        );
+        assert_eq!(
+            next_task_percent_boundary(anchor, Duration::from_millis(500)),
+            Some(Duration::from_millis(50))
+        );
+        snapshot.character.rested.available_ms = 20_000;
+        let anchor = TaskAnchor::from_snapshot(&snapshot, now);
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(1)),
+            2_000.0
+        );
+        snapshot.character.compatibility.profile = CompatibilityProfile::Desktop644;
+        let desktop = TaskAnchor::from_snapshot(&snapshot, now);
+        assert!(predicted_task_position(desktop, Duration::from_millis(5_468)) < 10_000.0);
+        assert_eq!(
+            predicted_task_position(desktop, Duration::from_millis(5_469)),
+            10_000.0
+        );
+    }
+
+    #[test]
+    fn rested_countdown_and_timing_refresh_are_display_only() {
+        let now = Instant::now();
+        let mut snapshot = active_snapshot(0.0, 10_000);
+        snapshot.character.rested = crate::rested::RestedView {
+            available_ms: 250,
+            active_multiplier: 2,
+        };
+        let mut state = DashboardState::new(snapshot.clone(), now, Duration::from_secs(5));
+        assert_eq!(
+            state.settling_deadline(),
+            Some(now + Duration::from_millis(9_850))
+        );
+        let displayed = state.displayed_snapshot(now + Duration::from_secs(1));
+        assert_eq!(
+            displayed.character.rested,
+            crate::rested::RestedView::default()
+        );
+        assert_eq!(state.current.character.rested.available_ms, 250);
+        assert_eq!(state.current.character.progress.task.position, 0.0);
+        let mut newer = snapshot.character.clone();
+        newer.rested = Default::default();
+        newer.progress.task.position = 50.0;
+        state.replace_character(newer, now + Duration::from_millis(100));
+        assert_eq!(state.task_anchor.position_ms, 50.0);
+        assert_eq!(state.task_anchor.boost_remaining, Duration::ZERO);
+        for owned in [Some(false), None] {
+            let mut inactive = snapshot.clone();
+            inactive.runtime_owned = owned;
+            let state = DashboardState::new(inactive, now, Duration::from_secs(1));
+            assert_eq!(
+                state.displayed_task_position(now + Duration::from_secs(1)),
+                0.0
+            );
+            assert_eq!(
+                state
+                    .displayed_snapshot(now)
+                    .character
+                    .rested
+                    .active_multiplier,
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn rested_status_is_rendered_in_full_and_compact_layouts() {
+        let mut snapshot = active_snapshot(0.0, 10_000);
+        snapshot.character.rested = crate::rested::RestedView {
+            available_ms: 18_000_000,
+            active_multiplier: 2,
+        };
+        for width in [50, 120] {
+            let output = rendered_snapshot(width, 60, &snapshot, &PaneVisibility::default());
+            let expected = if width == 50 {
+                "Rested: 5h 0m 0s available | 2x"
+            } else {
+                "Rested: 5h 0m 0s"
+            };
+            assert!(output.contains(expected), "{output}");
+            assert!(!output.contains("Rested-timeline"), "{output}");
+        }
+        let details = details_lines(&snapshot.character);
+        assert!(
+            details
+                .iter()
+                .any(|line| line.to_string() == "Rested: 5h 0m 0s")
+        );
+        assert!(!details.iter().any(|line| {
+            let text = line.to_string();
+            text.starts_with("Rested:") && (text.contains("available") || text.contains('|'))
+        }));
+        for removed in ["ID:", "Compatibility:", "Rested-timeline"] {
+            assert!(
+                !details
+                    .iter()
+                    .any(|line| line.to_string().contains(removed))
+            );
+        }
+    }
+
+    #[test]
     fn task_anchor_is_created_from_an_observed_snapshot() {
         let snapshot = active_snapshot(250.0, 1_000);
         let observed_at = Instant::now();
@@ -3621,6 +3803,7 @@ mod tests {
             },
             observed_at: now,
             rate: 1.0,
+            boost_remaining: Duration::ZERO,
         };
         assert_eq!(predicted_task_position(zero, Duration::ZERO), 0.0);
         assert_eq!(predicted_task_percent(zero, Duration::ZERO), 100);
@@ -3800,6 +3983,7 @@ mod tests {
             },
             last_accessed_unix_ms,
             activity,
+            rested: Default::default(),
         }
     }
 
@@ -3887,6 +4071,48 @@ mod tests {
                 metadata.ends_with("Last accessed 2026-03-20 09:46 UTC"),
                 "metadata must hug the right edge at width {width}: {metadata}"
             );
+        }
+    }
+
+    #[test]
+    fn selector_shows_rested_time_for_each_activity_state() {
+        let entries = [
+            SelectorActivity::Active,
+            SelectorActivity::Inactive,
+            SelectorActivity::Unavailable,
+        ]
+        .into_iter()
+        .map(|activity| {
+            let mut entry = selector_entry(
+                "Rested Hero",
+                "00000000-0000-4000-8000-000000000001",
+                0,
+                activity,
+            );
+            entry.rested = crate::rested::RestedView {
+                available_ms: 18_000_000,
+                active_multiplier: if activity == SelectorActivity::Active {
+                    2
+                } else {
+                    1
+                },
+            };
+            entry
+        })
+        .collect::<Vec<_>>();
+
+        for width in [50, 80, 120] {
+            let output = rendered_selector_rows(&entries, width).join("\n");
+            assert_eq!(
+                output
+                    .lines()
+                    .filter(|line| line.trim_start_matches(['│', ' ']) == "Rested: 5h 0m 0s")
+                    .count(),
+                3
+            );
+            assert!(!output.contains("0s available"));
+            assert!(!output.contains("| 2x"));
+            assert!(!output.contains("| 1x"));
         }
     }
 

@@ -6,6 +6,15 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Added
 
+- Automatic rested progression for all managed browser and desktop characters:
+  stopped or sleeping time builds a capped 12-hour bank, spent one real second
+  at a time for 2x progression. Includes durable fractional timing, sleep-aware
+  runtime pacing, and rested status in inspection, both dashboard layouts,
+  and character selection.
+  Existing records begin with an empty bank on migration. Eligible online
+  delivery retains existing gates; rested-timeline leaderboard acceptance and
+  classification remain unverified.
+
 - Open the selected character's official realm-specific public leaderboard
   page in the system browser after a confirmed manual brag, without changing
   the report outcome if browser opening fails.
@@ -30,6 +39,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Changed
 
+- Simplified dashboard Details by omitting technical ID and compatibility rows
+  and the long rested-timeline leaderboard notice (retained in managed inspection).
 - Matched desktop runtime pacing to the original callback cadence, with
   completion-, report-, provenance-, and stop-boundary persistence and
   dashboard prediction at the same rate.

@@ -423,6 +423,7 @@ dependencies = [
  "directories",
  "flate2",
  "fs2",
+ "libc",
  "ratatui",
  "ring",
  "rusqlite",

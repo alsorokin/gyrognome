@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -121,6 +121,13 @@ fn cli_registers_and_inspects_only_credential_safe_state() {
     assert!(inspection_text.contains("Reference Hero"));
     assert!(!inspection_text.contains("4242"));
     assert!(!inspection_text.contains("unrecognized-future-field"));
+    let inspected: serde_json::Value = serde_json::from_slice(&inspection.stdout).unwrap();
+    assert!(inspected["rested"]["availableMs"].as_u64().is_some());
+    assert_eq!(inspected["rested"]["activeMultiplier"], 1);
+    let human = directory.command(&["managed-inspect", id]);
+    assert!(human.status.success(), "{}", stderr(&human));
+    assert!(stdout(&human).contains("Rested:"));
+    assert!(stdout(&human).contains("Rested-timeline leaderboard acceptance"));
 
     let listed = directory.command(&["list", "--json"]);
     assert!(listed.status.success(), "{}", stderr(&listed));
@@ -336,6 +343,15 @@ fn dashboard_selection_entries_are_newest_first_with_credential_safe_activity() 
     );
     assert_eq!(entries[0].last_accessed_unix_ms, newer.updated_at_unix_ms);
     assert_eq!(entries[0].identity.name, "Reference Hero");
+    let older_entry = &entries[1];
+    assert!(older_entry.rested.available_ms >= 5);
+    assert_eq!(older_entry.rested.active_multiplier, 1);
+    // Service activity alone must not claim a boost without a worker lock.
+    assert_eq!(entries[0].rested.active_multiplier, 1);
+    assert_eq!(
+        store.get(&older.id).unwrap().updated_at_unix_ms,
+        older.updated_at_unix_ms
+    );
 }
 
 #[test]
@@ -492,7 +508,21 @@ fn stopping_a_worker_keeps_its_final_persisted_state_readable() {
         Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
     let worker_stop = Arc::clone(&stop);
     let join = thread::spawn(move || worker.run_until(&worker_stop, Duration::from_millis(2)));
-    thread::sleep(Duration::from_millis(20));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let state = Store::open_at(&directory.0)
+            .unwrap()
+            .get(&registered.id)
+            .unwrap();
+        if state.state.progress.task.position > registered.state.progress.task.position {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "worker did not service a virtual tick"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap().unwrap();
 

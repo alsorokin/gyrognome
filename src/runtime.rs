@@ -38,6 +38,7 @@ use crate::{
     desktop_simulation::SourceDerivedDesktopHooks,
     newguy::RandomSource,
     reporting::{HttpsTransport, ReportTransport},
+    rested::{self, ClockSample, RestedState, RestedView},
     state::{Character, OnlineProfile},
 };
 use rusqlite::OptionalExtension;
@@ -45,7 +46,7 @@ use rusqlite::OptionalExtension;
 use serde_json::Value;
 
 const DATABASE_FILENAME: &str = "characters.sqlite3";
-const DATABASE_SCHEMA_VERSION: i64 = 4;
+const DATABASE_SCHEMA_VERSION: i64 = 5;
 pub const CANONICAL_STATE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -155,6 +156,8 @@ pub enum ManagedInspectionState {
 pub struct ManagedInspection {
     pub compatibility: ManagedCompatibilityPresentation,
     pub state: ManagedInspectionState,
+    pub rested: RestedView,
+    pub rested_online_notice: Option<&'static str>,
 }
 
 #[allow(dead_code)]
@@ -279,6 +282,8 @@ impl std::fmt::Debug for DesktopAuthentication {
 
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error(transparent)]
+    Rested(#[from] rested::TimingError),
     #[error("could not determine the invoking user's data directory")]
     DataHomeUnavailable,
     #[error("managed character identifier is invalid: {0}")]
@@ -531,6 +536,11 @@ impl Store {
                 now,
             ],
         )?;
+        write_rested(
+            &transaction,
+            &id,
+            &RestedState::empty(rested::wall_millis()?),
+        )?;
         transaction.commit()?;
 
         Ok(ManagedCharacter {
@@ -613,6 +623,11 @@ impl Store {
                 save.private.account,
                 save.private.password,
             ],
+        )?;
+        write_rested(
+            &transaction,
+            &id,
+            &RestedState::empty(rested::wall_millis()?),
         )?;
 
         #[cfg(test)]
@@ -746,6 +761,7 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     fn replace_desktop_checkpoint(
         &mut self,
         id: &CharacterId,
@@ -753,6 +769,25 @@ impl Store {
         credited_milliseconds: u64,
         tasks_completed: u64,
         mark_local_only: bool,
+    ) -> Result<(), StorageError> {
+        self.replace_desktop_checkpoint_with_rested(
+            id,
+            checkpoint,
+            credited_milliseconds,
+            tasks_completed,
+            mark_local_only,
+            None,
+        )
+    }
+
+    fn replace_desktop_checkpoint_with_rested(
+        &mut self,
+        id: &CharacterId,
+        checkpoint: &DesktopCallbackCheckpoint,
+        credited_milliseconds: u64,
+        tasks_completed: u64,
+        mark_local_only: bool,
+        rested: Option<&RestedState>,
     ) -> Result<(), StorageError> {
         let identity = desktop_identity(&checkpoint.state)?;
         let mut canonical = checkpoint.state.clone();
@@ -830,6 +865,9 @@ impl Store {
         )?;
         if changed == 0 {
             return Err(StorageError::NotFound(id.clone()));
+        }
+        if let Some(rested) = rested {
+            write_rested(&transaction, id, rested)?;
         }
         transaction.commit()?;
         Ok(())
@@ -993,6 +1031,7 @@ impl Store {
     }
 
     pub fn managed_inspection(&self, id: &CharacterId) -> Result<ManagedInspection, StorageError> {
+        let transaction = self.connection.unchecked_transaction()?;
         let compatibility = self.managed_compatibility(id)?;
         let state = match compatibility.profile {
             CompatibilityProfile::Browser => ManagedInspectionState::Browser(self.get(id)?),
@@ -1000,10 +1039,53 @@ impl Store {
                 ManagedInspectionState::Desktop644(self.get_desktop(id)?)
             }
         };
-        Ok(ManagedInspection {
+        let online = match &state {
+            ManagedInspectionState::Browser(character) => character.state.online.is_some(),
+            ManagedInspectionState::Desktop644(_) => {
+                self.desktop_authentication(id)?.has_online_origin()
+            }
+        };
+        let inspection = ManagedInspection {
+            rested_online_notice: online.then_some(RESTED_ONLINE_NOTICE),
+            rested: self.rested_view(id)?,
             compatibility,
             state,
-        })
+        };
+        transaction.commit()?;
+        Ok(inspection)
+    }
+
+    fn rested_state(&self, id: &CharacterId) -> Result<RestedState, StorageError> {
+        let json = self
+            .connection
+            .query_row(
+                "SELECT rested_state FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StorageError::NotFound(id.clone()))?;
+        let state: RestedState = serde_json::from_str(&json).map_err(StorageError::StateJson)?;
+        Ok(state.validate()?)
+    }
+
+    pub fn rested_view(&self, id: &CharacterId) -> Result<RestedView, StorageError> {
+        Ok(self
+            .rested_state(id)?
+            .view(rested::wall_millis()?, self.is_owned(id)?))
+    }
+
+    fn replace_rested(
+        &mut self,
+        id: &CharacterId,
+        state: &RestedState,
+    ) -> Result<(), StorageError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        write_rested(&transaction, id, state)?;
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn start_warning(&self, id: &CharacterId) -> Result<Option<String>, StorageError> {
@@ -1253,7 +1335,18 @@ impl Store {
         id: &CharacterId,
         character: &Character,
     ) -> Result<(), StorageError> {
+        self.replace_state_with_rested(id, character, None)
+    }
+
+    fn replace_state_with_rested(
+        &mut self,
+        id: &CharacterId,
+        character: &Character,
+        rested: Option<&RestedState>,
+    ) -> Result<(), StorageError> {
         let canonical_state = canonical_json(character)?;
+        let random = serde_json::to_string(&RandomContinuation::Browser(character.seed))
+            .map_err(StorageError::StateJson)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1271,7 +1364,7 @@ impl Store {
             "UPDATE characters
              SET name = ?1, race = ?2, character_class = ?3, level = ?4,
                  canonical_state = ?5, canonical_state_version = ?6,
-                 updated_at_unix_ms = ?7
+                 updated_at_unix_ms = ?7, random_continuation = ?9
              WHERE id = ?8",
             params![
                 character.traits.name,
@@ -1281,11 +1374,15 @@ impl Store {
                 canonical_state,
                 CANONICAL_STATE_VERSION,
                 unix_millis(),
-                id.to_string()
+                id.to_string(),
+                random,
             ],
         )?;
         if changed == 0 {
             return Err(StorageError::NotFound(id.clone()));
+        }
+        if let Some(rested) = rested {
+            write_rested(&transaction, id, rested)?;
         }
         transaction.commit()?;
         Ok(())
@@ -1324,6 +1421,26 @@ impl Store {
     fn inject_next_desktop_registration_failure(&mut self) {
         self.fail_next_desktop_registration = true;
     }
+}
+
+pub const RESTED_ONLINE_NOTICE: &str =
+    "Rested-timeline leaderboard acceptance and classification are unverified.";
+
+fn write_rested(
+    transaction: &rusqlite::Transaction<'_>,
+    id: &CharacterId,
+    state: &RestedState,
+) -> Result<(), StorageError> {
+    state.validate()?;
+    let json = serde_json::to_string(state).map_err(StorageError::StateJson)?;
+    if transaction.execute(
+        "UPDATE characters SET rested_state = ?1 WHERE id = ?2",
+        params![json, id.to_string()],
+    )? == 0
+    {
+        return Err(StorageError::NotFound(id.clone()));
+    }
+    Ok(())
 }
 
 fn initialize_schema(connection: &mut Connection, data_root: &Path) -> Result<(), StorageError> {
@@ -1445,6 +1562,14 @@ fn initialize_schema(connection: &mut Connection, data_root: &Path) -> Result<()
                 FOREIGN KEY(character_id) REFERENCES characters(id)
             );",
         )?;
+    }
+    if version < 5 {
+        transaction.execute_batch(
+            "ALTER TABLE characters ADD COLUMN rested_state TEXT NOT NULL DEFAULT '';",
+        )?;
+        let json = serde_json::to_string(&RestedState::empty(rested::wall_millis()?))
+            .map_err(StorageError::StateJson)?;
+        transaction.execute("UPDATE characters SET rested_state = ?1", [json])?;
     }
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -1624,6 +1749,8 @@ fn sqlite_integer(value: u64, name: &'static str) -> Result<i64, StorageError> {
 #[derive(Debug, Error)]
 pub enum WorkerError {
     #[error(transparent)]
+    Rested(#[from] rested::TimingError),
+    #[error(transparent)]
     Storage(#[from] StorageError),
     #[error(transparent)]
     Simulation(#[from] crate::simulation::SimulationError),
@@ -1655,6 +1782,23 @@ pub fn aligned_task_completion_duration(state: &Character) -> Duration {
     Duration::from_millis(ticks.saturating_mul(crate::simulation::MAX_TICK_MS))
 }
 
+fn next_virtual_callback(previous: Duration, now: Duration) -> Result<Duration, WorkerError> {
+    let period = crate::desktop_callback::CALLBACK_PERIOD;
+    let next = previous
+        .checked_add(period)
+        .ok_or(WorkerError::ElapsedOverflow)?;
+    if next > now {
+        return Ok(next);
+    }
+    let skipped = (now - next).as_nanos() / period.as_nanos() + 1;
+    let offset = skipped
+        .checked_mul(period.as_nanos())
+        .and_then(|nanos| u64::try_from(nanos).ok())
+        .ok_or(WorkerError::ElapsedOverflow)?;
+    next.checked_add(Duration::from_nanos(offset))
+        .ok_or(WorkerError::ElapsedOverflow)
+}
+
 /// Desktop callback state held in memory between durable commit points.
 struct DesktopSession {
     checkpoint: DesktopCallbackCheckpoint,
@@ -1673,22 +1817,34 @@ pub struct Worker {
     id: CharacterId,
     profile: CompatibilityProfile,
     _lock: CharacterLock,
-    last_tick: Instant,
+    clock: ClockSample,
+    rested: RestedState,
+    last_commit_awake: Duration,
+    desktop_pending_virtual: Duration,
+    desktop_pace: Duration,
     transport: Box<dyn ReportTransport>,
     desktop: Option<DesktopSession>,
 }
 
 impl Worker {
     /// Takes ownership before reading any persisted character state.
-    pub fn start(store: Store, id: CharacterId) -> Result<Self, WorkerError> {
+    pub fn start(mut store: Store, id: CharacterId) -> Result<Self, WorkerError> {
         let lock = store.acquire_lock(&id)?;
         let profile = store.compatibility_profile(&id)?;
+        let clock = ClockSample::now()?;
+        let mut rested = store.rested_state(&id)?;
+        rested.resume(clock.wall_ms);
+        store.replace_rested(&id, &rested)?;
         Ok(Self {
             store,
             id,
             profile,
             _lock: lock,
-            last_tick: Instant::now(),
+            clock,
+            rested,
+            last_commit_awake: clock.awake,
+            desktop_pending_virtual: Duration::ZERO,
+            desktop_pace: Duration::ZERO,
             transport: Box::new(HttpsTransport),
             desktop: None,
         })
@@ -1705,8 +1861,9 @@ impl Worker {
         Ok(worker)
     }
 
-    /// Advances with an explicit duration. This is useful for deterministic
-    /// embedders and tests; the long-running worker uses [`Self::run_until`].
+    /// Advances an explicit simulated duration (not real active time).
+    /// Deterministic embedders retain the unscaled contract; [`Self::run_until`]
+    /// measures real time and applies rested pacing before supplying it here.
     pub fn advance_elapsed(&mut self, elapsed: Duration) -> Result<(), WorkerError> {
         let elapsed_ms: u64 = elapsed
             .as_millis()
@@ -1724,7 +1881,9 @@ impl Worker {
                     elapsed_ms,
                     "",
                 )?;
-                self.store.replace_state(&self.id, &trace.state)?;
+                self.store
+                    .replace_state_with_rested(&self.id, &trace.state, Some(&self.rested))?;
+                self.last_commit_awake = self.clock.awake;
                 for event in &trace.events {
                     let _ = crate::reporting::submit_event(
                         &self.store,
@@ -1827,17 +1986,20 @@ impl Worker {
         let Some(session) = self.desktop.as_ref() else {
             return Ok(());
         };
-        self.store.replace_desktop_checkpoint(
+        self.store.replace_desktop_checkpoint_with_rested(
             &self.id,
             &session.checkpoint,
             session.pending_credited_milliseconds,
             session.pending_tasks_completed,
             session.pending_local_only,
+            Some(&self.rested),
         )?;
         self.desktop = None;
+        self.last_commit_awake = self.clock.awake;
         Ok(())
     }
 
+    #[cfg(test)]
     fn flush_desktop(&mut self) -> Result<(), WorkerError> {
         if self.desktop.as_ref().is_some_and(|session| session.dirty) {
             self.commit_desktop()?;
@@ -1849,16 +2011,126 @@ impl Worker {
         match self.profile {
             CompatibilityProfile::Browser => {
                 let state = self.store.get(&self.id)?.state;
-                Ok(aligned_task_completion_duration(&state).min(interval))
+                let virtual_left = aligned_task_completion_duration(&state)
+                    .saturating_sub(self.rested.browser_remainder());
+                let mut duration = rested::real_duration(virtual_left, self.rested.balance())
+                    .min(interval)
+                    .min(rested::CHECKPOINT_INTERVAL);
+                if !self.rested.balance().is_zero() {
+                    duration = duration.min(self.rested.balance());
+                }
+                Ok(duration.max(Duration::from_nanos(1)))
             }
-            CompatibilityProfile::Desktop644 => Ok(crate::desktop_callback::CALLBACK_PERIOD),
+            CompatibilityProfile::Desktop644 => Ok(rested::real_duration(
+                crate::desktop_callback::CALLBACK_PERIOD,
+                self.rested.balance(),
+            )),
         }
     }
 
-    /// Runs periodic updates from a monotonic clock until `stop` is requested.
-    ///
-    /// The baseline is created when the worker starts, not from persisted wall
-    /// time, so a later worker never applies downtime as game time.
+    fn account_until(
+        &mut self,
+        current: ClockSample,
+        contribution_limit: Duration,
+    ) -> Result<(Duration, bool), WorkerError> {
+        let (awake, sleep) = rested::observe(self.clock, current)?;
+        if self.profile == CompatibilityProfile::Desktop644 {
+            self.desktop_pace = self
+                .desktop_pace
+                .checked_add(awake)
+                .and_then(|pace| pace.checked_add(awake.min(self.rested.balance())))
+                .ok_or(WorkerError::ElapsedOverflow)?;
+        }
+        let contribution = if sleep.is_zero() {
+            awake.min(contribution_limit)
+        } else {
+            Duration::ZERO
+        };
+        let virtual_time = self.rested.spend(awake, contribution)?;
+        self.rested.accrue(sleep);
+        self.rested.record(current.wall_ms, true);
+        self.clock = ClockSample {
+            suspend: self.clock.suspend.max(current.suspend),
+            ..current
+        };
+        Ok((virtual_time, !sleep.is_zero()))
+    }
+
+    fn browser_update_at(
+        &mut self,
+        current: ClockSample,
+        limit: Duration,
+    ) -> Result<(), WorkerError> {
+        let previous = self.rested;
+        let previous_clock = self.clock;
+        let (earned, _) = self.account_until(current, limit)?;
+        let millis = self.rested.browser_ticks(earned)?;
+        let result = if millis == 0 {
+            self.store
+                .replace_rested(&self.id, &self.rested)
+                .map_err(WorkerError::from)
+        } else {
+            self.advance_elapsed(Duration::from_millis(millis))
+        };
+        if result.is_err() {
+            self.rested = previous;
+            self.clock = previous_clock;
+        } else {
+            self.last_commit_awake = self.clock.awake;
+        }
+        result
+    }
+
+    fn finish_at(&mut self, current: ClockSample) -> Result<(), WorkerError> {
+        self.account_until(current, Duration::ZERO)?;
+        self.rested.record(self.clock.wall_ms, false);
+        if self.profile == CompatibilityProfile::Desktop644 {
+            self.load_desktop_session()?;
+            self.commit_desktop()?;
+        } else {
+            let state = self.store.get(&self.id)?.state;
+            self.store
+                .replace_state_with_rested(&self.id, &state, Some(&self.rested))?;
+        }
+        Ok(())
+    }
+
+    fn finish(&mut self) -> Result<(), WorkerError> {
+        self.finish_at(ClockSample::now()?)
+    }
+
+    fn desktop_update_at(
+        &mut self,
+        current: ClockSample,
+        dispatch: bool,
+    ) -> Result<bool, WorkerError> {
+        let (earned, slept) = self.account_until(current, Duration::MAX)?;
+        if slept {
+            self.desktop_pending_virtual = Duration::ZERO;
+            self.load_desktop_session()?;
+            self.commit_desktop()?;
+            return Ok(true);
+        }
+        self.desktop_pending_virtual = self
+            .desktop_pending_virtual
+            .checked_add(earned)
+            .ok_or(WorkerError::ElapsedOverflow)?;
+        if dispatch {
+            let elapsed_ms = self
+                .desktop_pending_virtual
+                .as_millis()
+                .min(i64::MAX as u128) as i64;
+            self.desktop_pending_virtual = Duration::ZERO;
+            self.desktop_callback(elapsed_ms, false)?;
+        }
+        if self.clock.awake >= self.last_commit_awake + rested::CHECKPOINT_INTERVAL {
+            self.load_desktop_session()?;
+            self.commit_desktop()?;
+        }
+        Ok(false)
+    }
+
+    /// Runs active-time updates, banking suspend time without immediate catch-up.
     pub fn run_until(mut self, stop: &AtomicBool, interval: Duration) -> Result<(), WorkerError> {
         if interval.is_zero() {
             return Err(WorkerError::ZeroInterval);
@@ -1867,17 +2139,15 @@ impl Worker {
             return self.run_desktop_until(stop);
         }
         while !stop.load(Ordering::Relaxed) {
+            self.account_until(ClockSample::now()?, Duration::ZERO)?;
             let scheduled = self.scheduled_duration(interval)?;
             thread::sleep(scheduled);
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            let now = Instant::now();
-            let elapsed = select_worker_elapsed(self.last_tick, now, scheduled);
-            self.last_tick = now;
-            self.advance_elapsed(elapsed)?;
+            self.browser_update_at(ClockSample::now()?, scheduled)?;
         }
-        Ok(())
+        self.finish()
     }
 
     /// Fires desktop callbacks on a fixed-rate schedule so processing time
@@ -1887,20 +2157,47 @@ impl Worker {
     /// without flushing, as a crash would.
     fn run_desktop_until(&mut self, stop: &AtomicBool) -> Result<(), WorkerError> {
         let period = crate::desktop_callback::CALLBACK_PERIOD;
-        self.last_tick = Instant::now();
-        let mut deadline = self.last_tick.checked_add(period).unwrap_or(self.last_tick);
+        let mut deadline = self.desktop_pace + period;
         loop {
-            thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            let now = ClockSample::now()?;
+            let (_, slept) = self.account_until(now, Duration::ZERO)?;
+            if slept {
+                self.desktop_pending_virtual = Duration::ZERO;
+                self.load_desktop_session()?;
+                self.commit_desktop()?;
+                deadline = self.desktop_pace + period;
+            }
+            let checkpoint = self.last_commit_awake + rested::CHECKPOINT_INTERVAL;
+            let wait = rested::real_duration(
+                deadline.saturating_sub(self.desktop_pace),
+                self.rested.balance(),
+            );
+            thread::sleep(wait.min(checkpoint.saturating_sub(now.awake)));
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            let elapsed = Instant::now().saturating_duration_since(self.last_tick);
-            let elapsed_ms = i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX);
-            self.last_tick = self.desktop_callback(elapsed_ms, false)?;
-            deadline =
-                crate::desktop_callback::next_callback_deadline(deadline, Instant::now(), period);
+            let current = ClockSample::now()?;
+            let (awake, _) = rested::observe(self.clock, current)?;
+            let projected_pace = self.desktop_pace + awake + awake.min(self.rested.balance());
+            let dispatch = projected_pace >= deadline;
+            let slept = self.desktop_update_at(current, dispatch)?;
+            if slept {
+                deadline = self.desktop_pace + period;
+                continue;
+            }
+            if dispatch {
+                let (_, slept) = self.account_until(ClockSample::now()?, Duration::ZERO)?;
+                if slept {
+                    self.desktop_pending_virtual = Duration::ZERO;
+                    self.load_desktop_session()?;
+                    self.commit_desktop()?;
+                    deadline = self.desktop_pace + period;
+                } else {
+                    deadline = next_virtual_callback(deadline, self.desktop_pace)?;
+                }
+            }
         }
-        self.flush_desktop()
+        self.finish()
     }
 }
 
@@ -1934,6 +2231,457 @@ mod tests {
         },
         save,
     };
+
+    fn seed_rest(worker: &mut Worker, balance: Duration) -> ClockSample {
+        let sample = ClockSample {
+            wall_ms: rested::wall_millis().unwrap(),
+            awake: Duration::ZERO,
+            suspend: Duration::ZERO,
+        };
+        worker.clock = sample;
+        worker.last_commit_awake = Duration::ZERO;
+        worker.rested = RestedState::empty(sample.wall_ms);
+        worker.rested.accrue(balance);
+        worker.rested.record(sample.wall_ms, true);
+        worker
+            .store
+            .replace_rested(&worker.id, &worker.rested)
+            .unwrap();
+        sample
+    }
+
+    fn after(sample: ClockSample, awake: Duration, sleep: Duration) -> ClockSample {
+        ClockSample {
+            wall_ms: sample.wall_ms + (awake + sleep).as_millis() as i64,
+            awake: sample.awake + awake,
+            suspend: sample.suspend + sleep,
+        }
+    }
+
+    #[test]
+    fn rested_migration_initializes_both_profiles_without_rewriting_state() {
+        let directory = TestDirectory::new("rested-migration");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let browser = store.register(&fixture_character()).unwrap();
+        let desktop = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(17))
+            .unwrap();
+        let persisted = |store: &Store, id: &CharacterId| {
+            store.connection.query_row(
+                "SELECT canonical_state, random_continuation, import_metadata, original_document
+                 FROM characters WHERE id = ?1",
+                [id.to_string()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?, row.get::<_, String>(3)?)),
+            ).unwrap()
+        };
+        let original = [
+            persisted(&store, &browser.id),
+            persisted(&store, &desktop.id),
+        ];
+        store
+            .connection
+            .execute_batch(
+                "ALTER TABLE characters DROP COLUMN rested_state;
+             UPDATE characters SET updated_at_unix_ms = 1;
+             PRAGMA user_version = 4;",
+            )
+            .unwrap();
+        drop(store);
+        let mut migrated = Store::open_at(&directory.0).unwrap();
+        for (index, id) in [&browser.id, &desktop.id].into_iter().enumerate() {
+            assert_eq!(persisted(&migrated, id), original[index]);
+            let state = migrated.rested_state(id).unwrap();
+            assert_eq!(state.balance(), Duration::ZERO);
+            assert!(state.accounted_wall_ms > 1);
+            assert!(!state.active);
+        }
+        assert!(
+            directory
+                .0
+                .join("characters.sqlite3.pre-v4.backup")
+                .exists()
+        );
+        let before = migrated.rested_state(&browser.id).unwrap();
+        migrated
+            .replace_profile(
+                &browser.id,
+                &OnlineProfile {
+                    motto: "Still resting".to_owned(),
+                    guild: String::new(),
+                },
+            )
+            .unwrap();
+        assert_eq!(migrated.rested_state(&browser.id).unwrap(), before);
+        migrated.remove(&desktop.id).unwrap();
+        assert!(matches!(
+            migrated.rested_state(&desktop.id),
+            Err(StorageError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn rested_browser_boost_exhaustion_and_fractional_checkpoint_match_tick_sequences() {
+        let directory = TestDirectory::new("rested-browser");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut initial = fixture_character();
+        initial.progress.task.max = 20_000;
+        initial.progress.task.position = 0.0;
+        let registered = store.register(&initial).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        let first = seed_rest(&mut worker, Duration::from_millis(250));
+        let current = after(first, Duration::from_secs(1), Duration::ZERO);
+        worker
+            .browser_update_at(current, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(worker.rested.balance(), Duration::ZERO);
+        assert_eq!(worker.rested.browser_remainder(), Duration::from_millis(50));
+        assert_eq!(
+            worker
+                .store
+                .get(&worker.id)
+                .unwrap()
+                .state
+                .progress
+                .task
+                .position,
+            1_200.0
+        );
+        worker
+            .browser_update_at(
+                after(current, Duration::from_millis(50), Duration::ZERO),
+                Duration::from_millis(50),
+            )
+            .unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get(&worker.id)
+                .unwrap()
+                .state
+                .progress
+                .task
+                .position,
+            1_300.0
+        );
+        let expected =
+            crate::simulation::advance(&initial, &crate::ruleset::BUNDLED, 1_300).unwrap();
+        let actual = worker.store.get(&worker.id).unwrap().state;
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        let start = seed_rest(&mut worker, Duration::from_secs(2));
+        worker
+            .browser_update_at(
+                after(start, Duration::from_secs(1), Duration::ZERO),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get(&worker.id)
+                .unwrap()
+                .state
+                .progress
+                .task
+                .position,
+            3_300.0
+        );
+        assert_eq!(worker.rested.balance(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn rested_browser_fractional_updates_preserve_short_task_tick_boundaries() {
+        let directory = TestDirectory::new("rested-browser-boundary");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut initial = fixture_character();
+        initial.online = None;
+        initial.progress.task.max = 450;
+        initial.progress.task.position = 0.0;
+        let registered = store.register(&initial).unwrap();
+        let mut worker = Worker::start(store, registered.id).unwrap();
+        seed_rest(&mut worker, Duration::from_secs(1));
+
+        for (elapsed_ms, serviced_ms, remainder_ms) in [(225, 400, 50), (25, 500, 0), (50, 600, 0)]
+        {
+            let elapsed = Duration::from_millis(elapsed_ms);
+            worker
+                .browser_update_at(after(worker.clock, elapsed, Duration::ZERO), elapsed)
+                .unwrap();
+            let expected =
+                crate::simulation::advance(&initial, &crate::ruleset::BUNDLED, serviced_ms)
+                    .unwrap();
+            let actual = worker.store.get(&worker.id).unwrap().state;
+            assert_eq!(
+                serde_json::to_value(actual).unwrap(),
+                serde_json::to_value(expected).unwrap()
+            );
+            assert_eq!(
+                worker.rested.browser_remainder(),
+                Duration::from_millis(remainder_ms)
+            );
+        }
+        assert_eq!(worker.rested.balance(), Duration::from_millis(700));
+    }
+
+    #[test]
+    fn rested_browser_fractional_time_survives_restart_and_failed_commit_is_atomic() {
+        let directory = TestDirectory::new("rested-atomic");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        let start = seed_rest(&mut worker, Duration::from_millis(250));
+        worker
+            .browser_update_at(
+                after(start, Duration::from_secs(1), Duration::ZERO),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        let before_state = worker.store.get(&worker.id).unwrap().state;
+        let before_rest = worker.store.rested_state(&worker.id).unwrap();
+        worker.store.inject_next_update_failure();
+        assert!(
+            worker
+                .browser_update_at(
+                    after(worker.clock, Duration::from_secs(1), Duration::ZERO),
+                    Duration::from_secs(1)
+                )
+                .is_err()
+        );
+        assert_eq!(worker.store.rested_state(&worker.id).unwrap(), before_rest);
+        assert_eq!(
+            serde_json::to_value(worker.store.get(&worker.id).unwrap().state).unwrap(),
+            serde_json::to_value(&before_state).unwrap()
+        );
+        drop(worker);
+        let restarted =
+            Worker::start(Store::open_at(&directory.0).unwrap(), registered.id).unwrap();
+        assert_eq!(
+            restarted.rested.browser_remainder(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            serde_json::to_value(restarted.store.get(&restarted.id).unwrap().state).unwrap(),
+            serde_json::to_value(before_state).unwrap()
+        );
+    }
+
+    #[test]
+    fn rested_sleep_stalls_and_graceful_stop_do_not_fabricate_progress() {
+        let directory = TestDirectory::new("rested-sleep");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        let start = seed_rest(&mut worker, Duration::from_secs(20));
+        let stalled = after(start, Duration::from_secs(10), Duration::ZERO);
+        worker.account_until(stalled, Duration::ZERO).unwrap();
+        assert_eq!(worker.rested.balance(), Duration::from_secs(10));
+        let slept = after(stalled, Duration::ZERO, Duration::from_secs(4 * 3_600));
+        worker
+            .browser_update_at(slept, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(worker.rested.balance(), Duration::from_secs(14_410));
+        assert_eq!(
+            worker
+                .store
+                .get(&worker.id)
+                .unwrap()
+                .state
+                .progress
+                .task
+                .position,
+            registered.state.progress.task.position
+        );
+        worker
+            .browser_update_at(slept, Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(worker.rested.balance(), Duration::from_secs(14_410));
+        worker.finish_at(slept).unwrap();
+        assert!(!worker.store.rested_state(&worker.id).unwrap().active);
+        assert_eq!(
+            worker.store.rested_state(&worker.id).unwrap(),
+            worker.rested
+        );
+    }
+
+    #[test]
+    fn rested_desktop_pacing_preserves_cap_completion_and_periodic_commits() {
+        let period = crate::desktop_callback::CALLBACK_PERIOD;
+        for elapsed in [Duration::ZERO, period, period * 10] {
+            let next = next_virtual_callback(Duration::ZERO, elapsed).unwrap();
+            assert!(next > elapsed);
+            assert!(next <= elapsed + period);
+        }
+        let directory = TestDirectory::new("rested-desktop");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let mut save = desktop_fixture();
+        save.bars.task.maximum = 200;
+        save.bars.task.position = 0;
+        let registered = store.register_desktop(&save, &mut Numbers(17)).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        let start = seed_rest(&mut worker, Duration::from_secs(5));
+        let boosted = Duration::from_nanos(54_687_500);
+        assert_eq!(
+            worker.scheduled_duration(Duration::from_secs(1)).unwrap(),
+            boosted
+        );
+        worker
+            .desktop_update_at(after(start, boosted, Duration::ZERO), true)
+            .unwrap();
+        worker.load_desktop_session().unwrap();
+        assert_eq!(
+            worker
+                .desktop
+                .as_ref()
+                .unwrap()
+                .checkpoint
+                .state
+                .bars
+                .task
+                .position,
+            100
+        );
+        worker
+            .desktop_update_at(after(start, boosted * 2, Duration::ZERO), true)
+            .unwrap();
+        worker.load_desktop_session().unwrap();
+        assert_eq!(
+            worker
+                .desktop
+                .as_ref()
+                .unwrap()
+                .checkpoint
+                .state
+                .bars
+                .task
+                .position,
+            200
+        );
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&worker.id)
+                .unwrap()
+                .import_metadata
+                .measured_since_import
+                .tasks_completed,
+            0
+        );
+        worker
+            .desktop_update_at(after(start, boosted * 3, Duration::ZERO), true)
+            .unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&worker.id)
+                .unwrap()
+                .import_metadata
+                .measured_since_import
+                .tasks_completed,
+            1
+        );
+        worker.load_desktop_session().unwrap();
+        assert_eq!(
+            worker
+                .desktop
+                .as_ref()
+                .unwrap()
+                .checkpoint
+                .state
+                .bars
+                .task
+                .position,
+            0
+        );
+        worker
+            .desktop_update_at(after(start, Duration::from_secs(2), Duration::ZERO), true)
+            .unwrap();
+        assert!(
+            worker
+                .store
+                .get_desktop(&worker.id)
+                .unwrap()
+                .state
+                .bars
+                .task
+                .position
+                <= 100
+        );
+        assert_eq!(
+            worker.store.rested_state(&worker.id).unwrap(),
+            worker.rested
+        );
+        worker.finish_at(worker.clock).unwrap();
+        assert!(!worker.store.rested_state(&worker.id).unwrap().active);
+    }
+
+    #[test]
+    fn rested_desktop_sleep_commits_accounting_without_dispatching_a_callback() {
+        let directory = TestDirectory::new("rested-desktop-sleep");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(17))
+            .unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        let start = seed_rest(&mut worker, Duration::from_secs(3_600));
+        assert!(
+            worker
+                .desktop_update_at(
+                    after(start, Duration::ZERO, Duration::from_secs(7_200)),
+                    true,
+                )
+                .unwrap()
+        );
+        assert_eq!(worker.rested.balance(), Duration::from_secs(10_800));
+        assert_eq!(
+            worker.store.get_desktop(&worker.id).unwrap().state,
+            registered.state
+        );
+        worker.store.inject_next_update_failure();
+        let persisted = worker.store.rested_state(&worker.id).unwrap();
+        assert!(
+            worker
+                .desktop_update_at(
+                    after(worker.clock, Duration::from_secs(2), Duration::ZERO),
+                    true
+                )
+                .is_err()
+        );
+        assert_eq!(worker.store.rested_state(&worker.id).unwrap(), persisted);
+    }
+
+    #[test]
+    fn rested_inspection_is_read_only_and_does_not_export_the_bank() {
+        let directory = TestDirectory::new("rested-inspection");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut metadata = RestedState::empty(rested::wall_millis().unwrap() - 8 * 3_600_000);
+        store.replace_rested(&registered.id, &metadata).unwrap();
+        let inspection = store.managed_inspection(&registered.id).unwrap();
+        assert!(inspection.rested.available_ms >= 8 * 3_600_000);
+        assert_eq!(inspection.rested.active_multiplier, 1);
+        assert!(inspection.rested_online_notice.is_some());
+        assert_eq!(store.rested_state(&registered.id).unwrap(), metadata);
+        let mut character = store.get(&registered.id).unwrap().state;
+        character.document = store.original_document(&registered.id).unwrap();
+        let export = save::export(&character).unwrap();
+        let imported = save::import_text(&export).unwrap();
+        let copy = store.register(&imported).unwrap();
+        assert_eq!(
+            store.rested_state(&copy.id).unwrap().balance(),
+            Duration::ZERO
+        );
+        metadata.accrue(Duration::from_secs(5 * 3_600));
+        metadata.record(rested::wall_millis().unwrap(), true);
+        store.replace_rested(&registered.id, &metadata).unwrap();
+        let owner = store.acquire_lock(&registered.id).unwrap();
+        let inspection = store.managed_inspection(&registered.id).unwrap();
+        assert_eq!(inspection.rested.active_multiplier, 2);
+        assert!(inspection.rested.available_ms <= 18_000_000);
+        drop(owner);
+    }
 
     struct TestDirectory(PathBuf);
 
@@ -3420,6 +4168,7 @@ mod tests {
             .unwrap();
         let mut worker =
             Worker::start(Store::open_at(&directory.0).unwrap(), registered.id.clone()).unwrap();
+        worker.rested = RestedState::empty(worker.clock.wall_ms);
 
         assert_eq!(
             worker.scheduled_duration(Duration::from_secs(1)).unwrap(),
@@ -5183,6 +5932,64 @@ mod tests {
         assert_eq!(persisted.plot.act, 1);
         assert_eq!(persisted.stats.best, "CHA");
         assert_eq!(persisted.beststat, "CHA 16");
+    }
+
+    #[test]
+    fn rested_online_events_use_committed_accounting_without_retrying_failed_delivery() {
+        struct CommittedTransport {
+            root: PathBuf,
+            id: CharacterId,
+            calls: Arc<Mutex<Vec<String>>>,
+        }
+        impl ReportTransport for CommittedTransport {
+            fn deliver(&self, request: Url) -> DeliveryOutcome {
+                let store = Store::open_at(&self.root).unwrap();
+                assert_eq!(
+                    store.rested_state(&self.id).unwrap().balance(),
+                    Duration::from_millis(1_500)
+                );
+                assert_eq!(store.get(&self.id).unwrap().state.traits.level, 2);
+                self.calls.lock().unwrap().push(
+                    request
+                        .query_pairs()
+                        .find(|(key, _)| key == "t")
+                        .unwrap()
+                        .1
+                        .into_owned(),
+                );
+                DeliveryOutcome::DeliveryFailed
+            }
+        }
+        let directory = TestDirectory::new("rested-online");
+        let mut initial = checkpoint::load(Path::new("tests/fixtures/checkpoint-level-up.json"))
+            .unwrap()
+            .initial;
+        initial.online = fixture_character().online;
+        initial.online.as_mut().unwrap().host = format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?");
+        initial.document = fixture_character().document;
+        initial.document["online"]["host"] = json!(format!("{OFFICIAL_LEADERBOARD_ENDPOINT}?"));
+        initial.queue = vec!["plot|1|Loading".to_owned()];
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&initial).unwrap();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let transport = CommittedTransport {
+            root: directory.0.clone(),
+            id: registered.id.clone(),
+            calls: Arc::clone(&calls),
+        };
+        let mut worker = Worker::start_with_transport(store, registered.id, transport).unwrap();
+        let start = seed_rest(&mut worker, Duration::from_secs(2));
+        worker
+            .browser_update_at(
+                after(start, Duration::from_millis(500), Duration::ZERO),
+                Duration::from_millis(500),
+            )
+            .unwrap();
+        assert_eq!(*calls.lock().unwrap(), ["l", "a"]);
+        worker
+            .browser_update_at(worker.clock, Duration::ZERO)
+            .unwrap();
+        assert_eq!(*calls.lock().unwrap(), ["l", "a"]);
     }
 
     #[test]
