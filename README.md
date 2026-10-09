@@ -3,8 +3,9 @@
 <img width="425" height="425" alt="Gyrognome logo" src="https://github.com/user-attachments/assets/e86c6dae-f233-4df9-9d9f-903c0f838417" />
 
 Gyrognome is a Linux-native terminal client for
-[Progress Quest](https://progressquest.com/). Create a character or continue an
-existing save, watch it adventure in the dashboard, and let it progress in the
+[Progress Quest](https://progressquest.com/), where a dizzy little gnome keeps
+your hero's progress wheel spinning. Create a character or continue an existing
+save, watch it adventure in the dashboard, and let it progress in the
 background.
 
 <img width="1920" height="1054" alt="Gyrognome terminal dashboard" src="https://github.com/user-attachments/assets/78c91f56-bc8d-48e8-8dd2-3e48f42a645d" />
