@@ -8,7 +8,7 @@ your hero's progress wheel spinning. Create a character or continue an existing
 save, watch it adventure in the dashboard, and let it progress in the
 background.
 
-<img width="1920" height="1054" alt="Gyrognome terminal dashboard" src="https://github.com/user-attachments/assets/78c91f56-bc8d-48e8-8dd2-3e48f42a645d" />
+<img width="1920" height="1054" alt="image" src="https://github.com/user-attachments/assets/c4f8f824-46d7-43c2-bf18-8f8a3f573ad4" />
 
 ## Features
 
