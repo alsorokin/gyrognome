@@ -15,11 +15,7 @@ replace the rights or notices of upstream works incorporated into the project.
   [licenses/ProgressQuest-Site.txt](licenses/ProgressQuest-Site.txt). Its
   [FAQ](https://progressquest.com/faq.php) explicitly points to the source and
   invites ports; the project owner chose to rely on those official statements
-  as the basis for porting the browser data. This documents that assessment,
-  not a separate authorization from the original author for every browser
-  revision or other third-party material.
-- Browser/desktop conformance evidence records synthetic and source-derived
-  observations; no real saves or signed requests should be distributed.
+  as the basis for porting the browser data.
 
 The project owner reviewed the repository's provenance, privacy, and
 redistribution posture before publication and chose to rely on the notices and
