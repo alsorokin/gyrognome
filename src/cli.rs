@@ -84,6 +84,16 @@ enum Command {
     Recover { id: String },
     /// Delete an inactive managed character after confirmation.
     Delete { id: String },
+    /// Export a managed character to a .pq (desktop) or .pqw (browser) save.
+    Export {
+        id: String,
+        /// Output path; defaults to ./<save-name>.pq or .pqw.
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+        /// Overwrite an existing file without asking.
+        #[arg(long)]
+        force: bool,
+    },
     /// Submit one confirmed leaderboard report when the persisted profile is eligible.
     Report { id: String },
     /// Save an eligible motto and deliver one report; --clear stores an empty motto.
@@ -134,6 +144,8 @@ pub enum CliError {
     Worker(#[from] WorkerError),
     #[error(transparent)]
     Lifecycle(#[from] LifecycleError),
+    #[error(transparent)]
+    Export(#[from] crate::export::ExportError),
     #[error("could not serialize canonical state: {0}")]
     Json(#[from] serde_json::Error),
     #[error("could not install worker shutdown handler: {0}")]
@@ -286,6 +298,32 @@ pub fn run() -> Result<(), CliError> {
             }
             Lifecycle::new(&store, SystemctlRunner).recover(&id)?;
             println!("Recovered and started managed character {id}.");
+        }
+        Command::Export { id, output, force } => {
+            let id = parse_id(&id)?;
+            let store = Store::open_default()?;
+            let outcome = crate::export::export_character(
+                &store,
+                SystemctlRunner,
+                &id,
+                output.as_deref(),
+                force,
+                &mut |path| {
+                    use std::io::IsTerminal;
+                    if !io::stdin().is_terminal() {
+                        return Ok(false);
+                    }
+                    print!("{} exists. Overwrite? Type yes to confirm: ", path.display());
+                    io::stdout().flush()?;
+                    let mut response = String::new();
+                    io::stdin().lock().read_line(&mut response)?;
+                    Ok(response.trim().eq_ignore_ascii_case("yes"))
+                },
+            )?;
+            println!("Exported managed character {id} to {}.", outcome.path.display());
+            if outcome.restarted {
+                println!("Restarted managed character {id}.");
+            }
         }
         Command::Delete { id } => {
             let id = parse_id(&id)?;

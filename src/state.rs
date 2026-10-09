@@ -364,6 +364,177 @@ impl Character {
         })
     }
 
+    /// Builds a browser save document from current state, keeping unrelated
+    /// fields (including the credential-bearing `online.passkey`) from the
+    /// original document.
+    pub fn to_document(&self) -> Value {
+        let mut root = match &self.document {
+            Value::Object(map) => map.clone(),
+            _ => Map::new(),
+        };
+        let number = |value: f64| {
+            if value.is_finite() && value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+                Value::from(value as i64)
+            } else {
+                Value::from(value)
+            }
+        };
+        let alea = |state: &AleaState| Value::Array(state.0.iter().map(|v| number(*v)).collect());
+        let pairs = |rows: Vec<(&str, Value)>| {
+            Value::Array(
+                rows.into_iter()
+                    .map(|(name, value)| Value::Array(vec![Value::from(name), value]))
+                    .collect(),
+            )
+        };
+        let merge = |root: &mut Map<String, Value>, key: &str, values: Vec<(&str, Value)>| {
+            let mut object = match root.get(key) {
+                Some(Value::Object(map)) => map.clone(),
+                _ => Map::new(),
+            };
+            for (name, value) in values {
+                object.insert(name.to_owned(), value);
+            }
+            root.insert(key.to_owned(), Value::Object(object));
+        };
+        let bar = |bar: &ProgressBar| {
+            vec![
+                ("position", number(bar.position)),
+                ("max", Value::from(bar.max)),
+                ("percent", Value::from(bar.percent)),
+                ("remaining", Value::from(bar.remaining)),
+                ("time", Value::from(bar.time.as_str())),
+                ("hint", Value::from(bar.hint.as_str())),
+            ]
+        };
+
+        merge(
+            &mut root,
+            "Traits",
+            vec![
+                ("Name", Value::from(self.traits.name.as_str())),
+                ("Race", Value::from(self.traits.race.as_str())),
+                ("Class", Value::from(self.traits.class.as_str())),
+                ("Level", Value::from(self.traits.level)),
+            ],
+        );
+        root.insert("dna".to_owned(), alea(&self.dna));
+        root.insert("seed".to_owned(), alea(&self.seed));
+        root.insert("birthday".to_owned(), Value::from(self.birthday.as_str()));
+        root.insert("birthstamp".to_owned(), Value::from(self.birthstamp));
+        merge(
+            &mut root,
+            "Stats",
+            vec![
+                ("seed", alea(&self.stats.seed)),
+                ("STR", number(self.stats.strength)),
+                ("CON", number(self.stats.constitution)),
+                ("DEX", number(self.stats.dexterity)),
+                ("INT", number(self.stats.intelligence)),
+                ("WIS", number(self.stats.wisdom)),
+                ("CHA", number(self.stats.charisma)),
+                ("HP Max", number(self.stats.hit_points_max)),
+                ("MP Max", number(self.stats.mana_points_max)),
+                ("best", Value::from(self.stats.best.as_str())),
+            ],
+        );
+        root.insert("beststat".to_owned(), Value::from(self.beststat.as_str()));
+        root.insert("task".to_owned(), Value::from(self.activity.task.as_str()));
+        root.insert("tasks".to_owned(), Value::from(self.activity.tasks));
+        root.insert("elapsed".to_owned(), Value::from(self.activity.elapsed));
+        root.insert("kill".to_owned(), Value::from(self.activity.kill.as_str()));
+        root.insert(
+            "questmonster".to_owned(),
+            Value::from(self.activity.questmonster.as_str()),
+        );
+        root.insert(
+            "questmonsterindex".to_owned(),
+            Value::from(self.activity.questmonsterindex),
+        );
+        root.insert("bestequip".to_owned(), Value::from(self.bestequip.as_str()));
+        let equipment = &self.equipment;
+        merge(
+            &mut root,
+            "Equips",
+            [
+                ("Weapon", &equipment.weapon),
+                ("Shield", &equipment.shield),
+                ("Helm", &equipment.helm),
+                ("Hauberk", &equipment.hauberk),
+                ("Brassairts", &equipment.brassairts),
+                ("Vambraces", &equipment.vambraces),
+                ("Gauntlets", &equipment.gauntlets),
+                ("Gambeson", &equipment.gambeson),
+                ("Cuisses", &equipment.cuisses),
+                ("Greaves", &equipment.greaves),
+                ("Sollerets", &equipment.sollerets),
+            ]
+            .into_iter()
+            .map(|(name, value)| (name, Value::from(value.as_str())))
+            .collect(),
+        );
+        root.insert(
+            "Inventory".to_owned(),
+            pairs(
+                self.inventory
+                    .iter()
+                    .map(|entry| (entry.name.as_str(), Value::from(entry.quantity)))
+                    .collect(),
+            ),
+        );
+        root.insert(
+            "Spells".to_owned(),
+            pairs(
+                self.spells
+                    .iter()
+                    .map(|spell| (spell.name.as_str(), Value::from(spell.rank.as_str())))
+                    .collect(),
+            ),
+        );
+        root.insert("act".to_owned(), Value::from(self.plot.act));
+        root.insert(
+            "bestplot".to_owned(),
+            Value::from(self.plot.bestplot.as_str()),
+        );
+        root.insert(
+            "Quests".to_owned(),
+            Value::Array(self.quests.iter().map(|q| Value::from(q.as_str())).collect()),
+        );
+        merge(&mut root, "ExpBar", bar(&self.progress.experience));
+        merge(&mut root, "EncumBar", bar(&self.progress.encumbrance));
+        merge(&mut root, "PlotBar", bar(&self.progress.plot));
+        merge(&mut root, "QuestBar", bar(&self.progress.quest));
+        merge(&mut root, "TaskBar", bar(&self.progress.task));
+        root.insert(
+            "queue".to_owned(),
+            Value::Array(self.queue.iter().map(|q| Value::from(q.as_str())).collect()),
+        );
+        root.insert("date".to_owned(), Value::from(self.date.as_str()));
+        root.insert("stamp".to_owned(), Value::from(self.stamp));
+        if let Some(online) = &self.online {
+            merge(
+                &mut root,
+                "online",
+                vec![
+                    ("realm", Value::from(online.realm.as_str())),
+                    ("host", Value::from(online.host.as_str())),
+                ],
+            );
+        }
+        for (key, value) in [("motto", &self.profile.motto), ("guild", &self.profile.guild)] {
+            if value.is_empty() && !root.contains_key(key) {
+                continue;
+            }
+            root.insert(key.to_owned(), Value::from(value.as_str()));
+        }
+        root.insert("saveName".to_owned(), Value::from(self.save_name.as_str()));
+        root.insert("bestspell".to_owned(), Value::from(self.bestspell.as_str()));
+        if !self.bestquest.is_empty() || root.contains_key("bestquest") {
+            root.insert("bestquest".to_owned(), Value::from(self.bestquest.as_str()));
+        }
+        Value::Object(root)
+    }
+
     pub fn summary(&self) -> String {
         let online = self
             .online
@@ -598,7 +769,29 @@ fn bar(object: &Map<String, Value>, prefix: &str) -> Result<ProgressBar, SaveErr
 
 #[cfg(test)]
 mod tests {
-    use super::Activity;
+    use super::{Activity, Character};
+
+    #[test]
+    fn document_round_trips_current_state_and_preserves_unknown_fields() {
+        let document: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/reference-save.json")).unwrap();
+        let mut character = Character::from_document(document.clone()).unwrap();
+        character.traits.level = 9;
+        character.inventory.push(super::InventoryEntry {
+            name: "Rat tail".to_owned(),
+            quantity: 3,
+        });
+        character.profile.motto = "Onward".to_owned();
+        character.progress.task.reposition(super::ProgressBarKind::Task, 12.5);
+        let exported = character.to_document();
+        assert_eq!(exported["unrecognized-future-field"], document["unrecognized-future-field"]);
+        assert_eq!(exported["online"]["passkey"], document["online"]["passkey"]);
+        let reimported = Character::from_document(exported).unwrap();
+        assert_eq!(
+            serde_json::to_value(&reimported).unwrap(),
+            serde_json::to_value(&character).unwrap()
+        );
+    }
 
     #[test]
     fn floors_legacy_fractional_elapsed_values_from_local_state() {

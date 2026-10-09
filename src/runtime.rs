@@ -42,7 +42,6 @@ use crate::{
     state::{Character, OnlineProfile},
 };
 use rusqlite::OptionalExtension;
-#[cfg(test)]
 use serde_json::Value;
 
 const DATABASE_FILENAME: &str = "characters.sqlite3";
@@ -109,6 +108,12 @@ pub struct ManagedCharacter {
     pub created_at_unix_ms: i64,
     pub updated_at_unix_ms: i64,
     pub state: Character,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportTarget {
+    pub extension: &'static str,
+    pub file_stem: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -316,6 +321,8 @@ pub enum StorageError {
     InvalidCompatibilityState(&'static str),
     #[error("desktop since-import counter overflowed: {0}")]
     DesktopCounterOverflow(&'static str),
+    #[error("could not export desktop save: {0}")]
+    DesktopExport(#[from] crate::desktop_export::DesktopExportError),
     #[cfg(test)]
     #[error("injected storage failure")]
     InjectedFailure,
@@ -897,6 +904,60 @@ impl Store {
             .ok_or_else(|| StorageError::NotFound(id.clone()))
     }
 
+    /// Returns the save format and suggested file name for exporting a
+    /// managed character.
+    pub fn export_target(&self, id: &CharacterId) -> Result<ExportTarget, StorageError> {
+        match self.compatibility_profile(id)? {
+            CompatibilityProfile::Browser => Ok(ExportTarget {
+                extension: "pqw",
+                file_stem: self.get(id)?.state.save_name,
+            }),
+            CompatibilityProfile::Desktop644 => {
+                let name = self.identity(id)?.name;
+                let realm = self.desktop_authentication(id)?.realm;
+                Ok(ExportTarget {
+                    extension: "pq",
+                    file_stem: if realm.is_empty() {
+                        name
+                    } else {
+                        format!("{name} [{realm}]")
+                    },
+                })
+            }
+        }
+    }
+
+    /// Encodes the current stored state, including credentials, as a `.pqw`
+    /// or `.pq` save.
+    pub fn export_save(&self, id: &CharacterId) -> Result<Vec<u8>, StorageError> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let bytes = match self.compatibility_profile(id)? {
+            CompatibilityProfile::Browser => {
+                let mut character = self.get(id)?.state;
+                character.document = self.original_document(id)?;
+                crate::save::encode_browser_document(&character.to_document())
+                    .map_err(StorageError::StateJson)?
+                    .into_bytes()
+            }
+            CompatibilityProfile::Desktop644 => {
+                let character = self.get_desktop(id)?;
+                let authentication = self.desktop_authentication(id)?;
+                crate::desktop_export::encode_desktop_save(
+                    &character.state,
+                    &crate::desktop_save::DesktopValidatedPrivateMetadata {
+                        passkey: authentication.passkey,
+                        realm: authentication.realm,
+                        endpoint: authentication.endpoint,
+                        account: authentication.account,
+                        password: authentication.password,
+                    },
+                )?
+            }
+        };
+        transaction.commit()?;
+        Ok(bytes)
+    }
+
     pub fn list(&self) -> Result<Vec<ManagedCharacter>, StorageError> {
         let mut statement = self.connection.prepare(
             "SELECT id, name, race, character_class, level, canonical_state,
@@ -1388,7 +1449,6 @@ impl Store {
         Ok(())
     }
 
-    #[cfg(test)]
     pub(crate) fn original_document(&self, id: &CharacterId) -> Result<Value, StorageError> {
         let source = self
             .connection

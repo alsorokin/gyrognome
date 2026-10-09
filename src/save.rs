@@ -162,6 +162,10 @@ pub fn export(character: &Character) -> Result<String, SaveError> {
     Ok(STANDARD.encode(serde_json::to_vec(&character.document)?))
 }
 
+pub(crate) fn encode_browser_document(document: &Value) -> Result<String, serde_json::Error> {
+    Ok(STANDARD.encode(serde_json::to_vec(document)?))
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) enum DecodedSave {
     Browser(Value),

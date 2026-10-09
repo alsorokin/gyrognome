@@ -8,6 +8,8 @@ pub mod desktop_callback;
 pub mod desktop_contract;
 pub mod desktop_eligibility;
 pub mod desktop_evidence;
+pub mod desktop_export;
+pub mod export;
 mod desktop_fingerprint;
 #[cfg(feature = "desktop-live-conformance")]
 pub mod desktop_live_conformance;

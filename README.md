@@ -191,6 +191,18 @@ The command prints only the target's safe identity and requires `yes` before
 removing it. Stop an active worker or user service first; deletion never stops
 it automatically.
 
+Export a managed character back to a save file (`.pq` for desktop characters,
+`.pqw` for browser characters):
+
+```sh
+gyro export <character-id> [-o PATH] [--force]
+```
+
+The default path is `./<save-name>.pq` or `.pqw`. The file contains the
+character's credentials, so it is written atomically with mode 0600. An existing
+file prompts for confirmation unless `--force` is given. A running user service
+is stopped for the export and restarted afterwards.
+
 ### Confirmed leaderboard reporting
 
 An imported browser character may submit exactly one manual-brag report only
