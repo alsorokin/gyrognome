@@ -6,6 +6,12 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Added
 
+- Per-character persistent autostart through `gyro autostart <id> on|off` and
+  a confirmed dashboard `a` toggle, with independent startup status in CLI
+  text/JSON and both dashboard layouts. Uses existing systemd user services
+  without changing current worker activity; boot-before-login requires
+  separately configured account lingering. Character deletion removes startup
+  registration before deleting data, including dangling links.
 - `export <id> [-o PATH] [--force]` writes a managed character back to a save:
   `.pq` for desktop characters (opens in pq.exe 6.4.4) and `.pqw` for browser
   characters, with stored credentials, an overwrite prompt, and atomic 0600

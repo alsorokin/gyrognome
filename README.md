@@ -369,13 +369,58 @@ gyro stop <character-id>
 gyro recover <character-id>
 ```
 
-`status` reports the safe persisted identity, service activity, and whether a
-local worker currently owns the character lock. If the user service manager is
+`status` reports the safe persisted identity, service activity, whether a
+local worker currently owns the character lock, and persistent autostart
+(`On`, `Off`, or `Unavailable` with a diagnostic). JSON output includes
+`autostart` as `enabled`, `disabled`, or `unavailable`. If the user service manager is
 unavailable or a service fails, the command reports that error without
 fabricating progression. `recover` clears systemd's failed state and starts a
 fresh worker; it resumes only from the last successfully persisted canonical
 state. Correct an unsupported simulation state before recovering, or it will
 fail again while preserving that state.
+
+### Automatic startup after restart
+
+Autostart is opt-in for each registered character:
+
+```sh
+gyro autostart <character-id> on
+gyro autostart <character-id> off
+gyro status <character-id>
+```
+
+Enabling autostart schedules the existing service when your user service manager
+next starts, normally at login. It does **not** start the character now; use
+`gyro start` for that. Disabling autostart does not stop an active worker.
+Start, Stop, Recover, and export's temporary stop/restart never change this
+preference. A manually stopped character with autostart On will start again
+at the next user-manager startup. External systemd enablement changes are
+reflected by the CLI and dashboard; temporary `--runtime` enablement does not
+count as persistent autostart.
+
+To run enabled characters after boot **before login**, and keep them running
+after logout, separately enable account-wide lingering:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Your host may require administrator authorization. Gyrognome never changes
+lingering or elevates privileges automatically. The installed service template
+and reliable absolute executable path described above are still required.
+Preference changes work on unit files even without an active user manager.
+Registration and installation do not automatically enable characters.
+
+Automatic workers resume the last persisted state with the existing rest,
+reporting-eligibility, and local-only provenance rules; there is no immediate
+offline-time catch-up. Enabling an online-originated desktop character may
+warn that later advancement will make it permanently local-only if reporting
+is gated, just as manual startup does. Confirmed deletion cleans up startup
+registration before removing character data; cleanup failures retain the data.
+
+Autostart remains configured if you roll back to an older binary. To remove it
+without the new CLI command, use
+`systemctl --user disable gyrognome@<character-id>.service` (without `--now`).
 
 ### Terminal dashboard
 
@@ -431,7 +476,12 @@ guild, or `s` for the contextual lifecycle action: start an inactive service,
 stop an active one, or recover a failed one by clearing its failed state and
 starting it. Brag has no confirmation overlay and shows only delivered,
 endpoint-rejected, or delivery-failed outcomes. Start, stop, and recover
-require `Enter` confirmation; press `Esc` to cancel. Ctrl-C and SIGTERM quit
+require `Enter` confirmation; press `Esc` to cancel. Press `a` (`auto` in key
+help) to toggle the selected character's persistent autostart, also with
+Enter/Escape confirmation. Both full and compact views show
+`Autostart: On`, `Off`, or `Unavailable` independently of service activity.
+The toggle changes future startup only, without starting or stopping the worker.
+Ctrl-C and SIGTERM quit
 through the same terminal-restoration path. The same logged-in-user systemd
 prerequisites described above apply to service status and lifecycle actions.
 If the user service manager is unavailable or an action fails, the dashboard

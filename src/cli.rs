@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde::Serialize;
 use serde_json::to_string_pretty;
 use thiserror::Error;
@@ -15,7 +15,7 @@ use crate::conformance_bridge;
 use crate::{
     compatibility::CompatibilityProfile,
     dashboard::{self, DashboardProvider, LocalProvider},
-    lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
+    lifecycle::{self, Lifecycle, LifecycleError, RuntimeStatus, SystemctlRunner},
     newguy::{self, NewGuyError, Selection},
     newguy_wizard::{self, WizardError},
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
@@ -73,7 +73,12 @@ enum Command {
     Start { id: String },
     /// Stop a managed character's systemd user service.
     Stop { id: String },
-    /// Show a managed character's user-service and advisory-lock state.
+    /// Set persistent startup at user-manager startup without starting or stopping the worker.
+    Autostart {
+        id: String,
+        setting: AutostartSetting,
+    },
+    /// Show a managed character's service, advisory-lock, and persistent autostart state.
     Status {
         id: String,
         /// Print credential-safe lifecycle state as JSON.
@@ -132,6 +137,12 @@ enum Command {
     /// Test-only stdin/stdout adapter for the disposable browser harness.
     #[command(hide = true)]
     ConformanceBridge,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AutostartSetting {
+    On,
+    Off,
 }
 
 #[derive(Debug, Error)]
@@ -285,6 +296,24 @@ pub fn run() -> Result<(), CliError> {
             Lifecycle::new(&store, SystemctlRunner).stop(&id)?;
             println!("Stopped managed character {id}.");
         }
+        Command::Autostart { id, setting } => {
+            let store = Store::open_default()?;
+            let id = parse_id(&id)?;
+            let enabled = matches!(setting, AutostartSetting::On);
+            if enabled && let Some(warning) = store.start_warning(&id)? {
+                eprintln!("Warning: {warning}");
+            }
+            Lifecycle::new(&store, SystemctlRunner).set_autostart(&id, enabled)?;
+            println!(
+                "Autostart {} for managed character {id}. Current worker activity is unchanged.",
+                if enabled { "On" } else { "Off" }
+            );
+            if enabled {
+                println!(
+                    "Starts when your user service manager starts (normally at login; boot-before-login requires separately configured lingering)."
+                );
+            }
+        }
         Command::Status { id, json } => {
             let store = Store::open_default()?;
             let status = Lifecycle::new(&store, SystemctlRunner).status(&parse_id(&id)?)?;
@@ -313,14 +342,20 @@ pub fn run() -> Result<(), CliError> {
                     if !io::stdin().is_terminal() {
                         return Ok(false);
                     }
-                    print!("{} exists. Overwrite? Type yes to confirm: ", path.display());
+                    print!(
+                        "{} exists. Overwrite? Type yes to confirm: ",
+                        path.display()
+                    );
                     io::stdout().flush()?;
                     let mut response = String::new();
                     io::stdin().lock().read_line(&mut response)?;
                     Ok(response.trim().eq_ignore_ascii_case("yes"))
                 },
             )?;
-            println!("Exported managed character {id} to {}.", outcome.path.display());
+            println!(
+                "Exported managed character {id} to {}.",
+                outcome.path.display()
+            );
             if outcome.restarted {
                 println!("Restarted managed character {id}.");
             }
@@ -338,9 +373,12 @@ pub fn run() -> Result<(), CliError> {
                 println!("Deletion cancelled.");
                 return Ok(());
             }
-            match store.remove(&id) {
+            match lifecycle::delete_character(&mut store, &SystemctlRunner, &id) {
                 Ok(()) => {}
-                Err(StorageError::AlreadyOwned(_)) => {
+                Err(
+                    LifecycleError::Storage(StorageError::AlreadyOwned(_))
+                    | LifecycleError::CharacterRunning(_),
+                ) => {
                     return Err(CliError::CharacterRunning(id));
                 }
                 Err(error) => return Err(error.into()),
@@ -560,7 +598,7 @@ fn print_status(status: RuntimeStatus, json: bool) -> Result<(), CliError> {
         println!("{}", to_string_pretty(&status)?);
     } else {
         println!(
-            "Managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\n  Service: {:?}\n  Runtime ownership: {}",
+            "Managed character: {}\n  Name: {}\n  Race: {}\n  Class: {}\n  Level: {}\n  Service: {:?}\n  Runtime ownership: {}\n  Autostart: {}",
             status.id,
             status.identity.name,
             status.identity.race,
@@ -571,8 +609,12 @@ fn print_status(status: RuntimeStatus, json: bool) -> Result<(), CliError> {
                 "owned"
             } else {
                 "not owned"
-            }
+            },
+            status.autostart.label(),
         );
+        if let Some(detail) = status.autostart_diagnostic {
+            println!("  Autostart diagnostic: {detail}");
+        }
     }
     Ok(())
 }
@@ -582,7 +624,27 @@ mod tests {
     use clap::Parser;
     use std::io::Cursor;
 
-    use super::{Args, Command, delete_confirmed};
+    use super::{Args, AutostartSetting, Command, delete_confirmed};
+
+    #[test]
+    fn autostart_requires_an_explicit_on_or_off() {
+        for (setting, on) in [("on", true), ("off", false)] {
+            let Command::Autostart { setting, .. } =
+                Args::try_parse_from(["gyro", "autostart", "id", setting])
+                    .unwrap()
+                    .command
+            else {
+                panic!("wrong command");
+            };
+            assert_eq!(matches!(setting, AutostartSetting::On), on);
+        }
+        for args in [
+            vec!["gyro", "autostart", "id"],
+            vec!["gyro", "autostart", "id", "toggle"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
+    }
 
     #[test]
     fn profile_commands_require_explicit_values_or_motto_clear() {

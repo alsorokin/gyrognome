@@ -1365,7 +1365,22 @@ impl Store {
     /// Holding the advisory lock while the transaction runs prevents a worker
     /// from acquiring ownership between the deletion check and mutation.
     pub fn remove(&mut self, id: &CharacterId) -> Result<(), StorageError> {
+        self.remove_with_cleanup(id, || Ok(()))
+    }
+
+    pub(crate) fn remove_with_cleanup<E: From<StorageError>>(
+        &mut self,
+        id: &CharacterId,
+        cleanup: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), E> {
         let lock = self.acquire_lock(id)?;
+        cleanup()?;
+        self.remove_locked(id).map_err(E::from)?;
+        drop(lock);
+        Ok(())
+    }
+
+    fn remove_locked(&mut self, id: &CharacterId) -> Result<(), StorageError> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1386,7 +1401,6 @@ impl Store {
             return Err(StorageError::NotFound(id.clone()));
         }
         transaction.commit()?;
-        drop(lock);
         Ok(())
     }
 
@@ -1473,7 +1487,7 @@ impl Store {
     }
 
     #[cfg(test)]
-    fn inject_next_remove_failure(&mut self) {
+    pub(crate) fn inject_next_remove_failure(&mut self) {
         self.fail_next_remove = true;
     }
 

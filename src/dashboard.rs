@@ -40,7 +40,10 @@ use crate::{
     },
     desktop_save::{DesktopValidatedBar, DesktopValidatedRow},
     guild::GuildOutcome,
-    lifecycle::{Lifecycle, LifecycleError, RuntimeStatus, ServiceState, SystemctlRunner},
+    lifecycle::{
+        AutostartState, AutostartStatus, Lifecycle, LifecycleError, RuntimeStatus, ServiceState,
+        SystemctlRunner,
+    },
     reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
     runtime::{
         CharacterId, CharacterIdentity, ManagedCharacter, ManagedCompatibilityPresentation,
@@ -302,6 +305,7 @@ pub struct DashboardSnapshot {
     pub character: DashboardCharacter,
     pub service: Option<ServiceState>,
     pub runtime_owned: Option<bool>,
+    pub autostart: AutostartStatus,
     pub message: Option<String>,
 }
 
@@ -310,6 +314,8 @@ pub enum LifecycleAction {
     Start,
     Stop,
     Recover,
+    EnableAutostart,
+    DisableAutostart,
 }
 
 impl LifecycleAction {
@@ -318,6 +324,8 @@ impl LifecycleAction {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Recover => "recover",
+            Self::EnableAutostart => "enable autostart",
+            Self::DisableAutostart => "disable autostart",
         }
     }
 }
@@ -363,6 +371,8 @@ impl DashboardProvider for LocalProvider {
             LifecycleAction::Start => lifecycle.start(id)?,
             LifecycleAction::Stop => lifecycle.stop(id)?,
             LifecycleAction::Recover => lifecycle.recover(id)?,
+            LifecycleAction::EnableAutostart => lifecycle.set_autostart(id, true)?,
+            LifecycleAction::DisableAutostart => lifecycle.set_autostart(id, false)?,
         }
         Ok(())
     }
@@ -397,8 +407,14 @@ pub fn collect_snapshot<Runner: crate::lifecycle::ServiceRunner>(
     id: &CharacterId,
 ) -> Result<DashboardSnapshot, DashboardError> {
     let character = dashboard_character(store, id)?;
-    let status = Lifecycle::new(store, runner).status(id);
-    Ok(snapshot(character, status))
+    let lifecycle = Lifecycle::new(store, runner);
+    let status = lifecycle.status(id);
+    let mut result = snapshot(character, status);
+    if result.service.is_none() {
+        result.autostart = lifecycle.autostart(id)?;
+        result.runtime_owned = Some(store.is_owned(id)?);
+    }
+    Ok(result)
 }
 
 fn snapshot(
@@ -410,12 +426,17 @@ fn snapshot(
             character,
             service: Some(status.service),
             runtime_owned: Some(status.runtime_owned),
-            message: None,
+            autostart: AutostartStatus {
+                state: status.autostart,
+                diagnostic: status.autostart_diagnostic.clone(),
+            },
+            message: status.autostart_diagnostic.clone(),
         },
         Err(error) => DashboardSnapshot {
             character,
             service: None,
             runtime_owned: None,
+            autostart: AutostartStatus::unavailable(&error),
             message: Some(format!("Could not refresh service status: {error}")),
         },
     }
@@ -809,6 +830,7 @@ enum Command {
     Quit,
     Brag,
     ToggleLifecycle,
+    ToggleAutostart,
     ConfirmAction,
     Cancel,
     TogglePane(Pane),
@@ -1024,6 +1046,7 @@ fn command(event: Event) -> Command {
                 KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
                 KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
                 KeyCode::Char('s') => Command::ToggleLifecycle,
+                KeyCode::Char('a') => Command::ToggleAutostart,
                 KeyCode::Enter => Command::ConfirmAction,
                 KeyCode::Esc => Command::Cancel,
                 KeyCode::Tab => Command::FocusNextPane,
@@ -1219,11 +1242,13 @@ impl DashboardState {
                     character,
                     service,
                     runtime_owned,
+                    autostart,
                     message,
                 } = next;
                 self.replace_character(character, now);
                 self.current.service = service;
                 self.current.runtime_owned = runtime_owned;
+                self.current.autostart = autostart;
                 self.current.message = message.or(action_message);
             }
             Err(error) => {
@@ -1406,6 +1431,20 @@ impl DashboardState {
                     Some(ServiceState::Failed) => LifecycleAction::Recover,
                     Some(ServiceState::Inactive) | None => LifecycleAction::Start,
                 });
+                false
+            }
+            Command::ToggleAutostart => {
+                self.confirmation = match self.current.autostart.state {
+                    AutostartState::Enabled => Some(LifecycleAction::DisableAutostart),
+                    AutostartState::Disabled => Some(LifecycleAction::EnableAutostart),
+                    AutostartState::Unavailable => {
+                        self.set_action_message(
+                            self.current.autostart.diagnostic.clone().unwrap_or_else(|| "Autostart configuration is unavailable; check the user-service template.".to_owned()),
+                            now,
+                        );
+                        None
+                    }
+                };
                 false
             }
             Command::Edit(field) => {
@@ -1678,7 +1717,38 @@ fn render(
             _ => "Service status unavailable".to_owned(),
         }
     });
+    let autostart = format!("Autostart: {}", snapshot.autostart.state.label());
+    let full_status = if snapshot.message.is_some() {
+        format!("{autostart} | {full_status}")
+    } else {
+        format!("{full_status} | {autostart}")
+    };
+    let compact_status = format!(
+        "{autostart} | {}",
+        snapshot.message.as_deref().unwrap_or(&status)
+    );
+    let autostart_confirmation = matches!(
+        confirmation,
+        Some(LifecycleAction::EnableAutostart | LifecycleAction::DisableAutostart)
+    );
     let footer = match confirmation {
+        Some(action @ (LifecycleAction::EnableAutostart | LifecycleAction::DisableAutostart)) => {
+            let warning = if action == LifecycleAction::EnableAutostart {
+                snapshot
+                    .character
+                    .compatibility
+                    .notice
+                    .as_deref()
+                    .map(|notice| format!("\nWarning: {notice}"))
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
+            format!(
+                "Confirm {}? Enter=yes Esc=cancel\nCurrent worker activity is unchanged.{warning}",
+                action.label()
+            )
+        }
         Some(action @ (LifecycleAction::Start | LifecycleAction::Recover))
             if snapshot.character.compatibility.notice.is_some() =>
         {
@@ -1707,7 +1777,8 @@ fn render(
         let bottom_height = full_bottom_height(
             area.width,
             footer_width,
-            confirmation.is_some() && snapshot.character.compatibility.notice.is_some(),
+            (confirmation.is_some() && snapshot.character.compatibility.notice.is_some())
+                || autostart_confirmation,
         );
         let rows = Layout::default()
             .direction(Direction::Vertical)
@@ -1753,6 +1824,8 @@ fn render(
         let footer_height =
             if confirmation.is_some() && snapshot.character.compatibility.notice.is_some() {
                 5
+            } else if autostart_confirmation {
+                5
             } else if confirmation.is_some() {
                 3
             } else {
@@ -1766,7 +1839,13 @@ fn render(
             .constraints([
                 Constraint::Length(header_height),
                 Constraint::Min(6),
-                Constraint::Length(3),
+                Constraint::Length(
+                    if compact_status.len() > usize::from(area.width.saturating_sub(2)) {
+                        4
+                    } else {
+                        3
+                    },
+                ),
                 Constraint::Length(footer_height),
             ])
             .split(area);
@@ -1784,7 +1863,7 @@ fn render(
             *viewport = None;
         }
         frame.render_widget(
-            Paragraph::new(snapshot.message.as_deref().unwrap_or(&status))
+            Paragraph::new(compact_status)
                 .block(Block::default().borders(Borders::ALL).title("Status"))
                 .wrap(Wrap { trim: true }),
             rows[2],
@@ -1842,6 +1921,9 @@ fn full_footer_line(service: Option<&ServiceState>) -> Line<'static> {
         Span::raw(" guild | "),
         Span::styled("s", key),
         Span::raw(format!(" {action}")),
+        Span::raw(" | "),
+        Span::styled("a", key),
+        Span::raw(" auto"),
     ])
 }
 
@@ -3455,12 +3537,15 @@ mod tests {
     }
 
     impl ServiceRunner for FakeRunner {
-        fn run(
-            &self,
-            _action: ServiceAction,
-            _unit: &str,
-        ) -> Result<ServiceOutput, LifecycleError> {
-            self.responses.borrow_mut().pop_front().unwrap()
+        fn run(&self, action: ServiceAction, _unit: &str) -> Result<ServiceOutput, LifecycleError> {
+            self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
+                assert_eq!(action, ServiceAction::IsEnabled);
+                Ok(ServiceOutput {
+                    success: false,
+                    stdout: "disabled".to_owned(),
+                    stderr: String::new(),
+                })
+            })
         }
     }
 
@@ -3535,6 +3620,10 @@ mod tests {
             },
             service: Some(ServiceState::Inactive),
             runtime_owned: Some(false),
+            autostart: AutostartStatus {
+                state: AutostartState::Disabled,
+                diagnostic: None,
+            },
             message: None,
         }
     }
@@ -5008,6 +5097,158 @@ mod tests {
             assert!(provider.actions.borrow().is_empty());
         }
     }
+    #[test]
+    fn autostart_toggle_confirms_cancels_and_preserves_worker_activity() {
+        let now = Instant::now();
+        for (initial, expected, action, service) in [
+            (
+                AutostartState::Disabled,
+                AutostartState::Enabled,
+                LifecycleAction::EnableAutostart,
+                ServiceState::Inactive,
+            ),
+            (
+                AutostartState::Enabled,
+                AutostartState::Disabled,
+                LifecycleAction::DisableAutostart,
+                ServiceState::Active,
+            ),
+        ] {
+            let mut first = sample();
+            first.autostart.state = initial;
+            first.service = Some(service.clone());
+            let id = first.character.id.clone();
+            let mut next = first.clone();
+            next.autostart.state = expected;
+            let provider = fake_provider(vec![Ok(next.clone()), Ok(next)], Vec::new());
+            provider.action_results.borrow_mut().push(Ok(()));
+            let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+
+            state.apply(&provider, &id, Command::ToggleAutostart, now);
+            assert_eq!(state.confirmation, Some(action));
+            assert!(provider.actions.borrow().is_empty());
+            state.apply(&provider, &id, Command::Cancel, now);
+            assert!(state.confirmation.is_none());
+            assert_eq!(state.current.autostart.state, initial);
+            state.apply(&provider, &id, Command::ToggleAutostart, now);
+            state.apply(&provider, &id, Command::ConfirmAction, now);
+            assert_eq!(*provider.actions.borrow(), [action]);
+            assert_eq!(state.current.autostart.state, expected);
+            assert_eq!(state.current.service, Some(service.clone()));
+            assert!(provider.brags.borrow().is_empty());
+            state.refresh(&provider, &id, now + Duration::from_secs(1));
+            assert!(state.current.message.unwrap().contains("successfully"));
+        }
+    }
+
+    #[test]
+    fn unavailable_autostart_and_failed_actions_do_not_guess_or_mutate() {
+        let now = Instant::now();
+        let mut first = sample();
+        let id = first.character.id.clone();
+        first.autostart = AutostartStatus::unavailable("missing template");
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+        state.apply(&provider, &id, Command::ToggleAutostart, now);
+        assert!(state.confirmation.is_none());
+        assert!(provider.actions.borrow().is_empty());
+        assert!(
+            state
+                .current
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("missing template")
+        );
+
+        let first = sample();
+        let id = first.character.id.clone();
+        let tasks = first.character.activity.tasks;
+        provider
+            .action_results
+            .borrow_mut()
+            .push(Err(DashboardError::Lifecycle(
+                LifecycleError::ManagerUnavailable("permission denied".to_owned()),
+            )));
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+        state.apply(&provider, &id, Command::ToggleAutostart, now);
+        state.apply(&provider, &id, Command::ConfirmAction, now);
+        assert_eq!(state.current.autostart.state, AutostartState::Disabled);
+        assert_eq!(state.current.character.activity.tasks, tasks);
+        assert!(
+            state
+                .current
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("permission denied")
+        );
+    }
+
+    #[test]
+    fn autostart_external_changes_refresh_only_with_service_status() {
+        let first = sample();
+        let id = first.character.id.clone();
+        let mut next = first.clone();
+        next.autostart.state = AutostartState::Enabled;
+        let provider = fake_provider(vec![Ok(next)], vec![Ok(first.character.clone())]);
+        let now = Instant::now();
+        let mut state = DashboardState::new(first, now, Duration::from_secs(1));
+        state.read_state(&provider, &id, now);
+        assert_eq!(state.current.autostart.state, AutostartState::Disabled);
+        assert_eq!(provider.refreshes.get(), 0);
+        state.refresh(&provider, &id, now + Duration::from_secs(1));
+        assert_eq!(state.current.autostart.state, AutostartState::Enabled);
+        assert_eq!(provider.refreshes.get(), 1);
+    }
+
+    #[test]
+    fn autostart_status_and_confirmation_render_in_both_layouts() {
+        for width in [40, 70, 90, 120, 180] {
+            for state in [
+                AutostartState::Enabled,
+                AutostartState::Disabled,
+                AutostartState::Unavailable,
+            ] {
+                let mut snapshot = sample();
+                snapshot.autostart.state = state;
+                let output = rendered_snapshot(width, 40, &snapshot, &PaneVisibility::default());
+                assert!(
+                    output.contains(&format!("Autostart: {}", state.label())),
+                    "width={width}\n{output}"
+                );
+                assert!(output.contains("a auto"), "width={width}");
+            }
+            let mut terminal = Terminal::new(TestBackend::new(width, 40)).unwrap();
+            terminal
+                .draw(|frame| {
+                    render_test(
+                        frame,
+                        &sample(),
+                        0,
+                        &RecentTaskUpdates::default(),
+                        Some(LifecycleAction::EnableAutostart),
+                        &PaneVisibility::default(),
+                    )
+                })
+                .unwrap();
+            let output = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(output.contains("autostart"), "width={width}");
+            assert!(output.contains("Enter=yes"), "width={width}");
+            assert!(output.contains("Esc=cancel"), "width={width}");
+            assert!(output.contains("worker activity"), "width={width}");
+        }
+        assert_eq!(
+            command(key_event(KeyCode::Char('a'))),
+            Command::ToggleAutostart
+        );
+    }
 
     #[test]
     fn lifecycle_help_describes_the_contextual_action() {
@@ -5529,9 +5770,9 @@ mod tests {
 
         assert_eq!(
             line.to_string(),
-            "q quit | b brag | m motto | g guild | s start"
+            "q quit | b brag | m motto | g guild | s start | a auto"
         );
-        for index in [0, 2, 4, 6, 8] {
+        for index in [0, 2, 4, 6, 8, 11] {
             assert!(
                 line.spans[index]
                     .style
@@ -5553,7 +5794,9 @@ mod tests {
                 output.contains("Runtime ownership: not owned"),
                 "width={width}"
             );
-            for shortcut in ["q quit", "b brag", "m motto", "g guild", "s start"] {
+            for shortcut in [
+                "q quit", "b brag", "m motto", "g guild", "s start", "a auto",
+            ] {
                 assert!(
                     output.contains(shortcut),
                     "width={width}, shortcut={shortcut}"

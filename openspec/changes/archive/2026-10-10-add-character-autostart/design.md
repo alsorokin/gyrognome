@@ -28,7 +28,9 @@ account-wide boot configuration, service installation, or restart policy changes
 
 Extend the existing runner with enable, disable, and is-enabled operations for
 the validated `gyrognome@<id>.service` instance. Enable/disable must not use
-`--now` or `--runtime`. Query unit-file state on demand, including after setting
+`--now` or `--runtime`. Use `--root=/ --no-reload` for unit-file operations so
+systemctl works directly on the invoking user's configuration even without
+a user bus; no running unit definition is being changed. Query unit-file state on demand, including after setting
 the preference, rather than storing a separate database flag that could drift
 from external `systemctl` changes.
 
@@ -85,7 +87,10 @@ cleanup at all for cancellation or an owned/active character.
 Use systemd unit-file operations, which can operate without a running user bus,
 for cleanup; a stopped user manager alone must not make direct-worker deletion
 depend on an active session. A proven absent template and absent startup
-registration is a no-op. Preserve deletion on installations without optional
+registration is a no-op. Run disable even when the template is missing, since
+is-enabled reports not-found for a dangling startup link too. Accept only
+recognized missing-unit diagnostics and verify the post-cleanup unit-file state.
+Preserve deletion on installations without optional
 service integration; absence of integration must be established, not inferred
 from a generic command failure.
 

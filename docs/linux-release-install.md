@@ -59,6 +59,28 @@ bearer credentials. If `systemd --user` is unavailable, run
 `"$HOME/.local/bin/gyro" worker <id>` directly in a foreground terminal.
 Service lifecycle commands do not work without a user manager.
 
+**Optional per-character autostart:** After installing the service template,
+use `gyro autostart <id> on` for each character you want to resume automatically.
+Use `gyro autostart <id> off` to disable it and `gyro status <id>` to inspect it.
+The dashboard shows the same preference and offers an `a` toggle (`auto` in
+key help), confirmed with Enter or cancelled with Escape.
+Registration and installation leave autostart off unless the instance was
+already enabled externally.
+
+This is persistent systemd enablement, separate from current activity: On does
+not start an inactive worker, Off does not stop an active worker, and
+Start/Stop/Recover do not change it. An enabled character starts when your user
+manager next starts, normally at login, even if you previously stopped it.
+Unit-file preference changes do not require a running user manager.
+
+For startup after reboot **before login**, and continued operation after logout,
+separately run `loginctl enable-linger "$USER"` if permitted by the host. This
+account-wide change may require administrator authorization; Gyrognome never
+makes it automatically. Without lingering, On is not a promise of pre-login
+startup. Keep the absolute executable path configured above valid.
+Workers resume saved state with existing rested-time and reporting gates,
+not instant offline progress.
+
 ## Upgrade, backup, and rollback
 
 Stop active managed-character services with `gyro stop <id>` (or stop a direct
@@ -73,6 +95,13 @@ test -d "$data_dir" && test ! -e "$backup_dir" || { echo "No store or backup alr
 umask 077
 cp -a "$data_dir" "$backup_dir"
 ```
+
+Autostart enablement survives binary upgrades and rollback. If rolling back to
+a version without the autostart command, disable an instance with
+`systemctl --user disable gyrognome@<id>.service` without `--now`; use Stop
+separately if needed. Confirmed character deletion removes its startup
+registration before deleting data. If startup cleanup fails, the character
+remains registered.
 
 Keep this backup outside the repository and inaccessible to other users.
 Replace the two
