@@ -114,5 +114,6 @@ If the new binary fails, stop workers and restore the old binaries/unit. If
 opening the store migrated its schema, an older binary might not understand
 it: restore the `characters.sqlite3.pre-v<schema>.backup` snapshot to a
 private `0700` data directory as `characters.sqlite3` with mode `0600`, as
-described in the repository README. That restore loses progression recorded
+described in the [character-management guide](managing-characters.md#storage-backup-and-rollback).
+That restore loses progression recorded
 after the snapshot; keep a separate backup of the newer store.
