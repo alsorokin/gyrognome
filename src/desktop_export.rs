@@ -90,7 +90,9 @@ pub fn encode_desktop_save(
     encoder
         .write_all(&stream)
         .map_err(|_| DesktopExportError::Compression)?;
-    encoder.finish().map_err(|_| DesktopExportError::Compression)
+    encoder
+        .finish()
+        .map_err(|_| DesktopExportError::Compression)
 }
 
 fn properties(
@@ -445,8 +447,7 @@ mod tests {
     }
 
     fn round_trip(save: &DesktopValidatedSave) -> DesktopValidatedSave {
-        let bytes =
-            encode_desktop_save(&DesktopCanonicalState::from(save), &save.private).unwrap();
+        let bytes = encode_desktop_save(&DesktopCanonicalState::from(save), &save.private).unwrap();
         match save::import_supported_bytes(&bytes).unwrap() {
             ImportedSave::Desktop(imported) => imported,
             ImportedSave::Browser(_) => panic!("expected a desktop save"),

@@ -498,7 +498,12 @@ impl Character {
         );
         root.insert(
             "Quests".to_owned(),
-            Value::Array(self.quests.iter().map(|q| Value::from(q.as_str())).collect()),
+            Value::Array(
+                self.quests
+                    .iter()
+                    .map(|q| Value::from(q.as_str()))
+                    .collect(),
+            ),
         );
         merge(&mut root, "ExpBar", bar(&self.progress.experience));
         merge(&mut root, "EncumBar", bar(&self.progress.encumbrance));
@@ -521,7 +526,10 @@ impl Character {
                 ],
             );
         }
-        for (key, value) in [("motto", &self.profile.motto), ("guild", &self.profile.guild)] {
+        for (key, value) in [
+            ("motto", &self.profile.motto),
+            ("guild", &self.profile.guild),
+        ] {
             if value.is_empty() && !root.contains_key(key) {
                 continue;
             }
@@ -782,9 +790,15 @@ mod tests {
             quantity: 3,
         });
         character.profile.motto = "Onward".to_owned();
-        character.progress.task.reposition(super::ProgressBarKind::Task, 12.5);
+        character
+            .progress
+            .task
+            .reposition(super::ProgressBarKind::Task, 12.5);
         let exported = character.to_document();
-        assert_eq!(exported["unrecognized-future-field"], document["unrecognized-future-field"]);
+        assert_eq!(
+            exported["unrecognized-future-field"],
+            document["unrecognized-future-field"]
+        );
         assert_eq!(exported["online"]["passkey"], document["online"]["passkey"]);
         let reimported = Character::from_document(exported).unwrap();
         assert_eq!(

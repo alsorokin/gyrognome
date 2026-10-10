@@ -214,11 +214,7 @@ mod tests {
     }
 
     impl ServiceRunner for &FakeRunner {
-        fn run(
-            &self,
-            action: ServiceAction,
-            _unit: &str,
-        ) -> Result<ServiceOutput, LifecycleError> {
+        fn run(&self, action: ServiceAction, _unit: &str) -> Result<ServiceOutput, LifecycleError> {
             self.actions.borrow_mut().push(action);
             let _ = &self.pending;
             Ok(ServiceOutput {
@@ -279,7 +275,10 @@ mod tests {
             false,
             &mut |_| Ok(false),
         );
-        assert!(matches!(declined, Err(ExportError::OverwriteNotConfirmed(_))));
+        assert!(matches!(
+            declined,
+            Err(ExportError::OverwriteNotConfirmed(_))
+        ));
         assert_eq!(fs::read(&output).unwrap(), b"old");
 
         export_character(
@@ -307,8 +306,14 @@ mod tests {
         assert!(matches!(result, Err(ExportError::RestartFailed { .. })));
         assert!(save::import_file(&output).is_ok());
         let actions = runner.actions.borrow();
-        let stop = actions.iter().position(|a| *a == ServiceAction::Stop).unwrap();
-        let start = actions.iter().position(|a| *a == ServiceAction::Start).unwrap();
+        let stop = actions
+            .iter()
+            .position(|a| *a == ServiceAction::Stop)
+            .unwrap();
+        let start = actions
+            .iter()
+            .position(|a| *a == ServiceAction::Start)
+            .unwrap();
         assert!(stop < start);
     }
 
@@ -320,7 +325,10 @@ mod tests {
         let result = export_character(&store, &runner, &id, Some(&output), false, &mut |_| {
             Ok(true)
         });
-        assert!(matches!(result, Err(ExportError::RestartAfterFailure { .. })));
+        assert!(matches!(
+            result,
+            Err(ExportError::RestartAfterFailure { .. })
+        ));
         assert!(runner.actions.borrow().contains(&ServiceAction::Start));
     }
 

@@ -9,7 +9,6 @@ pub mod desktop_contract;
 pub mod desktop_eligibility;
 pub mod desktop_evidence;
 pub mod desktop_export;
-pub mod export;
 mod desktop_fingerprint;
 #[cfg(feature = "desktop-live-conformance")]
 pub mod desktop_live_conformance;
@@ -19,6 +18,7 @@ pub mod desktop_rules;
 pub mod desktop_save;
 pub mod desktop_simulation;
 pub mod desktop_transport;
+pub mod export;
 pub mod fixtures;
 pub mod guild;
 pub mod lifecycle;
