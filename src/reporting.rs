@@ -464,6 +464,20 @@ fn official_endpoint(request: &str) -> Result<Url, ReportingError> {
     Ok(endpoint)
 }
 
+fn browser_report_host(host: &str) -> Result<&'static str, ReportingError> {
+    let mut endpoint = Url::parse(host).map_err(|_| ReportingError::Construction)?;
+    if endpoint.scheme() == "http" {
+        endpoint
+            .set_scheme("https")
+            .map_err(|_| ReportingError::Construction)?;
+    }
+    let endpoint = official_endpoint(endpoint.as_str())?;
+    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
+        return Err(ReportingError::UnofficialEndpoint);
+    }
+    Ok(OFFICIAL_LEADERBOARD_HOST)
+}
+
 pub struct ReportResult {
     pub identity: CharacterIdentity,
     pub realm: String,
@@ -538,10 +552,7 @@ pub fn submit(
         .as_ref()
         .map(|online| online.host.as_str())
         .ok_or(StorageError::ReportingIneligible)?;
-    let endpoint = official_endpoint(host)?;
-    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
-        return Err(ReportingError::UnofficialEndpoint);
-    }
+    let host = browser_report_host(host)?;
     let realm = state
         .online
         .as_ref()
@@ -651,10 +662,7 @@ fn set_guild_with_evidence(
         .as_ref()
         .map(|online| online.host.as_str())
         .ok_or(StorageError::ReportingIneligible)?;
-    let endpoint = official_endpoint(host)?;
-    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
-        return Err(ReportingError::UnofficialEndpoint);
-    }
+    let host = browser_report_host(host)?;
     let request = protocol::guild_request(host, state, designation, target.passkey)
         .map_err(|_| ReportingError::Construction)?;
     let outcome = transport.guild(
@@ -694,10 +702,7 @@ fn set_motto_with_evidence(
         .as_ref()
         .map(|online| online.host.as_str())
         .ok_or(StorageError::ReportingIneligible)?;
-    let endpoint = official_endpoint(host)?;
-    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
-        return Err(ReportingError::UnofficialEndpoint);
-    }
+    let host = browser_report_host(host)?;
 
     let mut profile = state.profile.clone();
     profile.motto = motto.to_owned();
@@ -756,10 +761,7 @@ pub(crate) fn submit_event(
         .as_ref()
         .map(|online| online.host.as_str())
         .ok_or(StorageError::ReportingIneligible)?;
-    let endpoint = official_endpoint(host)?;
-    if endpoint.as_str().trim_end_matches('?') != OFFICIAL_LEADERBOARD_ENDPOINT {
-        return Err(ReportingError::UnofficialEndpoint);
-    }
+    let host = browser_report_host(host)?;
     let request = protocol::progress_report(
         host,
         state,
@@ -1560,6 +1562,127 @@ mod tests {
         let mut store = Store::open_at(&directory.0).unwrap();
         let id = store.register(&character).unwrap().id;
         (directory, store, id)
+    }
+
+    #[test]
+    fn browser_report_host_accepts_only_the_official_endpoint() {
+        for host in [
+            "http://progressquest.com/alpaquil.php",
+            "http://progressquest.com/alpaquil.php?",
+            OFFICIAL_LEADERBOARD_ENDPOINT,
+            OFFICIAL_LEADERBOARD_HOST,
+        ] {
+            assert_eq!(
+                browser_report_host(host).unwrap(),
+                OFFICIAL_LEADERBOARD_HOST
+            );
+        }
+        for host in [
+            "http://example.invalid/alpaquil.php?",
+            "https://progressquest.com.example.invalid/alpaquil.php?",
+            "http://progressquest.com/spoltog.php?",
+            "http://progressquest.com:8080/alpaquil.php?",
+            "http://user@progressquest.com/alpaquil.php?",
+            "http://user:password@progressquest.com/alpaquil.php?",
+            "http://progressquest.com/alpaquil.php?cmd=create",
+            "http://progressquest.com/alpaquil.php?#fragment",
+            "ftp://progressquest.com/alpaquil.php?",
+        ] {
+            assert!(matches!(
+                browser_report_host(host),
+                Err(ReportingError::UnofficialEndpoint)
+            ));
+        }
+        assert!(matches!(
+            browser_report_host("not a URL"),
+            Err(ReportingError::Construction)
+        ));
+        assert!(matches!(
+            official_endpoint("http://progressquest.com/alpaquil.php?cmd=b"),
+            Err(ReportingError::UnofficialEndpoint)
+        ));
+    }
+
+    #[test]
+    fn imported_browser_endpoints_use_https_for_all_online_actions() {
+        for host in [
+            "http://progressquest.com/alpaquil.php?",
+            "http://progressquest.com/alpaquil.php",
+            OFFICIAL_LEADERBOARD_ENDPOINT,
+            OFFICIAL_LEADERBOARD_HOST,
+        ] {
+            let directory = TestDirectory::new();
+            let mut document: serde_json::Value =
+                serde_json::from_str(include_str!("../tests/fixtures/reference-save.json"))
+                    .unwrap();
+            document["online"]["host"] = host.into();
+            let character =
+                save::import_text(&STANDARD.encode(serde_json::to_vec(&document).unwrap()))
+                    .unwrap();
+            let mut store = Store::open_at(&directory.0).unwrap();
+            let id = store.register(&character).unwrap().id;
+            let transport = ProfileTransport {
+                requests: RefCell::new(Vec::new()),
+                outcome: DeliveryOutcome::Delivered,
+            };
+            let guild_transport = GuildRecorder {
+                calls: RefCell::new(Vec::new()),
+                outcome: GuildOutcome::Accepted,
+            };
+
+            assert_eq!(
+                submit(&store, &id, &transport).unwrap().outcome,
+                DeliveryOutcome::Delivered
+            );
+            assert_eq!(
+                set_motto(&mut store, &id, "Legacy motto", &transport)
+                    .unwrap()
+                    .outcome,
+                DeliveryOutcome::Delivered
+            );
+            assert_eq!(
+                set_guild(&mut store, &id, "Legacy guild", &guild_transport)
+                    .unwrap()
+                    .outcome,
+                GuildOutcome::Accepted
+            );
+
+            let mut initial =
+                checkpoint::load(Path::new("tests/fixtures/checkpoint-level-up.json"))
+                    .unwrap()
+                    .initial;
+            initial.online = character.online.clone();
+            initial.queue = vec!["plot|1|Loading".to_owned()];
+            let trace = advance_with_trace(&initial, &crate::ruleset::BUNDLED, 1_000, "").unwrap();
+            store.replace_state(&id, &trace.state).unwrap();
+            assert_eq!(
+                trace
+                    .events
+                    .iter()
+                    .map(|event| event.trigger)
+                    .collect::<Vec<_>>(),
+                [ReportTrigger::LevelUp, ReportTrigger::ActCompletion]
+            );
+            for event in &trace.events {
+                assert_eq!(
+                    submit_event(&store, &id, event, &transport)
+                        .unwrap()
+                        .outcome,
+                    DeliveryOutcome::Delivered
+                );
+            }
+            assert_eq!(
+                transport
+                    .requests
+                    .borrow()
+                    .iter()
+                    .map(|(trigger, _)| trigger.as_str())
+                    .collect::<Vec<_>>(),
+                ["b", "m", "l", "a"]
+            );
+            assert_eq!(guild_transport.calls.borrow().len(), 1);
+            assert_eq!(store.get(&id).unwrap().state.online.unwrap().host, host);
+        }
     }
 
     #[test]
