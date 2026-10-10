@@ -86,7 +86,7 @@ atomically. It SHALL not remove a character while a local runtime owns it.
 - **THEN** the system reports the failure and retains a complete readable
   managed character rather than a partial record
 
-### Requirement: Controlled offline advancement
+### Requirement: Runtime active-time advancement
 
 The system SHALL advance a running managed character using elapsed time
 measured only by its active runtime. It SHALL supply explicit monotonic inputs
@@ -94,50 +94,6 @@ to the selected profile, distinguishing real awake active time from simulated
 time under the rested-progression contract. Time while stopped or asleep SHALL
 NOT be applied as immediate catch-up; it SHALL accumulate capped rest for
 future active progression.
-
-For browser characters, the system SHALL durably record each successful result
-with its rested accounting. Each update SHALL cap contributing real active
-time at the configured worker interval and discard excess scheduler delay
-permanently. Updates SHALL occur at the earlier of the interval, rested-bank
-exhaustion, and the tick-aligned task completion at the applicable speed. The
-runtime SHALL service stable 100-millisecond virtual ticks, persisting any
-fractional virtual-time remainder without padding it into extra progression.
-The interval SHALL remain the maximum single real-time contribution; virtual
-time earned SHALL be at most twice that contribution, with an earlier
-remainder available to complete a tick. Task-aligned scheduling SHALL preserve
-the browser's canonical/random continuation compared with equivalent fixed
-scheduling that supplies the same complete tick sequence. Arbitrary
-non-tick-aligned partitions SHALL NOT be claimed equivalent.
-
-For desktop characters, the runtime SHALL schedule callbacks at a fixed rate
-of one per 109.375 milliseconds, approximating the original client's 100 ms
-timer on default Windows timer resolution, so that time spent processing a
-callback does not lengthen the period. Each actual callback SHALL credit its
-monotonic elapsed input, distinguishing real awake active time from simulated
-time. Without rest, callbacks SHALL remain one per 109.375 milliseconds. While
-rested, the runtime SHALL use a 2x virtual clock, with callbacks spaced by
-54.6875 real milliseconds and callback elapsed inputs scaled by the applicable
-speed. Inputs spanning rest exhaustion SHALL account for their boosted and
-normal portions rather than applying 2x to the entire interval.
-
-Each actual desktop callback SHALL credit its virtual elapsed input according
-to the unchanged 0..100-millisecond profile cap and SHALL preserve the
-full-bar-then-complete boundary. When callbacks fall behind schedule, the
-runtime SHALL skip missed callbacks rather than run them back to back. It SHALL
-NOT synthesize missed callbacks or accelerate callback frequency to drain a
-full task; rested pacing SHALL be the sole intentional acceleration. Restart
-and wake SHALL reestablish timing baselines while retaining the last durably
-recorded state and accounted rest. Time delayed by online delivery SHALL NOT
-become catch-up advancement or earned rest.
-
-Desktop runtime state and rested accounting SHALL be durably recorded at
-least: when a callback dispatches completion; before any callback report is
-delivered; when local-only provenance is first recorded; on graceful stop; and
-at bounded checkpoints no farther than one awake second apart while callbacks
-are being serviced. Partial task progress SHALL NOT require a durable write on
-every callback. Between commit points, unrecorded progress and accounting
-SHALL roll back together on abnormal exit, without duplicating committed
-completion rewards or reports.
 
 #### Scenario: Advancing while the runtime is active
 
@@ -170,6 +126,22 @@ completion rewards or reports.
 - **THEN** an elapsed-duration error leaves the last successful
   state/accounting intact
 
+### Requirement: Browser runtime scheduling and persistence
+
+For browser characters, the system SHALL durably record each successful result
+with its rested accounting. Each update SHALL cap contributing real active
+time at the configured worker interval and discard excess scheduler delay
+permanently. Updates SHALL occur at the earlier of the interval, rested-bank
+exhaustion, and the tick-aligned task completion at the applicable speed. The
+runtime SHALL service stable 100-millisecond virtual ticks, persisting any
+fractional virtual-time remainder without padding it into extra progression.
+The interval SHALL remain the maximum single real-time contribution; virtual
+time earned SHALL be at most twice that contribution, with an earlier
+remainder available to complete a tick. Task-aligned scheduling SHALL preserve
+the browser's canonical/random continuation compared with equivalent fixed
+scheduling that supplies the same complete tick sequence. Arbitrary
+non-tick-aligned partitions SHALL NOT be claimed equivalent.
+
 #### Scenario: Recording a task completion when it occurs
 
 - **WHEN** a browser task completes before the worker interval elapses
@@ -196,6 +168,29 @@ completion rewards or reports.
 - **THEN** the runtime services it at the next complete virtual tick without
   a zero-duration busy loop or excess credited time
 
+### Requirement: Desktop runtime callback pacing
+
+For desktop characters, the runtime SHALL schedule callbacks at a fixed rate
+of one per 109.375 milliseconds, approximating the original client's 100 ms
+timer on default Windows timer resolution, so that time spent processing a
+callback does not lengthen the period. Each actual callback SHALL credit its
+monotonic elapsed input, distinguishing real awake active time from simulated
+time. Without rest, callbacks SHALL remain one per 109.375 milliseconds. While
+rested, the runtime SHALL use a 2x virtual clock, with callbacks spaced by
+54.6875 real milliseconds and callback elapsed inputs scaled by the applicable
+speed. Inputs spanning rest exhaustion SHALL account for their boosted and
+normal portions rather than applying 2x to the entire interval.
+
+Each actual desktop callback SHALL credit its virtual elapsed input according
+to the unchanged 0..100-millisecond profile cap and SHALL preserve the
+full-bar-then-complete boundary. When callbacks fall behind schedule, the
+runtime SHALL skip missed callbacks rather than run them back to back. It SHALL
+NOT synthesize missed callbacks or accelerate callback frequency to drain a
+full task; rested pacing SHALL be the sole intentional acceleration. Restart
+and wake SHALL reestablish timing baselines while retaining the last durably
+recorded state and accounted rest. Time delayed by online delivery SHALL NOT
+become catch-up advancement or earned rest.
+
 #### Scenario: Pacing desktop callbacks independent of processing time
 
 - **WHEN** a desktop runtime runs for one minute and each callback takes a
@@ -210,6 +205,36 @@ completion rewards or reports.
   callback times have already passed
 - **THEN** the runtime uses the next future deadline and credits at most
   100 virtual milliseconds without back-to-back catch-up callbacks
+
+#### Scenario: Pacing rested desktop callbacks
+
+- **WHEN** a desktop worker has rest available for a minute with negligible
+  processing delay
+- **THEN** approximately twice as many callbacks occur as at normal speed,
+  using the same profile transitions and per-callback cap
+
+#### Scenario: Completing a rested desktop task
+
+- **WHEN** a rested callback fills the desktop task bar
+- **THEN** completion still waits for the next actual callback and does not
+  also advance the following task
+
+#### Scenario: Returning to normal desktop pacing
+
+- **WHEN** the desktop worker exhausts its bank
+- **THEN** subsequent pacing returns to 109.375 milliseconds without a
+  missed-callback burst or resetting its task
+
+### Requirement: Desktop runtime commit boundaries
+
+Desktop runtime state and rested accounting SHALL be durably recorded at
+least: when a callback dispatches completion; before any callback report is
+delivered; when local-only provenance is first recorded; on graceful stop; and
+at bounded checkpoints no farther than one awake second apart while callbacks
+are being serviced. Partial task progress SHALL NOT require a durable write on
+every callback. Between commit points, unrecorded progress and accounting
+SHALL roll back together on abnormal exit, without duplicating committed
+completion rewards or reports.
 
 #### Scenario: Committing a desktop task completion
 
@@ -249,25 +274,6 @@ completion rewards or reports.
   progress
 - **THEN** the next start restores the last complete state/accounting
   checkpoint without repeating recorded rewards or reports
-
-#### Scenario: Pacing rested desktop callbacks
-
-- **WHEN** a desktop worker has rest available for a minute with negligible
-  processing delay
-- **THEN** approximately twice as many callbacks occur as at normal speed,
-  using the same profile transitions and per-callback cap
-
-#### Scenario: Completing a rested desktop task
-
-- **WHEN** a rested callback fills the desktop task bar
-- **THEN** completion still waits for the next actual callback and does not
-  also advance the following task
-
-#### Scenario: Returning to normal desktop pacing
-
-- **WHEN** the desktop worker exhausts its bank
-- **THEN** subsequent pacing returns to 109.375 milliseconds without a
-  missed-callback burst or resetting its task
 
 #### Scenario: Checkpointing a long desktop task
 
