@@ -53,11 +53,9 @@ systemctl --user daemon-reload
 The unit is not enabled or started by installation. Register a character with
 `"$HOME/.local/bin/gyro" register /path/to/save.pqw` and use the returned ID
 with `"$HOME/.local/bin/gyro" start <id>`; the service manager then launches
-that installed executable, independently of its PATH. Avoid importing a real
-save into an untrusted test environment: online-originated saves may contain
-bearer credentials. If `systemd --user` is unavailable, run
-`"$HOME/.local/bin/gyro" worker <id>` directly in a foreground terminal.
-Service lifecycle commands do not work without a user manager.
+that installed executable, independently of its PATH. If `systemd --user`
+is unavailable, run `"$HOME/.local/bin/gyro" worker <id>` directly in a
+foreground terminal. Service lifecycle commands do not work without a user manager.
 
 **Optional per-character autostart:** After installing the service template,
 use `gyro autostart <id> on` for each character you want to resume automatically.
