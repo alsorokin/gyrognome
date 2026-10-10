@@ -6,6 +6,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Added
 
+- Adventure automatically reveals updated inventory items and spells, pausing
+  for 30 seconds after manual scrolling without replaying suppressed updates.
 - Per-character persistent autostart through `gyro autostart <id> on|off` and
   a confirmed dashboard `a` toggle, with independent startup status in CLI
   text/JSON and both dashboard layouts. Uses existing systemd user services

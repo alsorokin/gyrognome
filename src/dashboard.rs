@@ -929,6 +929,14 @@ struct PaneScroll {
     offsets: [u16; Pane::ALL.len()],
     focused: Option<Pane>,
     compact: u16,
+    adventure_reveal: Option<AdventureEntry>,
+    adventure_resume_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdventureEntry {
+    Inventory(usize),
+    Spell(usize),
 }
 
 impl PaneScroll {
@@ -1191,6 +1199,7 @@ impl DashboardState {
     }
 
     fn replace_character(&mut self, character: DashboardCharacter, now: Instant) {
+        self.scroll.adventure_reveal = None;
         let mut next_anchor = TaskAnchor::from_character(&character, now);
         if next_anchor.identity == self.task_anchor.identity
             && self.current.runtime_owned == Some(true)
@@ -1202,6 +1211,16 @@ impl DashboardState {
         }
         if character.activity.tasks > self.current.character.activity.tasks {
             self.updates = RecentTaskUpdates::between(&self.current.character, &character);
+            if self.layout.full_layout
+                && !self.panes.is_collapsed(Pane::Adventure)
+                && self.layout.panes[Pane::Adventure.index()].is_some()
+                && self
+                    .scroll
+                    .adventure_resume_at
+                    .is_none_or(|deadline| now >= deadline)
+            {
+                self.scroll.adventure_reveal = first_adventure_update(&character, &self.updates);
+            }
         }
         self.current.character = character;
         self.task_anchor = next_anchor;
@@ -1504,22 +1523,26 @@ impl DashboardState {
                 false
             }
             Command::ScrollLine(direction) => {
-                self.scroll_active(direction, 1);
+                self.scroll_active(direction, 1, now);
                 false
             }
             Command::ScrollPage(direction) => {
-                self.scroll_active_page(direction);
+                self.scroll_active_page(direction, now);
                 false
             }
             Command::MouseScroll(direction, column, row) => {
-                self.scroll_at_position(direction, column, row);
+                self.scroll_at_position(direction, column, row, now);
                 false
             }
             Command::None | Command::Insert(_) | Command::Backspace => false,
         }
     }
 
-    fn scroll_pane(&mut self, pane: Pane, direction: ScrollDirection, amount: u16) {
+    fn scroll_pane(&mut self, pane: Pane, direction: ScrollDirection, amount: u16, now: Instant) {
+        if pane == Pane::Adventure && !self.panes.is_collapsed(pane) {
+            self.scroll.adventure_resume_at = Some(now + Duration::from_secs(30));
+            self.scroll.adventure_reveal = None;
+        }
         let max_offset = self
             .layout
             .panes
@@ -1550,17 +1573,17 @@ impl DashboardState {
 
     /// Scrolls the keyboard-focused pane in the full layout, or the
     /// combined Character pane in the compact layout, by `amount` rows.
-    fn scroll_active(&mut self, direction: ScrollDirection, amount: u16) {
+    fn scroll_active(&mut self, direction: ScrollDirection, amount: u16, now: Instant) {
         if self.layout.full_layout {
             if let Some(pane) = self.scroll.focused {
-                self.scroll_pane(pane, direction, amount);
+                self.scroll_pane(pane, direction, amount, now);
             }
         } else {
             self.scroll_compact(direction, amount);
         }
     }
 
-    fn scroll_active_page(&mut self, direction: ScrollDirection) {
+    fn scroll_active_page(&mut self, direction: ScrollDirection, now: Instant) {
         let amount = if self.layout.full_layout {
             self.scroll
                 .focused
@@ -1574,15 +1597,21 @@ impl DashboardState {
                 .unwrap_or(1)
         }
         .max(1);
-        self.scroll_active(direction, amount);
+        self.scroll_active(direction, amount, now);
     }
 
-    fn scroll_at_position(&mut self, direction: ScrollDirection, column: u16, row: u16) {
+    fn scroll_at_position(
+        &mut self,
+        direction: ScrollDirection,
+        column: u16,
+        row: u16,
+        now: Instant,
+    ) {
         if self.layout.full_layout {
             for pane in Pane::ALL {
                 if let Some(viewport) = self.layout.panes[pane.index()] {
                     if rect_contains(viewport.rect, column, row) {
-                        self.scroll_pane(pane, direction, 1);
+                        self.scroll_pane(pane, direction, 1, now);
                         return;
                     }
                 }
@@ -1685,6 +1714,7 @@ fn render(
 ) {
     let area = frame.area();
     if area.width < MINIMUM_WIDTH || area.height < MINIMUM_HEIGHT {
+        scroll.adventure_reveal = None;
         frame.render_widget(
             Paragraph::new("Terminal is too small for the dashboard.\nResize to at least 40x12.")
                 .block(Block::default().borders(Borders::ALL).title("Gyrognome")),
@@ -1695,6 +1725,9 @@ fn render(
     }
 
     let full_layout = area.width >= 90;
+    if !full_layout || panes.is_collapsed(Pane::Adventure) {
+        scroll.adventure_reveal = None;
+    }
     layout.full_layout = full_layout;
     let header_height = if header_uses_single_line(&snapshot.character, area.width) {
         3
@@ -2229,18 +2262,32 @@ fn render_full(
         scroll,
         layout,
     );
+    let adventure = adventure_lines(state, updates, panes.is_collapsed(Pane::Journal));
+    if let Some(target) = scroll.adventure_reveal.take() {
+        if !panes.is_collapsed(Pane::Adventure) {
+            let inner = right[0].inner(Margin {
+                horizontal: 1,
+                vertical: 1,
+            });
+            if let Some((start, end)) = adventure_entry_rows(&adventure, target, inner.width) {
+                let height = usize::from(inner.height);
+                let offset = usize::from(scroll.offset(Pane::Adventure));
+                let next = if end - start + 1 > height || start < offset {
+                    start
+                } else {
+                    offset.max((end + 1).saturating_sub(height))
+                };
+                scroll.set_offset(Pane::Adventure, next.min(usize::from(u16::MAX)) as u16);
+            }
+        }
+    }
     render_pane(
         frame,
         right[0],
         "Adventure",
         Pane::Adventure,
         panes,
-        Paragraph::new(adventure_lines(
-            state,
-            updates,
-            panes.is_collapsed(Pane::Journal),
-        ))
-        .wrap(Wrap { trim: true }),
+        Paragraph::new(adventure).wrap(Wrap { trim: true }),
         scroll,
         layout,
     );
@@ -2274,6 +2321,90 @@ fn adventure_lines(
         )));
     }
     lines
+}
+
+fn first_adventure_update(
+    character: &DashboardCharacter,
+    updates: &RecentTaskUpdates,
+) -> Option<AdventureEntry> {
+    let first = |names: Vec<&str>, changed: &HashSet<RowKey>| {
+        let mut occurrences = HashMap::new();
+        names.into_iter().enumerate().find_map(|(index, name)| {
+            let occurrence = occurrences.entry(name).or_insert(0);
+            let key = RowKey {
+                name: name.to_owned(),
+                occurrence: *occurrence,
+            };
+            *occurrence += 1;
+            changed.contains(&key).then_some(index)
+        })
+    };
+    first(
+        character
+            .inventory
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect(),
+        &updates.inventory,
+    )
+    .map(AdventureEntry::Inventory)
+    .or_else(|| {
+        first(
+            character
+                .spells
+                .iter()
+                .map(|spell| spell.name.as_str())
+                .collect(),
+            &updates.spells,
+        )
+        .map(AdventureEntry::Spell)
+    })
+}
+
+fn adventure_entry_rows(
+    lines: &[Line<'static>],
+    target: AdventureEntry,
+    width: u16,
+) -> Option<(usize, usize)> {
+    if width == 0 {
+        return None;
+    }
+    let (line, index) = match target {
+        AdventureEntry::Inventory(index) => (0, index),
+        AdventureEntry::Spell(index) => (2, index),
+    };
+    let mut marked = lines.to_vec();
+    // Let Paragraph itself resolve wrapping, including trimmed spaces and wide
+    // graphemes. The marker is rendered only into a scratch buffer.
+    let marker = Color::Rgb(1, 2, 3);
+    for line in &mut marked {
+        for span in &mut line.spans {
+            span.style.bg = Some(Color::Reset);
+        }
+    }
+    marked.get_mut(line)?.spans.get_mut(1 + index * 2)?.style.bg = Some(marker);
+    let paragraph = Paragraph::new(marked).wrap(Wrap { trim: true });
+    let rows = paragraph.line_count(width).min(usize::from(u16::MAX));
+    let mut range = None;
+    // Bound scratch memory independently of the character's inventory size.
+    for top in (0..rows).step_by(128) {
+        let area = Rect::new(0, 0, width, (rows - top).min(128) as u16);
+        let mut buffer = Buffer::empty(area);
+        paragraph
+            .clone()
+            .scroll((top as u16, 0))
+            .render(area, &mut buffer);
+        for row in 0..area.height {
+            if (0..width).any(|column| buffer[(column, row)].bg == marker) {
+                let absolute = top + usize::from(row);
+                let (start, _) = range.unwrap_or((absolute, absolute));
+                range = Some((start, absolute));
+            } else if range.is_some() {
+                return range;
+            }
+        }
+    }
+    range
 }
 
 fn journal_lines(character: &DashboardCharacter) -> Vec<Line<'static>> {
@@ -5957,7 +6088,7 @@ mod tests {
     /// Renders the current state into a backend of the given size,
     /// populating `state.layout` and clamping `state.scroll` the same way
     /// the live dashboard loop does on every frame.
-    fn render_state(state: &mut DashboardState, width: u16, height: u16) {
+    fn render_state(state: &mut DashboardState, width: u16, height: u16) -> Buffer {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         let task_percent = state.displayed_task_percent(Instant::now());
@@ -5975,6 +6106,7 @@ mod tests {
                 )
             })
             .unwrap();
+        terminal.backend().buffer().clone()
     }
 
     /// Enough quest history and inventory to overflow both layouts.
@@ -5989,6 +6121,348 @@ mod tests {
             })
             .collect();
         snapshot
+    }
+
+    fn adventure_text(state: &DashboardState, buffer: &Buffer) -> String {
+        let area = state.layout.panes[Pane::Adventure.index()]
+            .unwrap()
+            .rect
+            .inner(Margin {
+                horizontal: 1,
+                vertical: 1,
+            });
+        let mut text = String::new();
+        for row in area.y..area.bottom() {
+            for column in area.x..area.right() {
+                text.push_str(buffer[(column, row)].symbol());
+            }
+            text.push('\n');
+        }
+        text
+    }
+
+    #[test]
+    fn adventure_updates_use_both_refresh_paths_and_are_one_shot() {
+        for combined in [false, true] {
+            let now = Instant::now();
+            let mut state =
+                DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+            render_state(&mut state, 120, 40);
+            let mut next = state.current.clone();
+            next.character.activity.tasks += 1;
+            next.character.inventory[190].quantity += 1;
+            let provider = fake_provider(vec![Ok(next.clone())], vec![Ok(next.character.clone())]);
+            let id = next.character.id.clone();
+            if combined {
+                state.refresh(&provider, &id, now);
+            } else {
+                state.read_state(&provider, &id, now);
+            }
+            assert_eq!(
+                state.scroll.adventure_reveal,
+                Some(AdventureEntry::Inventory(190))
+            );
+            let buffer = render_state(&mut state, 120, 40);
+            assert!(adventure_text(&state, &buffer).contains("Item 190 x2"));
+            assert!(state.scroll.adventure_reveal.is_none());
+            state.scroll.set_offset(Pane::Adventure, 0);
+            state.replace_character(next.character, now);
+            render_state(&mut state, 120, 40);
+            assert_eq!(state.scroll.offset(Pane::Adventure), 0);
+        }
+    }
+
+    #[test]
+    fn adventure_targets_follow_display_order_and_duplicate_occurrences() {
+        let mut previous = sample().character;
+        previous.inventory = vec![
+            InventoryEntry {
+                name: "Duplicate".into(),
+                quantity: 1,
+            },
+            InventoryEntry {
+                name: "Duplicate".into(),
+                quantity: 2,
+            },
+            InventoryEntry {
+                name: "Other".into(),
+                quantity: 1,
+            },
+        ];
+        previous.spells = vec![Spell {
+            name: "Spell".into(),
+            rank: "I".into(),
+        }];
+        let mut next = previous.clone();
+        next.inventory[1].quantity = 3;
+        next.inventory[2].quantity = 2;
+        next.spells[0].rank = "II".into();
+        let updates = RecentTaskUpdates::between(&previous, &next);
+        assert_eq!(
+            first_adventure_update(&next, &updates),
+            Some(AdventureEntry::Inventory(1))
+        );
+        next.inventory = previous.inventory.clone();
+        let updates = RecentTaskUpdates::between(&previous, &next);
+        assert_eq!(
+            first_adventure_update(&next, &updates),
+            Some(AdventureEntry::Spell(0))
+        );
+        next.spells = previous.spells.clone();
+        next.inventory.remove(2);
+        let updates = RecentTaskUpdates::between(&previous, &next);
+        assert_eq!(first_adventure_update(&next, &updates), None);
+        next.inventory.push(InventoryEntry {
+            name: "Added".into(),
+            quantity: 1,
+        });
+        let updates = RecentTaskUpdates::between(&previous, &next);
+        assert_eq!(
+            first_adventure_update(&next, &updates),
+            Some(AdventureEntry::Inventory(2))
+        );
+    }
+
+    #[test]
+    fn adventure_reveal_uses_wrapped_rows_and_minimal_movement() {
+        for spell in [false, true] {
+            for name in [
+                "Target",
+                "Target with   spaced words",
+                "Target 界界 e\u{301}",
+            ] {
+                let now = Instant::now();
+                let mut snapshot = overflowing_snapshot();
+                if spell {
+                    snapshot.character.spells = (0..100)
+                        .map(|index| Spell {
+                            name: format!("Spell {index}"),
+                            rank: "I".into(),
+                        })
+                        .collect();
+                    snapshot.character.spells[90].name = name.into();
+                } else {
+                    snapshot.character.inventory[190].name = name.into();
+                }
+                let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+                render_state(&mut state, 100, 20);
+                let mut next = state.current.character.clone();
+                next.activity.tasks += 1;
+                if spell {
+                    next.spells[90].rank = "II".into();
+                } else {
+                    next.inventory[190].quantity = 2;
+                }
+                state.replace_character(next, now);
+                let target = state.scroll.adventure_reveal.unwrap();
+                let viewport = state.layout.panes[Pane::Adventure.index()].unwrap();
+                let lines = adventure_lines(&state.current.character, &state.updates, false);
+                let (start, end) =
+                    adventure_entry_rows(&lines, target, viewport.rect.width - 2).unwrap();
+                let expected = (end + 1).saturating_sub(usize::from(viewport.inner_height));
+                let buffer = render_state(&mut state, 100, 20);
+                assert_eq!(usize::from(state.scroll.offset(Pane::Adventure)), expected);
+                let text = adventure_text(&state, &buffer);
+                assert!(text.contains("Target"), "{text}");
+                if name.contains('界') {
+                    assert!(text.replace(' ', "").contains("界界"), "{text}");
+                }
+                assert!(usize::from(state.scroll.offset(Pane::Adventure)) <= start);
+                // A visible entry stays in place on its next changed value.
+                let offset = state.scroll.offset(Pane::Adventure);
+                let mut next = state.current.character.clone();
+                next.activity.tasks += 1;
+                if spell {
+                    next.spells[90].rank = "IV".into();
+                } else {
+                    next.inventory[190].quantity = 3;
+                }
+                state.replace_character(next, now);
+                render_state(&mut state, 100, 20);
+                assert_eq!(state.scroll.offset(Pane::Adventure), offset);
+                // Revealing above the viewport aligns to the entry's first row.
+                state.scroll.set_offset(Pane::Adventure, (end + 2) as u16);
+                state.scroll.adventure_reveal = Some(target);
+                let buffer = render_state(&mut state, 100, 20);
+                let max_offset = state.layout.panes[Pane::Adventure.index()]
+                    .unwrap()
+                    .max_offset;
+                assert_eq!(
+                    usize::from(state.scroll.offset(Pane::Adventure)),
+                    start.min(usize::from(max_offset))
+                );
+                assert!(adventure_text(&state, &buffer).contains("Target"));
+            }
+        }
+    }
+
+    #[test]
+    fn adventure_reveal_shows_start_of_an_entry_taller_than_the_viewport() {
+        let now = Instant::now();
+        let mut snapshot = overflowing_snapshot();
+        snapshot.character.inventory[190].name = format!("Start {}", "long words ".repeat(100));
+        let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+        render_state(&mut state, 100, 20);
+        let mut next = state.current.character.clone();
+        next.activity.tasks += 1;
+        next.inventory[190].quantity += 1;
+        state.replace_character(next, now);
+        let target = state.scroll.adventure_reveal.unwrap();
+        let (start, end) = adventure_entry_rows(
+            &adventure_lines(&state.current.character, &state.updates, false),
+            target,
+            64,
+        )
+        .unwrap();
+        assert!(end - start > 10);
+        let buffer = render_state(&mut state, 100, 20);
+        let viewport = state.layout.panes[Pane::Adventure.index()].unwrap();
+        let (start, _) = adventure_entry_rows(
+            &adventure_lines(&state.current.character, &state.updates, false),
+            target,
+            viewport.rect.width - 2,
+        )
+        .unwrap();
+        assert_eq!(usize::from(state.scroll.offset(Pane::Adventure)), start);
+        assert!(adventure_text(&state, &buffer).contains("Start"));
+    }
+
+    #[test]
+    fn adventure_manual_scrolling_pauses_for_thirty_seconds_without_replay() {
+        for key in [
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+        ] {
+            let now = Instant::now();
+            let mut state =
+                DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+            render_state(&mut state, 120, 40);
+            state.scroll.focused = Some(Pane::Adventure);
+            let provider = fake_provider(Vec::new(), Vec::new());
+            let id = state.current.character.id.clone();
+            state.scroll.adventure_reveal = Some(AdventureEntry::Inventory(190));
+            state.handle_event(&provider, &id, key_event(key), now);
+            assert!(state.scroll.adventure_reveal.is_none());
+            assert_eq!(
+                state.scroll.adventure_resume_at,
+                Some(now + Duration::from_secs(30))
+            );
+            state.handle_event(
+                &provider,
+                &id,
+                key_event(KeyCode::Up),
+                now + Duration::from_secs(20),
+            );
+            assert_eq!(
+                state.scroll.adventure_resume_at,
+                Some(now + Duration::from_secs(50))
+            );
+            let mut next = state.current.character.clone();
+            next.activity.tasks += 1;
+            next.inventory[190].quantity += 1;
+            state.replace_character(next.clone(), now + Duration::from_secs(49));
+            assert!(state.scroll.adventure_reveal.is_none());
+            let offset = state.scroll.offset(Pane::Adventure);
+            render_state(&mut state, 120, 40);
+            state.replace_character(next.clone(), now + Duration::from_secs(50));
+            render_state(&mut state, 120, 40);
+            assert_eq!(state.scroll.offset(Pane::Adventure), offset);
+            next.activity.tasks += 1;
+            next.inventory[190].quantity += 1;
+            state.replace_character(next, now + Duration::from_secs(50));
+            assert_eq!(
+                state.scroll.adventure_reveal,
+                Some(AdventureEntry::Inventory(190))
+            );
+        }
+    }
+
+    #[test]
+    fn adventure_mouse_pause_is_local_and_counts_boundary_attempts() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+        render_state(&mut state, 120, 40);
+        let provider = fake_provider(Vec::new(), Vec::new());
+        let id = state.current.character.id.clone();
+        for pane in [Pane::Journal, Pane::Adventure] {
+            let rect = state.layout.panes[pane.index()].unwrap().rect;
+            state.handle_event(
+                &provider,
+                &id,
+                mouse_event(MouseEventKind::ScrollUp, rect.x + 1, rect.y + 1),
+                now,
+            );
+            assert_eq!(state.scroll.offset(pane), 0);
+            assert_eq!(
+                state.scroll.adventure_resume_at.is_some(),
+                pane == Pane::Adventure
+            );
+            assert_eq!(state.scroll.focused, None);
+        }
+        let deadline = state.scroll.adventure_resume_at;
+        state.handle_event(
+            &provider,
+            &id,
+            key_event(KeyCode::Tab),
+            now + Duration::from_secs(10),
+        );
+        state.handle_event(
+            &provider,
+            &id,
+            key_event(KeyCode::F(6)),
+            now + Duration::from_secs(10),
+        );
+        assert_eq!(state.scroll.adventure_resume_at, deadline);
+    }
+
+    #[test]
+    fn adventure_hidden_updates_are_discarded_and_other_offsets_are_preserved() {
+        let now = Instant::now();
+        for compact in [false, true] {
+            let mut state =
+                DashboardState::new(overflowing_snapshot(), now, Duration::from_secs(1));
+            if compact {
+                render_state(&mut state, 70, 30);
+                state.scroll.compact = 2;
+            } else {
+                state.panes.toggle(Pane::Adventure);
+                render_state(&mut state, 120, 40);
+            }
+            let mut next = state.current.character.clone();
+            next.activity.tasks += 1;
+            next.inventory[190].quantity += 1;
+            state.replace_character(next, now);
+            assert!(state.scroll.adventure_reveal.is_none());
+            if !compact {
+                state.panes.toggle(Pane::Adventure);
+            }
+            render_state(&mut state, 120, 40);
+            assert_eq!(state.scroll.offset(Pane::Adventure), 0);
+            state.scroll.focused = Some(Pane::Journal);
+            state.scroll.set_offset(Pane::Journal, 3);
+            let mut next = state.current.character.clone();
+            next.activity.tasks += 1;
+            next.inventory[190].quantity += 1;
+            state.replace_character(next, now);
+            let offsets = state.scroll.offsets;
+            let compact_offset = state.scroll.compact;
+            let buffer = render_state(&mut state, 120, 40);
+            assert!(adventure_text(&state, &buffer).contains("Item 190 x3"));
+            for pane in Pane::ALL {
+                if pane != Pane::Adventure {
+                    assert_eq!(state.scroll.offset(pane), offsets[pane.index()]);
+                }
+            }
+            assert_eq!(state.scroll.compact, compact_offset);
+            assert_eq!(state.scroll.focused, Some(Pane::Journal));
+            assert!(!state.panes.is_collapsed(Pane::Adventure));
+            // A target also expires if its next render switches to compact.
+            state.scroll.adventure_reveal = Some(AdventureEntry::Inventory(0));
+            render_state(&mut state, 70, 30);
+            assert!(state.scroll.adventure_reveal.is_none());
+        }
     }
 
     #[test]
