@@ -18,6 +18,11 @@ All notable changes to Gyrognome are documented in this file.
   `.pq` for desktop characters (opens in pq.exe 6.4.4) and `.pqw` for browser
   characters, with stored credentials, an overwrite prompt, and atomic 0600
   writes. A running service is stopped for the export and restarted.
+- Desktop `.pq` exports carry a Gyrognome metadata block (since-import
+  counters, random continuation, provenance, local-only advancement) that
+  another Gyrognome restores on import. pq.exe 6.4.4 ignores the block and
+  drops it on its next save; a block that doesn't match the save fails import.
+  Older Gyrognome builds reject these exports as having trailing content.
 - Automatic rested progression for all managed browser and desktop characters:
   stopped or sleeping time builds a capped 12-hour bank, spent one real second
   at a time for 2x progression. Includes durable fractional timing, sleep-aware

@@ -495,6 +495,7 @@ pub(crate) mod tests {
                 legacy_quest_placeholder: false,
                 spelling_patch_applied: false,
             },
+            restored: None,
         }
     }
 

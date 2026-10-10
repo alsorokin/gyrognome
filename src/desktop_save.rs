@@ -132,6 +132,8 @@ pub struct DesktopValidatedSave {
     pub profile: DesktopValidatedProfile,
     pub private: DesktopValidatedPrivateMetadata,
     pub adaptations: DesktopAdaptations,
+    /// Gyrognome metadata restored from an exported save, if present.
+    pub restored: Option<crate::desktop_metadata::DesktopRestoredMetadata>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +294,16 @@ pub enum DesktopValidationError {
 }
 
 pub fn parse_components(bytes: &[u8]) -> Result<DesktopDocument, DesktopParseError> {
+    let (document, end) = parse_component_prefix(bytes)?;
+    if end != bytes.len() {
+        return Err(DesktopParseError::InvalidSignature { offset: end });
+    }
+    Ok(document)
+}
+
+/// Parses root components until the end of input or a Gyrognome metadata
+/// block at a component boundary, returning where parsing stopped.
+pub fn parse_component_prefix(bytes: &[u8]) -> Result<(DesktopDocument, usize), DesktopParseError> {
     let mut parser = Parser {
         bytes,
         position: 0,
@@ -299,10 +311,12 @@ pub fn parse_components(bytes: &[u8]) -> Result<DesktopDocument, DesktopParseErr
         component_names: HashSet::new(),
     };
     let mut components = Vec::new();
-    while parser.position < bytes.len() {
+    while parser.position < bytes.len()
+        && !bytes[parser.position..].starts_with(crate::desktop_metadata::MAGIC)
+    {
         components.push(parser.component(1, true)?);
     }
-    Ok(DesktopDocument { components })
+    Ok((DesktopDocument { components }, parser.position))
 }
 
 pub fn map_desktop_document(
@@ -641,6 +655,7 @@ pub fn validate_desktop_save(
             legacy_quest_placeholder,
             spelling_patch_applied,
         },
+        restored: None,
     })
 }
 

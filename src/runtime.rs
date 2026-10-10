@@ -567,13 +567,18 @@ impl Store {
     ) -> Result<RegisteredDesktopCharacter, StorageError> {
         let state = DesktopCanonicalState::from(save);
         let identity = desktop_identity(&state)?;
-        let random = initialize_desktop_registration_random(random_source)
-            .map_err(|_| StorageError::InvalidDesktopState("random initialization"))?;
+        let (random, import_metadata) = match &save.restored {
+            Some(restored) => (restored.random, restored.import_metadata.clone()),
+            None => (
+                initialize_desktop_registration_random(random_source)
+                    .map_err(|_| StorageError::InvalidDesktopState("random initialization"))?,
+                DesktopImportMetadata::from_validated(&save.adaptations),
+            ),
+        };
         let compatibility = CompatibilityState {
             profile: CompatibilityProfile::Desktop644,
             random: RandomContinuation::Desktop644(random),
         };
-        let import_metadata = DesktopImportMetadata::from_validated(&save.adaptations);
         let mut persisted_state = state.clone();
         persisted_state.profile = crate::desktop_save::DesktopValidatedProfile {
             motto: String::new(),
@@ -942,6 +947,9 @@ impl Store {
             CompatibilityProfile::Desktop644 => {
                 let character = self.get_desktop(id)?;
                 let authentication = self.desktop_authentication(id)?;
+                let RandomContinuation::Desktop644(random) = character.compatibility.random else {
+                    return Err(StorageError::InvalidDesktopState("random continuation"));
+                };
                 crate::desktop_export::encode_desktop_save(
                     &character.state,
                     &crate::desktop_save::DesktopValidatedPrivateMetadata {
@@ -950,6 +958,10 @@ impl Store {
                         endpoint: authentication.endpoint,
                         account: authentication.account,
                         password: authentication.password,
+                    },
+                    &crate::desktop_metadata::DesktopRestoredMetadata {
+                        import_metadata: character.import_metadata,
+                        random,
                     },
                 )?
             }
@@ -2869,6 +2881,7 @@ mod tests {
                 legacy_quest_placeholder: false,
                 spelling_patch_applied: false,
             },
+            restored: None,
         }
     }
 
@@ -3517,6 +3530,51 @@ mod tests {
         ] {
             assert!(!inspection.contains(private));
         }
+    }
+
+    #[test]
+    fn desktop_export_preserves_gyrognome_metadata_across_stores() {
+        let source_directory = TestDirectory::new("desktop-metadata-export-source");
+        let mut source = Store::open_at(&source_directory.0).unwrap();
+        let desktop = source
+            .register_desktop(&desktop_fixture(), &mut Numbers(42))
+            .unwrap();
+        let mut metadata = desktop.import_metadata;
+        metadata.advancement_provenance = DesktopAdvancementProvenance::LocalOnly;
+        metadata.measured_since_import.tasks_completed = 321;
+        metadata.measured_since_import.elapsed_milliseconds = 9_876_543;
+        source
+            .connection
+            .execute(
+                "UPDATE characters SET import_metadata = ?1 WHERE id = ?2",
+                params![
+                    serde_json::to_string(&ImportMetadata::Desktop(metadata.clone())).unwrap(),
+                    desktop.id.to_string()
+                ],
+            )
+            .unwrap();
+        let exported = source.get_desktop(&desktop.id).unwrap();
+
+        let bytes = source.export_save(&desktop.id).unwrap();
+        let crate::save::ImportedSave::Desktop(save) =
+            crate::save::import_supported_bytes(&bytes).unwrap()
+        else {
+            panic!("expected a desktop save");
+        };
+        let target_directory = TestDirectory::new("desktop-metadata-export-target");
+        let mut target = Store::open_at(&target_directory.0).unwrap();
+        let imported = target.register_desktop(&save, &mut Numbers(7)).unwrap();
+
+        assert_eq!(imported.import_metadata, metadata);
+        assert_eq!(imported.compatibility, exported.compatibility);
+        assert_eq!(imported.identity, exported.identity);
+        assert!(
+            target
+                .managed_compatibility(&imported.id)
+                .unwrap()
+                .notice
+                .is_some_and(|notice| notice.contains("local-only"))
+        );
     }
 
     #[test]

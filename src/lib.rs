@@ -12,6 +12,7 @@ pub mod desktop_export;
 mod desktop_fingerprint;
 #[cfg(feature = "desktop-live-conformance")]
 pub mod desktop_live_conformance;
+pub mod desktop_metadata;
 pub mod desktop_profile;
 pub mod desktop_protocol;
 pub mod desktop_rules;

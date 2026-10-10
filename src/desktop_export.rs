@@ -5,6 +5,7 @@ use thiserror::Error;
 
 use crate::{
     compatibility::DesktopCanonicalState,
+    desktop_metadata::{self, DesktopRestoredMetadata},
     desktop_save::{
         DesktopQuestMarker, DesktopQueueKind, DesktopValidatedPrivateMetadata, DesktopValidatedRow,
     },
@@ -60,6 +61,8 @@ pub enum DesktopExportError {
     TooLarge(&'static str),
     #[error("desktop compression failed")]
     Compression,
+    #[error(transparent)]
+    Metadata(#[from] desktop_metadata::DesktopMetadataError),
 }
 
 enum Value {
@@ -69,10 +72,12 @@ enum Value {
     Strings(Vec<String>),
 }
 
-/// Encodes canonical desktop state and credentials as a `.pq` save.
+/// Encodes canonical desktop state and credentials as a `.pq` save, followed
+/// by a Gyrognome metadata block that pq.exe ignores.
 pub fn encode_desktop_save(
     state: &DesktopCanonicalState,
     private: &DesktopValidatedPrivateMetadata,
+    metadata: &DesktopRestoredMetadata,
 ) -> Result<Vec<u8>, DesktopExportError> {
     let mut stream = Vec::new();
     for (class, name) in COMPONENTS {
@@ -86,6 +91,8 @@ pub fn encode_desktop_save(
         }
         stream.extend_from_slice(&[0, 0]);
     }
+    let block = desktop_metadata::encode(&stream, metadata)?;
+    stream.extend(block);
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder
         .write_all(&stream)
@@ -327,7 +334,10 @@ fn push_value(
 mod tests {
     use super::*;
     use crate::{
-        compatibility::DesktopCanonicalState,
+        compatibility::{
+            DesktopAdvancementProvenance, DesktopCanonicalState, DesktopImportMetadata,
+            DesktopRandomState,
+        },
         desktop_save::{
             DesktopAdaptations, DesktopQueueCommand, DesktopValidatedBar, DesktopValidatedBars,
             DesktopValidatedProfile, DesktopValidatedSave,
@@ -443,11 +453,32 @@ mod tests {
                 legacy_quest_placeholder: false,
                 spelling_patch_applied: false,
             },
+            restored: None,
+        }
+    }
+
+    fn metadata() -> DesktopRestoredMetadata {
+        let mut import_metadata = DesktopImportMetadata::from_validated(&DesktopAdaptations {
+            legacy_prologue_62: false,
+            legacy_quest_placeholder: false,
+            spelling_patch_applied: true,
+        });
+        import_metadata.measured_since_import.tasks_completed = 99;
+        import_metadata.measured_since_import.elapsed_milliseconds = 123_456;
+        import_metadata.advancement_provenance = DesktopAdvancementProvenance::LocalOnly;
+        DesktopRestoredMetadata {
+            import_metadata,
+            random: DesktopRandomState(77),
         }
     }
 
     fn round_trip(save: &DesktopValidatedSave) -> DesktopValidatedSave {
-        let bytes = encode_desktop_save(&DesktopCanonicalState::from(save), &save.private).unwrap();
+        let bytes = encode_desktop_save(
+            &DesktopCanonicalState::from(save),
+            &save.private,
+            &metadata(),
+        )
+        .unwrap();
         match save::import_supported_bytes(&bytes).unwrap() {
             ImportedSave::Desktop(imported) => imported,
             ImportedSave::Browser(_) => panic!("expected a desktop save"),
@@ -463,6 +494,36 @@ mod tests {
             DesktopCanonicalState::from(&save)
         );
         assert_eq!(imported.private, save.private);
+        assert_eq!(imported.restored, Some(metadata()));
+    }
+
+    #[test]
+    fn metadata_block_follows_components_without_credentials() {
+        use std::io::Read;
+        let save = fixture();
+        let bytes = encode_desktop_save(
+            &DesktopCanonicalState::from(&save),
+            &save.private,
+            &metadata(),
+        )
+        .unwrap();
+        let mut inflated = Vec::new();
+        flate2::read::ZlibDecoder::new(&bytes[..])
+            .read_to_end(&mut inflated)
+            .unwrap();
+        let (document, end) = crate::desktop_save::parse_component_prefix(&inflated).unwrap();
+        assert_eq!(document.components.len(), COMPONENTS.len());
+        let block = &inflated[end..];
+        assert!(block.starts_with(desktop_metadata::MAGIC));
+        let text = String::from_utf8_lossy(block);
+        for secret in [
+            "synthetic-account",
+            "synthetic-password",
+            "4242",
+            "Synthetic Realm",
+        ] {
+            assert!(!text.contains(secret), "block leaked {secret}");
+        }
     }
 
     #[test]
@@ -506,11 +567,44 @@ mod tests {
     }
 
     #[test]
+    fn rejects_metadata_block_with_changed_components() {
+        use std::io::{Read, Write};
+        let save = fixture();
+        let bytes = encode_desktop_save(
+            &DesktopCanonicalState::from(&save),
+            &save.private,
+            &metadata(),
+        )
+        .unwrap();
+        let mut inflated = Vec::new();
+        flate2::read::ZlibDecoder::new(&bytes[..])
+            .read_to_end(&mut inflated)
+            .unwrap();
+        let motto = inflated
+            .windows(b"Synthetic motto".len())
+            .position(|window| window == b"Synthetic motto")
+            .unwrap();
+        inflated[motto] = b'Z';
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&inflated).unwrap();
+        assert!(matches!(
+            save::import_supported_bytes(&encoder.finish().unwrap()),
+            Err(save::SaveError::DesktopMetadata(
+                desktop_metadata::DesktopMetadataError::DigestMismatch
+            ))
+        ));
+    }
+
+    #[test]
     fn rejects_non_ascii_text() {
         let mut save = fixture();
         save.profile.motto = "caf\u{e9}".to_owned();
         assert!(matches!(
-            encode_desktop_save(&DesktopCanonicalState::from(&save), &save.private),
+            encode_desktop_save(
+                &DesktopCanonicalState::from(&save),
+                &save.private,
+                &metadata()
+            ),
             Err(DesktopExportError::Text(_))
         ));
     }

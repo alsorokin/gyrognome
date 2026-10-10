@@ -17,9 +17,11 @@ use crate::{
         DesktopEligibilityInput, DesktopOnlineOperation, DesktopOperationEligibility,
         evaluate_production_desktop_eligibility,
     },
+    desktop_metadata::{self, DesktopMetadataError, DesktopRestoredMetadata},
     desktop_save::{
         DesktopDocument, DesktopMappingError, DesktopParseError, DesktopValidatedSave,
-        DesktopValidationError, map_desktop_document, parse_components, validate_desktop_save,
+        DesktopValidationError, map_desktop_document, parse_component_prefix,
+        validate_desktop_save,
     },
     state::Character,
 };
@@ -51,6 +53,8 @@ pub enum SaveError {
     DesktopMapping(#[from] DesktopMappingError),
     #[error(transparent)]
     DesktopValidation(#[from] DesktopValidationError),
+    #[error(transparent)]
+    DesktopMetadata(#[from] DesktopMetadataError),
     #[error("desktop save requires the profile-aware import API")]
     DesktopRequiresProfileAwareImport,
     #[error("save is missing or has an invalid required field: {0}")]
@@ -98,16 +102,21 @@ pub fn import_supported_bytes(bytes: &[u8]) -> Result<ImportedSave, SaveError> {
         DecodedSave::Browser(document) => {
             Character::from_document(document).map(ImportedSave::Browser)
         }
-        DecodedSave::Desktop(document) => {
+        DecodedSave::Desktop(document, restored) => {
             let mapped = map_desktop_document(&document)?;
-            Ok(ImportedSave::Desktop(validate_desktop_save(&mapped)?))
+            let mut save = validate_desktop_save(&mapped)?;
+            save.restored = restored;
+            Ok(ImportedSave::Desktop(save))
         }
     }
 }
 
 pub fn inspect_desktop(save: &DesktopValidatedSave) -> DesktopSaveInspection {
     let state = DesktopCanonicalState::from(save);
-    let import_metadata = DesktopImportMetadata::from_validated(&save.adaptations);
+    let import_metadata = save.restored.as_ref().map_or_else(
+        || DesktopImportMetadata::from_validated(&save.adaptations),
+        |restored| restored.import_metadata.clone(),
+    );
     let operations = [
         DesktopOnlineOperation::AutomaticLevel,
         DesktopOnlineOperation::AutomaticAct,
@@ -169,12 +178,12 @@ pub(crate) fn encode_browser_document(document: &Value) -> Result<String, serde_
 #[derive(Debug, PartialEq)]
 pub(crate) enum DecodedSave {
     Browser(Value),
-    Desktop(DesktopDocument),
+    Desktop(DesktopDocument, Option<DesktopRestoredMetadata>),
 }
 
 pub(crate) fn decode_bytes(bytes: &[u8]) -> Result<DecodedSave, SaveError> {
     if is_zlib(bytes) {
-        decode_desktop(bytes).map(DecodedSave::Desktop)
+        decode_desktop(bytes).map(|(document, restored)| DecodedSave::Desktop(document, restored))
     } else {
         decode_browser(str::from_utf8(bytes)?).map(DecodedSave::Browser)
     }
@@ -194,7 +203,9 @@ fn is_zlib(bytes: &[u8]) -> bool {
         && (u16::from(*compression) << 8 | u16::from(*flags)) % 31 == 0
 }
 
-fn decode_desktop(bytes: &[u8]) -> Result<DesktopDocument, SaveError> {
+fn decode_desktop(
+    bytes: &[u8],
+) -> Result<(DesktopDocument, Option<DesktopRestoredMetadata>), SaveError> {
     if bytes.len() > MAX_DESKTOP_COMPRESSED_BYTES {
         return Err(SaveError::DesktopCompressedTooLarge);
     }
@@ -210,7 +221,16 @@ fn decode_desktop(bytes: &[u8]) -> Result<DesktopDocument, SaveError> {
     if !inflated.starts_with(b"TPF0") {
         return Err(SaveError::DesktopMissingComponentHeader);
     }
-    Ok(parse_components(&inflated)?)
+    let (document, end) = parse_component_prefix(&inflated)?;
+    let restored = if end == inflated.len() {
+        None
+    } else {
+        Some(desktop_metadata::decode(
+            &inflated[..end],
+            &inflated[end..],
+        )?)
+    };
+    Ok((document, restored))
 }
 
 #[cfg(test)]
@@ -273,7 +293,7 @@ mod tests {
             fs::write(&path, &compressed).unwrap();
             let decoded = decode_bytes(&fs::read(&path).unwrap()).unwrap();
             fs::remove_file(path).unwrap();
-            let DecodedSave::Desktop(document) = decoded else {
+            let DecodedSave::Desktop(document, _) = decoded else {
                 panic!("expected desktop content");
             };
             assert_eq!(document.components[0].name, "Synthetic");
