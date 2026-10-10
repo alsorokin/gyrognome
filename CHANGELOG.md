@@ -51,6 +51,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Changed
 
+- Collapsed Journal titles append the current quest after the plot caption
+  instead of listing it in Adventure, preserving the F6 shortcut for long titles.
 - Simplified dashboard Details by omitting technical ID and compatibility rows
   and the long rested-timeline leaderboard notice (retained in managed inspection).
 - Matched desktop runtime pacing to the original callback cadence, with

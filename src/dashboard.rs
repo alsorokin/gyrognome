@@ -2262,7 +2262,7 @@ fn render_full(
         scroll,
         layout,
     );
-    let adventure = adventure_lines(state, updates, panes.is_collapsed(Pane::Journal));
+    let adventure = adventure_lines(state, updates);
     if let Some(target) = scroll.adventure_reveal.take() {
         if !panes.is_collapsed(Pane::Adventure) {
             let inner = right[0].inner(Margin {
@@ -2291,10 +2291,15 @@ fn render_full(
         scroll,
         layout,
     );
+    let mut journal_title = format!("Journal - {}", state.plot.bestplot);
+    if panes.is_collapsed(Pane::Journal) && !state.current_quest.is_empty() {
+        journal_title.push_str(" - ");
+        journal_title.push_str(&state.current_quest);
+    }
     render_pane(
         frame,
         right[1],
-        &format!("Journal - {}", state.plot.bestplot),
+        &journal_title,
         Pane::Journal,
         panes,
         Paragraph::new(journal_lines(state)).wrap(Wrap { trim: true }),
@@ -2306,21 +2311,12 @@ fn render_full(
 fn adventure_lines(
     character: &DashboardCharacter,
     updates: &RecentTaskUpdates,
-    show_current_quest: bool,
 ) -> Vec<Line<'static>> {
-    let mut lines = vec![
+    vec![
         inventory_line(&character.inventory, updates),
         Line::from(""),
         spells_line(&character.spells, updates),
-    ];
-    if show_current_quest {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            "Current quest: {}",
-            character.current_quest
-        )));
-    }
-    lines
+    ]
 }
 
 fn first_adventure_update(
@@ -2649,7 +2645,18 @@ fn render_pane(
 ) {
     let focused = scroll.is_focused(pane);
     if visibility.is_collapsed(pane) {
-        frame.render_widget(pane_block(title, pane, focused), area);
+        if pane == Pane::Journal {
+            frame.render_widget(pane_block("", pane, focused), area);
+            let title_area = Rect::new(
+                area.x.saturating_add(1),
+                area.y,
+                area.width.saturating_sub(2 + pane.hotkey().len() as u16),
+                area.height.min(1),
+            );
+            frame.render_widget(Line::from(title), title_area);
+        } else {
+            frame.render_widget(pane_block(title, pane, focused), area);
+        }
         layout.panes[pane.index()] = None;
         return;
     }
@@ -4787,23 +4794,10 @@ mod tests {
     }
 
     #[test]
-    fn adventure_shows_current_quest_only_when_journal_is_collapsed() {
+    fn adventure_contains_only_inventory_and_spells() {
         let character = sample().character;
-        let expanded_journal = adventure_lines(&character, &RecentTaskUpdates::default(), false);
-        assert!(
-            !expanded_journal
-                .iter()
-                .flat_map(|line| line.spans.iter())
-                .any(|span| span.content == "Current quest: Fetch me an anvil")
-        );
-
-        let lines = adventure_lines(&character, &RecentTaskUpdates::default(), true);
-        let current = lines
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .find(|span| span.content == "Current quest: Fetch me an anvil")
-            .unwrap();
-        assert!(!current.style.add_modifier.contains(Modifier::BOLD));
+        let lines = adventure_lines(&character, &RecentTaskUpdates::default());
+        assert_eq!(lines.len(), 3);
         assert!(
             !lines
                 .iter()
@@ -4823,14 +4817,17 @@ mod tests {
                 .iter()
                 .any(|span| span.content.starts_with("Spells:"))
         );
-        assert!(lines[3].spans.is_empty());
-        assert!(
-            lines[4]
-                .spans
-                .iter()
-                .any(|span| span.content == "Current quest: Fetch me an anvil")
-        );
-        assert_eq!(expanded_journal.len(), 3);
+        for collapsed in [false, true] {
+            let mut state = DashboardState::new(sample(), Instant::now(), Duration::from_secs(1));
+            if collapsed {
+                state.panes.toggle(Pane::Journal);
+            }
+            let buffer = render_state(&mut state, 120, 40);
+            let text = adventure_text(&state, &buffer);
+            assert!(!text.contains("Current quest:"));
+            assert!(!text.contains(&character.current_quest));
+            assert!(text.contains("Spells:"));
+        }
     }
 
     fn text_position(
@@ -5864,6 +5861,86 @@ mod tests {
     }
 
     #[test]
+    fn collapsed_journal_title_tracks_current_quest_and_expansion() {
+        let now = Instant::now();
+        for adventure_collapsed in [false, true] {
+            let mut snapshot = sample();
+            snapshot.character.plot.bestplot = "Act VIII".to_owned();
+            let mut state = DashboardState::new(snapshot, now, Duration::from_secs(1));
+            state.panes.toggle(Pane::Journal);
+            if adventure_collapsed {
+                state.panes.toggle(Pane::Adventure);
+            }
+            let buffer = render_state(&mut state, 120, 40);
+            let text = buffer
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(text.contains("Journal - Act VIII - Fetch me an anvil"));
+            assert!(!text.contains("Current quest:"));
+
+            let mut next = state.current.character.clone();
+            next.current_quest = "Find the crown".to_owned();
+            let provider = fake_provider(Vec::new(), vec![Ok(next)]);
+            let id = state.current.character.id.clone();
+            state.read_state(&provider, &id, now + Duration::from_secs(1));
+            let buffer = render_state(&mut state, 120, 40);
+            let text = buffer
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(text.contains("Journal - Act VIII - Find the crown"));
+            assert!(!text.contains("Fetch me an anvil"));
+
+            state.panes.toggle(Pane::Journal);
+            let buffer = render_state(&mut state, 120, 40);
+            let (column, row) = text_position(buffer.content(), 120, "Journal - Act VIII");
+            assert_eq!(buffer[(column as u16 + 18, row as u16)].symbol(), "─");
+            let quest = text_position(buffer.content(), 120, "Find the crown");
+            assert!(quest.1 > row);
+            assert!(
+                buffer[(quest.0 as u16, quest.1 as u16)]
+                    .modifier
+                    .contains(Modifier::BOLD)
+            );
+
+            state.panes.toggle(Pane::Journal);
+            state.current.character.current_quest.clear();
+            let output = rendered_snapshot(120, 40, &state.current, &state.panes);
+            assert!(output.contains("Journal - Act VIII"));
+            assert!(!output.contains("Journal - Act VIII - "));
+        }
+    }
+
+    #[test]
+    fn long_collapsed_journal_titles_preserve_hotkey_and_borders() {
+        for quest in ["long quest ".repeat(30), "界".repeat(100)] {
+            let mut snapshot = sample();
+            snapshot.character.plot.bestplot = "Act VIII".to_owned();
+            snapshot.character.current_quest = quest;
+            let mut state = DashboardState::new(snapshot, Instant::now(), Duration::from_secs(1));
+            state.panes.toggle(Pane::Journal);
+            let buffer = render_state(&mut state, 90, 40);
+            let (column, row) = text_position(buffer.content(), 90, "Journal - Act VIII - ");
+            assert_eq!(buffer[(column as u16 - 1, row as u16)].symbol(), "┌");
+            assert_eq!(buffer[(87, row as u16)].symbol(), "F");
+            assert_eq!(buffer[(88, row as u16)].symbol(), "6");
+            assert_eq!(buffer[(89, row as u16)].symbol(), "┐");
+            assert_eq!(buffer[(column as u16 - 1, row as u16 + 1)].symbol(), "└");
+            for x in column as u16..89 {
+                assert_eq!(buffer[(x, row as u16 + 1)].symbol(), "─");
+            }
+            assert_eq!(buffer[(89, row as u16 + 1)].symbol(), "┘");
+            assert!(state.layout.panes[Pane::Journal.index()].is_none());
+            let adventure = state.layout.panes[Pane::Adventure.index()].unwrap().rect;
+            assert_eq!(usize::from(adventure.bottom()), row);
+            assert!(!adventure_text(&state, &buffer).contains("Current quest:"));
+        }
+    }
+
+    #[test]
     fn full_layout_aligns_bottom_panes_with_main_columns() {
         for (width, height) in [(90, 4), (120, 4), (150, 3)] {
             let areas = Layout::default()
@@ -6256,7 +6333,7 @@ mod tests {
                 state.replace_character(next, now);
                 let target = state.scroll.adventure_reveal.unwrap();
                 let viewport = state.layout.panes[Pane::Adventure.index()].unwrap();
-                let lines = adventure_lines(&state.current.character, &state.updates, false);
+                let lines = adventure_lines(&state.current.character, &state.updates);
                 let (start, end) =
                     adventure_entry_rows(&lines, target, viewport.rect.width - 2).unwrap();
                 let expected = (end + 1).saturating_sub(usize::from(viewport.inner_height));
@@ -6309,7 +6386,7 @@ mod tests {
         state.replace_character(next, now);
         let target = state.scroll.adventure_reveal.unwrap();
         let (start, end) = adventure_entry_rows(
-            &adventure_lines(&state.current.character, &state.updates, false),
+            &adventure_lines(&state.current.character, &state.updates),
             target,
             64,
         )
@@ -6318,7 +6395,7 @@ mod tests {
         let buffer = render_state(&mut state, 100, 20);
         let viewport = state.layout.panes[Pane::Adventure.index()].unwrap();
         let (start, _) = adventure_entry_rows(
-            &adventure_lines(&state.current.character, &state.updates, false),
+            &adventure_lines(&state.current.character, &state.updates),
             target,
             viewport.rect.width - 2,
         )

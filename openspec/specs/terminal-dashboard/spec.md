@@ -22,15 +22,23 @@ SHALL open that character directly. The dashboard SHALL display the persisted
 credential-safe identity, current activity, progress bars, equipment,
 inventory, spells, plot, and local runtime service status. In the full
 dashboard layout, the Adventure content SHALL NOT include a separate plot
-row. The Adventure pane SHALL separate its inventory and spells lists with an
-empty line. It SHALL show the non-bold current quest labeled `Current quest:`
-only when the Journal pane is collapsed, separated from the spells list by an
-empty line. The dashboard SHALL present a separate Journal pane whose title
+row or current-quest row, regardless of Journal collapse state. The Adventure
+pane SHALL separate its inventory and spells lists with an empty line.
+The dashboard SHALL present a separate Journal pane whose expanded title
 appends the canonical current plot caption after `Journal - `, for example
-`Journal - Act VIII`. The Journal pane's first line SHALL be the bold
-current-quest value without a label and its subsequent completed quests SHALL
-be ordered from most recent to oldest. It SHALL report an actionable error
-when the requested character is not registered.
+`Journal - Act VIII`. When Journal is collapsed and the canonical current quest
+is non-empty, its title SHALL append ` - <current quest>` after that plot
+caption, for example `Journal - Act VIII - Fetch me an anvil`, without a
+`Current quest:` label. When the current quest is empty, the collapsed title
+SHALL remain `Journal - <plot caption>` without an extra separator.
+The collapsed Journal SHALL retain its two-row allocation and right-aligned
+F6 shortcut. Titles exceeding the available header width SHALL be clipped
+within the header without wrapping or hiding F6.
+The expanded Journal pane's first line SHALL be the bold current-quest value
+without a label and its subsequent completed quests SHALL be ordered from most
+recent to oldest. The collapsed title SHALL reflect the latest displayed
+persisted quest on refresh. It SHALL report an actionable error when the
+requested character is not registered.
 
 #### Scenario: Opening a registered character
 
@@ -76,6 +84,7 @@ when the requested character is not registered.
 #### Scenario: Viewing plot context in the full dashboard
 
 - **WHEN** a registered character's canonical current plot caption is `Act VIII`
+  and Journal is expanded
 - **THEN** the Journal pane title is `Journal - Act VIII`
 - **AND** the Adventure content does not render a separate plot row
 
@@ -89,11 +98,38 @@ when the requested character is not registered.
 
 #### Scenario: Viewing quest information with Journal collapsed
 
-- **WHEN** a registered character has a current quest and the Journal pane is
-  collapsed
-- **THEN** Adventure displays only the non-bold current quest with the
-  `Current quest:` label
-- **AND** an empty line separates it from the spells list
+- **WHEN** a registered character's plot caption is `Act VIII`, its current
+  quest is `Fetch me an anvil`, Journal is collapsed, and the header is wide
+  enough for the title
+- **THEN** the Journal title is `Journal - Act VIII - Fetch me an anvil`
+- **AND** Adventure shows inventory and spells separated by one empty line,
+  with no current-quest row or additional quest separator
+
+#### Scenario: Expanding Journal again
+
+- **WHEN** the user expands a collapsed Journal
+- **THEN** the title returns to `Journal - <plot caption>` and the bold current
+  quest and completed history appear in its content
+- **AND** Adventure still omits the current-quest row
+
+#### Scenario: Refreshing a collapsed Journal
+
+- **WHEN** a persisted-state refresh changes the current quest while Journal is
+  collapsed, including when Adventure is also collapsed
+- **THEN** the Journal title reflects the newly displayed current quest
+
+#### Scenario: Viewing an empty current quest
+
+- **WHEN** Journal is collapsed and the canonical current quest is empty
+- **THEN** its title contains only `Journal - <plot caption>` with no trailing
+  quest separator
+
+#### Scenario: Viewing a long collapsed title
+
+- **WHEN** the collapsed Journal title exceeds the available header width
+- **THEN** the title is clipped within its header while F6 remains visible
+- **AND** Journal remains two rows high without wrapping or spilling into
+  another pane
 
 ### Requirement: Recent task update indicator
 
