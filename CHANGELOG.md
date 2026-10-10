@@ -4,6 +4,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-10
+
 ### Added
 
 - Adventure automatically reveals updated inventory items and spells, pausing
