@@ -30,14 +30,14 @@ jobs:
         run: |
           python3 scripts/prepare-release.py \
             --target "${{ matrix.target }}" \
-            --version 1.0.0 \
+            --version 1.2.1 \
             --revision "$GITHUB_SHA"
           cd target/release-candidates
-          sha256sum -c "gyrognome-1.0.0-${{ matrix.target }}.tar.gz.sha256"
+          sha256sum -c "gyrognome-1.2.1-${{ matrix.target }}.tar.gz.sha256"
       - name: Retain candidate for review
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: linux-candidate-${{ matrix.target }}
-          path: target/release-candidates/gyrognome-1.0.0-${{ matrix.target }}.tar.gz*
+          path: target/release-candidates/gyrognome-1.2.1-${{ matrix.target }}.tar.gz*
           if-no-files-found: error
           retention-days: 7

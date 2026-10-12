@@ -4,6 +4,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-12
+
 ### Fixed
 
 - Opening the public leaderboard page after a brag no longer prints browser
