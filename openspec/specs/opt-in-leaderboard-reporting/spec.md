@@ -40,6 +40,15 @@ confirmed CLI report command and the dashboard Brag action, regardless of the
 categorized report-delivery outcome. Failure to open the page SHALL be reported
 separately and SHALL NOT change the report outcome.
 
+The browser SHALL be launched detached from Gyrognome's terminal: it SHALL NOT
+inherit Gyrognome's standard input, output, or error, and SHALL NOT share
+Gyrognome's terminal process group. Opening the page SHALL NOT block the
+dashboard. The system SHALL wait at most 3 seconds for the browser launcher to
+finish; a launch error or unsuccessful launcher exit within that time SHALL be
+reported as an opening failure, and a launcher still running after 3 seconds
+SHALL be treated as a successful open. In the dashboard, an opening failure
+SHALL be shown in the dashboard's own interface rather than written over it.
+
 #### Scenario: Opening the leaderboard after a confirmed CLI brag
 
 - **WHEN** an operator confirms an eligible character's manual brag from the CLI and its one report attempt completes
@@ -64,6 +73,16 @@ separately and SHALL NOT change the report outcome.
 
 - **WHEN** the public leaderboard page cannot be opened through the system browser
 - **THEN** the report outcome is preserved and a separate safe opening failure is reported
+
+#### Scenario: Browser started fresh from the dashboard
+
+- **WHEN** a dashboard brag opens the page while no browser is running and the newly started browser stays running and writes diagnostic output
+- **THEN** none of that output appears in the terminal, the dashboard stays responsive, and the open is treated as successful after at most 3 seconds
+
+#### Scenario: Launcher fails quickly in the dashboard
+
+- **WHEN** the browser launcher exits unsuccessfully within 3 seconds of a dashboard brag
+- **THEN** the dashboard shows a safe opening-failure message in its own interface and the report outcome is unchanged
 
 ### Requirement: Reporting eligibility and conformance gate
 

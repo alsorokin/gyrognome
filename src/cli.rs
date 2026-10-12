@@ -402,8 +402,9 @@ pub fn run() -> Result<(), CliError> {
             let transport = reporting::TestEnrollmentTransport::from_environment();
             #[cfg(not(feature = "enrollment-test-transport"))]
             let transport = HttpsTransport;
-            let result = reporting::submit_manual_brag(&store, &id, &transport)?;
-            match result.outcome {
+            let reporting::ManualBragResult { report, opening } =
+                reporting::submit_manual_brag(&store, &id, &transport)?;
+            match report.outcome {
                 DeliveryOutcome::Delivered => println!("Leaderboard report delivered."),
                 DeliveryOutcome::EndpointRejected => {
                     println!("Leaderboard report was not accepted by the endpoint.")
@@ -411,6 +412,9 @@ pub fn run() -> Result<(), CliError> {
                 DeliveryOutcome::DeliveryFailed => {
                     println!("Leaderboard report could not be delivered.")
                 }
+            }
+            if let Err(error) = opening.wait() {
+                eprintln!("Could not open the public leaderboard page: {error}");
             }
         }
         Command::Motto { id, text, clear: _ } => {

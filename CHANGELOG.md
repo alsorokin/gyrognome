@@ -4,6 +4,13 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening the public leaderboard page after a brag no longer prints browser
+  logs over the terminal or freezes the dashboard when no browser is already
+  running. The browser starts detached from the terminal; launch failures
+  within 3 seconds are still reported, in the dashboard's status message.
+
 ## [1.2.0] - 2026-10-10
 
 ### Added

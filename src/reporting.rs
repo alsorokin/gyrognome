@@ -1,6 +1,12 @@
 //! Credential-safe leaderboard report delivery.
 
-use std::{process::Command, time::Duration};
+use std::{
+    os::unix::process::CommandExt,
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 use url::Url;
 
@@ -509,29 +515,97 @@ pub fn public_leaderboard_url(
     Ok(url)
 }
 
-pub fn open_public_leaderboard(
-    realm: &str,
-    display_name: &str,
-) -> Result<(), PublicLeaderboardError> {
-    open_public_leaderboard_with(realm, display_name, |url| {
-        let status = Command::new("xdg-open").arg(url.as_str()).status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(std::io::Error::other(
-                "xdg-open exited with an unsuccessful status",
-            ))
+const BROWSER_LAUNCH_WAIT: Duration = Duration::from_secs(3);
+
+/// Pending outcome of opening the public leaderboard page in the background.
+pub struct LeaderboardOpening(mpsc::Receiver<Result<(), PublicLeaderboardError>>);
+
+impl LeaderboardOpening {
+    pub fn ready(result: Result<(), PublicLeaderboardError>) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        let _ = sender.send(result);
+        Self(receiver)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_receiver(
+        receiver: mpsc::Receiver<Result<(), PublicLeaderboardError>>,
+    ) -> Self {
+        Self(receiver)
+    }
+
+    /// Blocks until the bounded launch wait has produced an outcome.
+    pub fn wait(self) -> Result<(), PublicLeaderboardError> {
+        self.0.recv().unwrap_or(Ok(()))
+    }
+
+    /// Returns the outcome if it is available without blocking.
+    pub fn poll(&self) -> Option<Result<(), PublicLeaderboardError>> {
+        match self.0.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => Some(Ok(())),
         }
+    }
+}
+
+pub fn open_public_leaderboard(realm: &str, display_name: &str) -> LeaderboardOpening {
+    open_public_leaderboard_with(realm, display_name, |url| {
+        let mut command = Command::new("xdg-open");
+        command.arg(url.as_str());
+        launch_detached(command, BROWSER_LAUNCH_WAIT)
     })
 }
 
 fn open_public_leaderboard_with(
     realm: &str,
     display_name: &str,
-    open: impl FnOnce(&Url) -> std::io::Result<()>,
-) -> Result<(), PublicLeaderboardError> {
-    let url = public_leaderboard_url(realm, display_name)?;
-    open(&url).map_err(PublicLeaderboardError::BrowserLaunch)
+    open: impl FnOnce(&Url) -> LeaderboardOpening,
+) -> LeaderboardOpening {
+    match public_leaderboard_url(realm, display_name) {
+        Ok(url) => open(&url),
+        Err(error) => LeaderboardOpening::ready(Err(error)),
+    }
+}
+
+/// Starts a launcher without the terminal (null stdio, own process group) and
+/// reports a spawn error or unsuccessful exit within `wait`. A launcher still
+/// running after `wait` counts as success and is reaped in the background.
+fn launch_detached(mut command: Command, wait: Duration) -> LeaderboardOpening {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            return LeaderboardOpening::ready(Err(PublicLeaderboardError::BrowserLaunch(error)));
+        }
+    };
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let deadline = Instant::now() + wait;
+        let result = loop {
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => break Ok(()),
+                Ok(Some(_)) => {
+                    break Err(std::io::Error::other(
+                        "the browser launcher exited with an unsuccessful status",
+                    ));
+                }
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+                Ok(None) => {
+                    let _ = sender.send(Ok(()));
+                    let _ = child.wait();
+                    return;
+                }
+                Err(error) => break Err(error),
+            }
+        };
+        let _ = sender.send(result.map_err(PublicLeaderboardError::BrowserLaunch));
+    });
+    LeaderboardOpening(receiver)
 }
 
 pub fn submit(
@@ -581,11 +655,16 @@ pub fn submit(
     })
 }
 
+pub struct ManualBragResult {
+    pub report: ReportResult,
+    pub opening: LeaderboardOpening,
+}
+
 pub fn submit_manual_brag(
     store: &Store,
     id: &CharacterId,
     transport: &impl ReportTransport,
-) -> Result<ReportResult, ReportingError> {
+) -> Result<ManualBragResult, ReportingError> {
     submit_manual_brag_with_opener(store, id, transport, open_public_leaderboard)
 }
 
@@ -593,13 +672,11 @@ fn submit_manual_brag_with_opener(
     store: &Store,
     id: &CharacterId,
     transport: &impl ReportTransport,
-    open: impl FnOnce(&str, &str) -> Result<(), PublicLeaderboardError>,
-) -> Result<ReportResult, ReportingError> {
-    let result = submit(store, id, transport)?;
-    if let Err(error) = open(&result.realm, &result.identity.name) {
-        eprintln!("Could not open the public leaderboard page: {error}");
-    }
-    Ok(result)
+    open: impl FnOnce(&str, &str) -> LeaderboardOpening,
+) -> Result<ManualBragResult, ReportingError> {
+    let report = submit(store, id, transport)?;
+    let opening = open(&report.realm, &report.identity.name);
+    Ok(ManualBragResult { report, opening })
 }
 
 pub fn set_motto(
@@ -1055,10 +1132,38 @@ mod tests {
     #[test]
     fn public_leaderboard_opening_reports_launcher_failures_separately() {
         let error = open_public_leaderboard_with("Spoltog", "A name", |_| {
-            Err(std::io::Error::other("launcher failed"))
+            LeaderboardOpening::ready(Err(PublicLeaderboardError::BrowserLaunch(
+                std::io::Error::other("launcher failed"),
+            )))
         })
+        .wait()
         .unwrap_err();
         assert!(matches!(error, PublicLeaderboardError::BrowserLaunch(_)));
+        assert!(matches!(
+            open_public_leaderboard_with("Other", "A name", |_| panic!("opened")).wait(),
+            Err(PublicLeaderboardError::UnsupportedRealm)
+        ));
+    }
+
+    #[test]
+    fn detached_launcher_reports_quick_outcomes_and_times_out_as_success() {
+        let wait = Duration::from_millis(500);
+        assert!(launch_detached(Command::new("true"), wait).wait().is_ok());
+        assert!(matches!(
+            launch_detached(Command::new("false"), wait).wait(),
+            Err(PublicLeaderboardError::BrowserLaunch(_))
+        ));
+        assert!(matches!(
+            launch_detached(Command::new("/nonexistent/gyrognome-launcher"), wait).wait(),
+            Err(PublicLeaderboardError::BrowserLaunch(_))
+        ));
+        let mut slow = Command::new("sleep");
+        slow.arg("5");
+        let started = Instant::now();
+        let opening = launch_detached(slow, wait);
+        assert!(opening.poll().is_none());
+        assert!(opening.wait().is_ok());
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     struct TestDirectory(PathBuf);
@@ -1705,15 +1810,16 @@ mod tests {
                     assert_eq!(realm, "Alpaquil");
                     assert_eq!(name, "Reference Hero");
                     opened.set(true);
-                    Err(PublicLeaderboardError::BrowserLaunch(
+                    LeaderboardOpening::ready(Err(PublicLeaderboardError::BrowserLaunch(
                         std::io::Error::other("test launcher failure"),
-                    ))
+                    )))
                 },
             )
             .unwrap();
-            assert_eq!(result.outcome, expected);
-            assert_eq!(result.identity.name, "Reference Hero");
+            assert_eq!(result.report.outcome, expected);
+            assert_eq!(result.report.identity.name, "Reference Hero");
             assert!(opened.get());
+            assert!(result.opening.wait().is_err());
         }
     }
 

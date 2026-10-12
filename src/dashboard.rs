@@ -44,7 +44,7 @@ use crate::{
         AutostartState, AutostartStatus, Lifecycle, LifecycleError, RuntimeStatus, ServiceState,
         SystemctlRunner,
     },
-    reporting::{self, DeliveryOutcome, HttpsTransport, ReportingError},
+    reporting::{self, DeliveryOutcome, HttpsTransport, LeaderboardOpening, ReportingError},
     runtime::{
         CharacterId, CharacterIdentity, ManagedCharacter, ManagedCompatibilityPresentation,
         RegisteredDesktopCharacter, StorageError, Store,
@@ -334,7 +334,10 @@ pub trait DashboardProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError>;
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError>;
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError>;
-    fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError>;
+    fn brag(
+        &self,
+        id: &CharacterId,
+    ) -> Result<(DeliveryOutcome, LeaderboardOpening), DashboardError>;
     fn set_motto(&self, id: &CharacterId, text: &str) -> Result<DeliveryOutcome, DashboardError>;
     fn set_guild(
         &self,
@@ -377,9 +380,12 @@ impl DashboardProvider for LocalProvider {
         Ok(())
     }
 
-    fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+    fn brag(
+        &self,
+        id: &CharacterId,
+    ) -> Result<(DeliveryOutcome, LeaderboardOpening), DashboardError> {
         let result = reporting::submit_manual_brag(&self.store.borrow(), id, &HttpsTransport)?;
-        Ok(result.outcome)
+        Ok((result.report.outcome, result.opening))
     }
 
     fn set_motto(&self, id: &CharacterId, text: &str) -> Result<DeliveryOutcome, DashboardError> {
@@ -1132,6 +1138,7 @@ pub fn run<P: DashboardProvider>(
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
+        state.poll_leaderboard_opening(Instant::now());
         if !event::poll(state.poll_timeout(Instant::now()))? {
             state.handle_deadline(provider, &id, Instant::now());
             continue;
@@ -1148,6 +1155,7 @@ struct DashboardState {
     updates: RecentTaskUpdates,
     confirmation: Option<LifecycleAction>,
     editor: Option<ProfileEditor>,
+    leaderboard_opening: Option<LeaderboardOpening>,
     panes: PaneVisibility,
     scroll: PaneScroll,
     layout: ScrollLayout,
@@ -1167,6 +1175,7 @@ impl DashboardState {
             updates: RecentTaskUpdates::default(),
             confirmation: None,
             editor: None,
+            leaderboard_opening: None,
             panes,
             scroll,
             layout: ScrollLayout::default(),
@@ -1284,6 +1293,20 @@ impl DashboardState {
         self.action_message = Some((message, expires_at));
     }
 
+    fn poll_leaderboard_opening(&mut self, now: Instant) {
+        let Some(result) = self.leaderboard_opening.as_ref().and_then(|o| o.poll()) else {
+            return;
+        };
+        self.leaderboard_opening = None;
+        if let Err(error) = result {
+            let message = match &self.action_message {
+                Some((previous, _)) => format!("{previous} ({error})"),
+                None => error.to_string(),
+            };
+            self.set_action_message(message, now);
+        }
+    }
+
     fn read_state<P: DashboardProvider>(&mut self, provider: &P, id: &CharacterId, now: Instant) {
         match provider.read_state(id) {
             Ok(character) => {
@@ -1335,6 +1358,11 @@ impl DashboardState {
             .settling_deadline()
             .map(|deadline| deadline.saturating_duration_since(now));
         let timeout = select_poll_timeout(boundary, refresh, settling, self.refresh_interval);
+        let timeout = if self.leaderboard_opening.is_some() {
+            timeout.min(Duration::from_millis(100))
+        } else {
+            timeout
+        };
         if self.current.runtime_owned == Some(true) && !self.task_anchor.boost_remaining.is_zero() {
             timeout.min(Duration::from_secs(1))
         } else {
@@ -1431,17 +1459,25 @@ impl DashboardState {
                     return false;
                 }
                 let message = match provider.brag(id) {
-                    Ok(DeliveryOutcome::Delivered) => "Leaderboard report delivered.".to_owned(),
-                    Ok(DeliveryOutcome::EndpointRejected) => {
-                        "Leaderboard report was not accepted by the endpoint.".to_owned()
-                    }
-                    Ok(DeliveryOutcome::DeliveryFailed) => {
-                        "Leaderboard report could not be delivered.".to_owned()
+                    Ok((outcome, opening)) => {
+                        self.leaderboard_opening = Some(opening);
+                        match outcome {
+                            DeliveryOutcome::Delivered => {
+                                "Leaderboard report delivered.".to_owned()
+                            }
+                            DeliveryOutcome::EndpointRejected => {
+                                "Leaderboard report was not accepted by the endpoint.".to_owned()
+                            }
+                            DeliveryOutcome::DeliveryFailed => {
+                                "Leaderboard report could not be delivered.".to_owned()
+                            }
+                        }
                     }
                     Err(error) => format!("Could not submit leaderboard report: {error}"),
                 };
                 self.refresh(provider, id, now);
                 self.set_action_message(message, now);
+                self.poll_leaderboard_opening(now);
                 false
             }
             Command::ToggleLifecycle => {
@@ -3042,7 +3078,10 @@ mod tests {
         ) -> Result<(), DashboardError> {
             self.observer.lifecycle(action, id)
         }
-        fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+        fn brag(
+            &self,
+            id: &CharacterId,
+        ) -> Result<(DeliveryOutcome, LeaderboardOpening), DashboardError> {
             self.observer.brag(id)
         }
         fn set_motto(
@@ -3707,9 +3746,15 @@ mod tests {
             self.action_results.borrow_mut().remove(0)
         }
 
-        fn brag(&self, id: &CharacterId) -> Result<DeliveryOutcome, DashboardError> {
+        fn brag(
+            &self,
+            id: &CharacterId,
+        ) -> Result<(DeliveryOutcome, LeaderboardOpening), DashboardError> {
             self.brags.borrow_mut().push(id.clone());
-            self.brag_results.borrow_mut().remove(0)
+            self.brag_results
+                .borrow_mut()
+                .remove(0)
+                .map(|outcome| (outcome, LeaderboardOpening::ready(Ok(()))))
         }
 
         fn set_motto(&self, _: &CharacterId, _: &str) -> Result<DeliveryOutcome, DashboardError> {
@@ -5721,9 +5766,41 @@ mod tests {
             );
             assert_eq!(state.confirmation, None);
             assert_eq!(state.current.message.as_deref(), Some(message));
+            assert!(state.leaderboard_opening.is_none());
             let rendered = rendered(120, 40);
             assert!(rendered.contains("b brag"));
         }
+    }
+
+    #[test]
+    fn brag_shows_leaderboard_opening_failure_in_the_dashboard() {
+        let now = Instant::now();
+        let mut state = DashboardState::new(sample(), now, Duration::from_secs(1));
+        state.set_action_message("Leaderboard report delivered.".to_owned(), now);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        state.leaderboard_opening = Some(LeaderboardOpening::from_receiver(receiver));
+
+        state.poll_leaderboard_opening(now);
+        assert_eq!(
+            state.current.message.as_deref(),
+            Some("Leaderboard report delivered.")
+        );
+        assert!(state.poll_timeout(now) <= Duration::from_millis(100));
+
+        sender
+            .send(Err(reporting::PublicLeaderboardError::BrowserLaunch(
+                std::io::Error::other("launcher failed"),
+            )))
+            .unwrap();
+        state.poll_leaderboard_opening(now);
+        assert!(state.leaderboard_opening.is_none());
+        assert_eq!(
+            state.current.message.as_deref(),
+            Some(
+                "Leaderboard report delivered. \
+                 (could not open the public leaderboard page: launcher failed)"
+            )
+        );
     }
 
     #[test]
