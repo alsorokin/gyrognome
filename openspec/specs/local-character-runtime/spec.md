@@ -128,13 +128,15 @@ future active progression.
 
 ### Requirement: Browser runtime scheduling and persistence
 
-For browser characters, the system SHALL durably record each successful result
-with its rested accounting. Each update SHALL cap contributing real active
-time at the configured worker interval and discard excess scheduler delay
-permanently. Updates SHALL occur at the earlier of the interval, rested-bank
-exhaustion, and the tick-aligned task completion at the applicable speed. The
-runtime SHALL service stable 100-millisecond virtual ticks, persisting any
-fractional virtual-time remainder without padding it into extra progression.
+For browser characters, the system SHALL publish each successful result with
+its rested accounting as live runtime state, and SHALL durably record results
+at the runtime commit boundaries. Each update SHALL cap contributing real
+active time at the configured worker interval and discard excess scheduler
+delay permanently. Updates SHALL occur at the earlier of the interval,
+rested-bank exhaustion, and the tick-aligned task completion at the applicable
+speed. The runtime SHALL service stable 100-millisecond virtual ticks,
+retaining any fractional virtual-time remainder in its rested accounting
+without padding it into extra progression.
 The interval SHALL remain the maximum single real-time contribution; virtual
 time earned SHALL be at most twice that contribution, with an earlier
 remainder available to complete a tick. Task-aligned scheduling SHALL preserve
@@ -145,9 +147,9 @@ non-tick-aligned partitions SHALL NOT be claimed equivalent.
 #### Scenario: Recording a task completion when it occurs
 
 - **WHEN** a browser task completes before the worker interval elapses
-- **THEN** the runtime advances to that completion and durably records the
-  following task and rested accounting rather than waiting for the enclosing
-  interval
+- **THEN** the runtime advances to that completion and publishes the
+  following task and rested accounting as live runtime state rather than
+  waiting for the enclosing interval
 
 #### Scenario: Advancing a task longer than the worker interval
 
@@ -225,35 +227,37 @@ become catch-up advancement or earned rest.
 - **THEN** subsequent pacing returns to 109.375 milliseconds without a
   missed-callback burst or resetting its task
 
-### Requirement: Desktop runtime commit boundaries
+### Requirement: Runtime durable commit boundaries
 
-Desktop runtime state and rested accounting SHALL be durably recorded at
-least: when a callback dispatches completion; before any callback report is
-delivered; when local-only provenance is first recorded; on graceful stop; and
-at bounded checkpoints no farther than one awake second apart while callbacks
-are being serviced. Partial task progress SHALL NOT require a durable write on
-every callback. Between commit points, unrecorded progress and accounting
-SHALL roll back together on abnormal exit, without duplicating committed
-completion rewards or reports.
+For both compatibility profiles, runtime state, random continuation,
+measured counters, and rested accounting SHALL be durably recorded together at
+least: before any report is delivered; when local-only provenance is first
+recorded; when suspend or sleep is observed; on graceful stop; and at bounded
+checkpoints no farther than sixty awake seconds apart while the runtime is
+advancing. Task completion and partial task progress SHALL NOT by themselves
+require a durable write. Between commit points, unrecorded progress and
+accounting SHALL roll back together on abnormal exit, without duplicating
+committed completion rewards or reports.
 
-#### Scenario: Committing a desktop task completion
+#### Scenario: Not committing every task completion
 
-- **WHEN** a desktop callback dispatches task completion
-- **THEN** state, random continuation, measured counters, and rested
-  accounting are durably recorded before the next callback
+- **WHEN** a task completes without producing a report or recording
+  local-only provenance, and the last durable commit was less than sixty
+  awake seconds ago
+- **THEN** the runtime publishes its new live state without a durable
+  database write
 
-#### Scenario: Committing before a desktop report
+#### Scenario: Committing before a report
 
-- **WHEN** a desktop callback produces a level or act report
+- **WHEN** advancement produces a level or act report
 - **THEN** its resulting state and rested accounting are committed before
-  delivery, so restart cannot replay the callback or resend the report
+  delivery, so restart cannot replay the advancement or resend the report
 
-#### Scenario: Not committing desktop partial progress per callback
+#### Scenario: Checkpointing a long-running runtime
 
-- **WHEN** a desktop callback only advances the task bar without dispatching
-  completion, producing a report, or recording local-only provenance
-- **THEN** it retains progress and accounting in memory rather than writing
-  that callback separately
+- **WHEN** a runtime advances for several minutes without reports
+- **THEN** its state and rested accounting are durably recorded at least once
+  per sixty awake seconds
 
 #### Scenario: Persisting a full desktop bar
 
@@ -262,24 +266,50 @@ completion rewards or reports.
   or later commit point, and only the next actual callback dispatches
   completion
 
-#### Scenario: Stopping a desktop runtime gracefully
+#### Scenario: Stopping a runtime gracefully
 
-- **WHEN** a desktop runtime receives a stop request
-- **THEN** it durably records its latest state, including a pending full bar,
-  remaining rest, and stopped timing baseline before exit
+- **WHEN** a runtime receives a stop request
+- **THEN** it durably records its latest state, including any pending full
+  desktop bar, remaining rest, and stopped timing baseline before exit
 
-#### Scenario: Abnormal exit between desktop commits
+#### Scenario: Abnormal exit between commits
 
-- **WHEN** a desktop runtime exits abnormally after uncommitted partial
-  progress
+- **WHEN** a runtime exits abnormally after uncommitted progress
 - **THEN** the next start restores the last complete state/accounting
-  checkpoint without repeating recorded rewards or reports
+  checkpoint, losing at most about sixty awake seconds of progress, without
+  repeating recorded rewards or reports
 
-#### Scenario: Checkpointing a long desktop task
+### Requirement: Live runtime state publication
 
-- **WHEN** a desktop task remains incomplete across several awake seconds
-- **THEN** periodic checkpoints persist matching partial progress and rest
-  accounting without waiting for task completion
+A runtime that owns a character SHALL publish its current credential-safe
+character state and rested accounting to a user-private location for local
+observers. It SHALL publish at each task completion, after each durable
+commit, and at intervals no longer than one awake second while advancing.
+Publication SHALL replace the previous live state atomically, so observers
+never read a partial value. It SHALL NOT write to the managed-character
+database and SHALL NOT include online credentials or private save data. Live
+state SHALL identify its owning runtime process. Observers SHALL treat it as
+current only while that process still owns the character. A graceful stop
+SHALL remove the live state after its final durable commit. A publication
+failure SHALL NOT stop advancement or affect durable commits.
+
+#### Scenario: Publishing a task completion
+
+- **WHEN** an owned character completes a task
+- **THEN** a local observer can read the following task, rewards, and rested
+  accounting without a database write having occurred
+
+#### Scenario: Ignoring stale live state after a crash
+
+- **WHEN** a runtime exits abnormally and leaves live state behind
+- **THEN** observers ignore it because its process no longer owns the
+  character, and use the last durable state instead
+
+#### Scenario: Keeping credentials out of live state
+
+- **WHEN** an online character publishes live state
+- **THEN** that state contains no passkey, authentication material, or raw
+  save properties
 
 ### Requirement: Exclusive character ownership
 

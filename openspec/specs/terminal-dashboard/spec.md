@@ -531,25 +531,41 @@ profile metadata, and runtime status at bounded periodic intervals without
 requiring a manual refresh action. It MAY read persisted character/profile state
 and runtime service status on separate bounded schedules.
 
+While a live local runtime owns the character, the dashboard SHALL read
+character state and rested accounting from that runtime's published live
+state instead of the managed-character database. Otherwise, it SHALL read the
+last durably persisted state. Online profile metadata, compatibility, and
+service status SHALL continue to come from their persisted sources. Everywhere
+in this specification, "persisted state" read by the dashboard includes such
+live runtime state.
+
 When a predicted task position reaches the current task's duration, the
 dashboard SHALL wait a bounded settling interval before reading persisted
-character state, so that the local runtime has an opportunity to commit the
+character state, so that the local runtime has an opportunity to publish the
 completed task first. It SHALL separate successive reads triggered this way by
 at least that settling interval, and SHALL NOT delay such a read beyond its
 regular state-refresh interval.
 
 Except when executing an explicit motto or guild action, the dashboard SHALL
-only read persisted character/profile state and service status; it SHALL NOT
-own the simulation lock, advance simulation, or write canonical simulation
-state. Explicit profile actions MAY write profile metadata through the
-online-profile interface while leaving simulation ownership unchanged.
+only read persisted character/profile state, live runtime state, and service
+status; it SHALL NOT own the simulation lock, advance simulation, or write
+canonical simulation state or live runtime state. Explicit profile actions MAY
+write profile metadata through the online-profile interface while leaving
+simulation ownership unchanged.
 
 #### Scenario: Viewing an active runtime
 
-- **WHEN** the character's local runtime persists new state while the dashboard
-  is open
-- **THEN** the dashboard displays the newer persisted state on a subsequent
-  refresh without advancing the character itself
+- **WHEN** the character's local runtime publishes new live state while the
+  dashboard is open
+- **THEN** the dashboard displays the newer state on a subsequent refresh
+  without advancing the character itself, even if the runtime has not yet
+  durably committed it
+
+#### Scenario: Ignoring live state from a runtime that no longer owns the character
+
+- **WHEN** live state exists but its publishing process no longer owns the
+  character
+- **THEN** the dashboard displays the last durably persisted state
 
 #### Scenario: Refreshing profile metadata
 
@@ -574,7 +590,7 @@ online-profile interface while leaving simulation ownership unchanged.
 
 - **WHEN** a predicted task position reaches the current task's duration
 - **THEN** the dashboard waits a bounded settling interval, giving the local
-  runtime an opportunity to commit the completed task, and then reads
+  runtime an opportunity to publish the completed task, and then reads
   persisted character state without waiting for its next regularly scheduled
   read
 

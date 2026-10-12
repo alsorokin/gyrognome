@@ -36,6 +36,7 @@ use crate::{
     },
     desktop_save::DesktopValidatedSave,
     desktop_simulation::SourceDerivedDesktopHooks,
+    live_state::{self, LiveState},
     newguy::RandomSource,
     reporting::{HttpsTransport, ReportTransport},
     rested::{self, ClockSample, RestedState, RestedView},
@@ -355,6 +356,7 @@ fn data_root_from(
 
 pub struct Store {
     data_root: PathBuf,
+    live_directory: PathBuf,
     connection: Connection,
     #[cfg(test)]
     fail_next_update: bool,
@@ -395,7 +397,10 @@ pub(crate) struct DesktopReportingTarget {
 
 impl Store {
     pub fn open_default() -> Result<Self, StorageError> {
-        Self::open_at(data_root()?)
+        let data_root = data_root()?;
+        let mut store = Self::open_at(&data_root)?;
+        store.live_directory = live_state::default_directory(&data_root);
+        Ok(store)
     }
 
     /// Opens the store rooted at `data_root`. This is primarily useful to
@@ -408,9 +413,12 @@ impl Store {
         let mut connection = Connection::open(&database_path)?;
         restrict_permissions(&database_path, 0o600)?;
         connection.busy_timeout(Duration::from_secs(5))?;
+        connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+        connection.pragma_update(None, "synchronous", "NORMAL")?;
         initialize_schema(&mut connection, &data_root)?;
         restrict_store_files(&data_root)?;
         Ok(Self {
+            live_directory: data_root.join("live"),
             data_root,
             connection,
             #[cfg(test)]
@@ -493,6 +501,32 @@ impl Store {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => Err(StorageError::Io(error)),
         }
+    }
+
+    fn publish_live(&self, id: &CharacterId, live: &LiveState) {
+        let _ = live_state::publish(&self.live_directory, &id.to_string(), live);
+    }
+
+    fn remove_live(&self, id: &CharacterId) {
+        live_state::remove(&self.live_directory, &id.to_string());
+    }
+
+    /// Returns published live state only while its publishing process still
+    /// owns the character; anything else is stale.
+    fn current_live_state(&self, id: &CharacterId) -> Option<LiveState> {
+        let live = live_state::read(&self.live_directory, &id.to_string())?;
+        (self.is_owned(id).ok()? && self.owner_process_id(id).ok()? == Some(live.pid))
+            .then_some(live)
+    }
+
+    /// Like [`Self::managed_inspection`], but overlays the owning runtime's
+    /// live state and rested accounting when they are current and valid.
+    pub fn live_inspection(&self, id: &CharacterId) -> Result<ManagedInspection, StorageError> {
+        let mut inspection = self.managed_inspection(id)?;
+        if let Some(live) = self.current_live_state(id) {
+            let _ = overlay_live(&mut inspection, live);
+        }
+        Ok(inspection)
     }
 
     pub fn register(&mut self, character: &Character) -> Result<ManagedCharacter, StorageError> {
@@ -1792,6 +1826,38 @@ fn canonical_json(character: &Character) -> Result<String, StorageError> {
     serde_json::to_string(&canonical).map_err(StorageError::StateJson)
 }
 
+fn overlay_live(inspection: &mut ManagedInspection, live: LiveState) -> Result<(), StorageError> {
+    let rested = live.rested.validate()?.view(rested::wall_millis()?, true);
+    match (&mut inspection.state, live.profile) {
+        (ManagedInspectionState::Browser(character), CompatibilityProfile::Browser) => {
+            let mut state: Character =
+                serde_json::from_value(live.state).map_err(StorageError::StateJson)?;
+            state.profile = character.state.profile.clone();
+            character.identity = CharacterIdentity {
+                name: state.traits.name.clone(),
+                race: state.traits.race.clone(),
+                class: state.traits.class.clone(),
+                level: state.traits.level,
+            };
+            character.state = state;
+        }
+        (ManagedInspectionState::Desktop644(character), CompatibilityProfile::Desktop644) => {
+            let mut state: DesktopCanonicalState =
+                serde_json::from_value(live.state).map_err(StorageError::StateJson)?;
+            state.profile = character.state.profile.clone();
+            character.identity = desktop_identity(&state)?;
+            character.state = state;
+        }
+        _ => {
+            return Err(StorageError::InvalidCompatibilityState(
+                "live state profile mismatch",
+            ));
+        }
+    }
+    inspection.rested = rested;
+    Ok(())
+}
+
 fn desktop_identity(state: &DesktopCanonicalState) -> Result<CharacterIdentity, StorageError> {
     let value = |index: usize, caption: &'static str| {
         state
@@ -1906,6 +1972,8 @@ pub struct Worker {
     clock: ClockSample,
     rested: RestedState,
     last_commit_awake: Duration,
+    last_publish_awake: Duration,
+    browser_state: Option<Character>,
     desktop_pending_virtual: Duration,
     desktop_pace: Duration,
     transport: Box<dyn ReportTransport>,
@@ -1921,6 +1989,7 @@ impl Worker {
         let mut rested = store.rested_state(&id)?;
         rested.resume(clock.wall_ms);
         store.replace_rested(&id, &rested)?;
+        store.remove_live(&id);
         Ok(Self {
             store,
             id,
@@ -1929,6 +1998,8 @@ impl Worker {
             clock,
             rested,
             last_commit_awake: clock.awake,
+            last_publish_awake: clock.awake,
+            browser_state: None,
             desktop_pending_virtual: Duration::ZERO,
             desktop_pace: Duration::ZERO,
             transport: Box::new(HttpsTransport),
@@ -1960,24 +2031,8 @@ impl Worker {
                 if elapsed_ms == 0 {
                     return Ok(());
                 }
-                let state = self.store.get(&self.id)?.state;
-                let trace = crate::simulation::advance_with_trace(
-                    &state,
-                    &crate::ruleset::BUNDLED,
-                    elapsed_ms,
-                    "",
-                )?;
-                self.store
-                    .replace_state_with_rested(&self.id, &trace.state, Some(&self.rested))?;
-                self.last_commit_awake = self.clock.awake;
-                for event in &trace.events {
-                    let _ = crate::reporting::submit_event(
-                        &self.store,
-                        &self.id,
-                        event,
-                        &*self.transport,
-                    );
-                }
+                self.browser_state = None;
+                self.browser_step(elapsed_ms, true)?;
             }
             CompatibilityProfile::Desktop644 => {
                 let elapsed_ms =
@@ -1988,6 +2043,68 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    fn browser_state(&mut self) -> Result<&Character, WorkerError> {
+        if self.browser_state.is_none() {
+            self.browser_state = Some(self.store.get(&self.id)?.state);
+        }
+        Ok(self.browser_state.as_ref().expect("browser state loaded"))
+    }
+
+    /// Advances the in-memory browser state and publishes it, committing only
+    /// at durable commit points. Reports are delivered after their commit.
+    fn browser_step(&mut self, millis: u64, force_commit: bool) -> Result<(), WorkerError> {
+        let state = self.browser_state()?.clone();
+        let (next, events) = if millis == 0 {
+            (state, Vec::new())
+        } else {
+            let trace = crate::simulation::advance_with_trace(
+                &state,
+                &crate::ruleset::BUNDLED,
+                millis,
+                "",
+            )?;
+            (trace.state, trace.events)
+        };
+        if force_commit
+            || !events.is_empty()
+            || self.clock.awake >= self.last_commit_awake + rested::COMMIT_INTERVAL
+        {
+            self.store
+                .replace_state_with_rested(&self.id, &next, Some(&self.rested))?;
+            self.last_commit_awake = self.clock.awake;
+        }
+        self.browser_state = Some(next);
+        self.publish_live();
+        for event in &events {
+            let _ = crate::reporting::submit_event(&self.store, &self.id, event, &*self.transport);
+        }
+        Ok(())
+    }
+
+    /// Publishes credential-safe in-memory state for local observers.
+    fn publish_live(&mut self) {
+        let state = match self.profile {
+            CompatibilityProfile::Browser => self.browser_state.as_ref().and_then(|character| {
+                let mut canonical = character.clone();
+                canonical.profile = OnlineProfile::default();
+                serde_json::to_value(canonical).ok()
+            }),
+            CompatibilityProfile::Desktop644 => self.desktop.as_ref().and_then(|session| {
+                let mut canonical = session.checkpoint.state.clone();
+                canonical.profile = crate::desktop_save::DesktopValidatedProfile {
+                    motto: String::new(),
+                    guild: String::new(),
+                };
+                serde_json::to_value(canonical).ok()
+            }),
+        };
+        if let Some(state) = state {
+            self.store
+                .publish_live(&self.id, &LiveState::new(self.profile, state, self.rested));
+        }
+        self.last_publish_awake = self.clock.awake;
     }
 
     fn load_desktop_session(&mut self) -> Result<(), WorkerError> {
@@ -2048,12 +2165,10 @@ impl Worker {
         session.pending_tasks_completed += u64::from(observation.completion_dispatched);
         session.pending_local_only |= newly_local_only;
         session.dirty |= changed;
-        if commit_always
-            || observation.completion_dispatched
-            || newly_local_only
-            || !hooks.reports().is_empty()
-        {
+        if commit_always || newly_local_only || !hooks.reports().is_empty() {
             self.commit_desktop()?;
+        } else if observation.completion_dispatched {
+            self.publish_live();
         }
         for report in hooks.reports() {
             let _ = crate::reporting::submit_desktop_event(
@@ -2080,8 +2195,9 @@ impl Worker {
             session.pending_local_only,
             Some(&self.rested),
         )?;
-        self.desktop = None;
         self.last_commit_awake = self.clock.awake;
+        self.publish_live();
+        self.desktop = None;
         Ok(())
     }
 
@@ -2093,15 +2209,14 @@ impl Worker {
         Ok(())
     }
 
-    fn scheduled_duration(&self, interval: Duration) -> Result<Duration, WorkerError> {
+    fn scheduled_duration(&mut self, interval: Duration) -> Result<Duration, WorkerError> {
         match self.profile {
             CompatibilityProfile::Browser => {
-                let state = self.store.get(&self.id)?.state;
-                let virtual_left = aligned_task_completion_duration(&state)
+                let virtual_left = aligned_task_completion_duration(self.browser_state()?)
                     .saturating_sub(self.rested.browser_remainder());
                 let mut duration = rested::real_duration(virtual_left, self.rested.balance())
                     .min(interval)
-                    .min(rested::CHECKPOINT_INTERVAL);
+                    .min(rested::PUBLISH_INTERVAL);
                 if !self.rested.balance().is_zero() {
                     duration = duration.min(self.rested.balance());
                 }
@@ -2149,20 +2264,12 @@ impl Worker {
     ) -> Result<(), WorkerError> {
         let previous = self.rested;
         let previous_clock = self.clock;
-        let (earned, _) = self.account_until(current, limit)?;
+        let (earned, slept) = self.account_until(current, limit)?;
         let millis = self.rested.browser_ticks(earned)?;
-        let result = if millis == 0 {
-            self.store
-                .replace_rested(&self.id, &self.rested)
-                .map_err(WorkerError::from)
-        } else {
-            self.advance_elapsed(Duration::from_millis(millis))
-        };
+        let result = self.browser_step(millis, slept);
         if result.is_err() {
             self.rested = previous;
             self.clock = previous_clock;
-        } else {
-            self.last_commit_awake = self.clock.awake;
         }
         result
     }
@@ -2174,10 +2281,11 @@ impl Worker {
             self.load_desktop_session()?;
             self.commit_desktop()?;
         } else {
-            let state = self.store.get(&self.id)?.state;
+            let state = self.browser_state()?.clone();
             self.store
                 .replace_state_with_rested(&self.id, &state, Some(&self.rested))?;
         }
+        self.store.remove_live(&self.id);
         Ok(())
     }
 
@@ -2209,9 +2317,11 @@ impl Worker {
             self.desktop_pending_virtual = Duration::ZERO;
             self.desktop_callback(elapsed_ms, false)?;
         }
-        if self.clock.awake >= self.last_commit_awake + rested::CHECKPOINT_INTERVAL {
+        if self.clock.awake >= self.last_commit_awake + rested::COMMIT_INTERVAL {
             self.load_desktop_session()?;
             self.commit_desktop()?;
+        } else if self.clock.awake >= self.last_publish_awake + rested::PUBLISH_INTERVAL {
+            self.publish_live();
         }
         Ok(false)
     }
@@ -2253,7 +2363,8 @@ impl Worker {
                 self.commit_desktop()?;
                 deadline = self.desktop_pace + period;
             }
-            let checkpoint = self.last_commit_awake + rested::CHECKPOINT_INTERVAL;
+            let checkpoint = (self.last_commit_awake + rested::COMMIT_INTERVAL)
+                .min(self.last_publish_awake + rested::PUBLISH_INTERVAL);
             let wait = rested::real_duration(
                 deadline.saturating_sub(self.desktop_pace),
                 self.rested.balance(),
@@ -2326,6 +2437,7 @@ mod tests {
         };
         worker.clock = sample;
         worker.last_commit_awake = Duration::ZERO;
+        worker.last_publish_awake = Duration::ZERO;
         worker.rested = RestedState::empty(sample.wall_ms);
         worker.rested.accrue(balance);
         worker.rested.record(sample.wall_ms, true);
@@ -2334,6 +2446,20 @@ mod tests {
             .replace_rested(&worker.id, &worker.rested)
             .unwrap();
         sample
+    }
+
+    fn live_browser(worker: &Worker) -> Character {
+        match worker.store.live_inspection(&worker.id).unwrap().state {
+            ManagedInspectionState::Browser(character) => character.state,
+            ManagedInspectionState::Desktop644(_) => panic!("expected browser state"),
+        }
+    }
+
+    fn live_desktop(worker: &Worker) -> RegisteredDesktopCharacter {
+        match worker.store.live_inspection(&worker.id).unwrap().state {
+            ManagedInspectionState::Desktop644(character) => character,
+            ManagedInspectionState::Browser(_) => panic!("expected desktop state"),
+        }
     }
 
     fn after(sample: ClockSample, awake: Duration, sleep: Duration) -> ClockSample {
@@ -2422,37 +2548,17 @@ mod tests {
             .unwrap();
         assert_eq!(worker.rested.balance(), Duration::ZERO);
         assert_eq!(worker.rested.browser_remainder(), Duration::from_millis(50));
-        assert_eq!(
-            worker
-                .store
-                .get(&worker.id)
-                .unwrap()
-                .state
-                .progress
-                .task
-                .position,
-            1_200.0
-        );
+        assert_eq!(live_browser(&worker).progress.task.position, 1_200.0);
         worker
             .browser_update_at(
                 after(current, Duration::from_millis(50), Duration::ZERO),
                 Duration::from_millis(50),
             )
             .unwrap();
-        assert_eq!(
-            worker
-                .store
-                .get(&worker.id)
-                .unwrap()
-                .state
-                .progress
-                .task
-                .position,
-            1_300.0
-        );
+        assert_eq!(live_browser(&worker).progress.task.position, 1_300.0);
         let expected =
             crate::simulation::advance(&initial, &crate::ruleset::BUNDLED, 1_300).unwrap();
-        let actual = worker.store.get(&worker.id).unwrap().state;
+        let actual = live_browser(&worker);
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
             serde_json::to_value(expected).unwrap()
@@ -2464,17 +2570,7 @@ mod tests {
                 Duration::from_secs(1),
             )
             .unwrap();
-        assert_eq!(
-            worker
-                .store
-                .get(&worker.id)
-                .unwrap()
-                .state
-                .progress
-                .task
-                .position,
-            3_300.0
-        );
+        assert_eq!(live_browser(&worker).progress.task.position, 3_300.0);
         assert_eq!(worker.rested.balance(), Duration::from_secs(1));
     }
 
@@ -2499,7 +2595,7 @@ mod tests {
             let expected =
                 crate::simulation::advance(&initial, &crate::ruleset::BUNDLED, serviced_ms)
                     .unwrap();
-            let actual = worker.store.get(&worker.id).unwrap().state;
+            let actual = live_browser(&worker);
             assert_eq!(
                 serde_json::to_value(actual).unwrap(),
                 serde_json::to_value(expected).unwrap()
@@ -2512,6 +2608,120 @@ mod tests {
         assert_eq!(worker.rested.balance(), Duration::from_millis(700));
     }
 
+    fn persisted_browser(store: &Store, id: &CharacterId) -> serde_json::Value {
+        match store.managed_inspection(id).unwrap().state {
+            ManagedInspectionState::Browser(character) => {
+                serde_json::to_value(character.state).unwrap()
+            }
+            ManagedInspectionState::Desktop644(_) => panic!("expected browser state"),
+        }
+    }
+
+    fn inspected_browser(store: &Store, id: &CharacterId) -> serde_json::Value {
+        match store.live_inspection(id).unwrap().state {
+            ManagedInspectionState::Browser(character) => {
+                serde_json::to_value(character.state).unwrap()
+            }
+            ManagedInspectionState::Desktop644(_) => panic!("expected browser state"),
+        }
+    }
+
+    #[test]
+    fn browser_task_completion_is_published_without_a_durable_commit() {
+        let directory = TestDirectory::new("live-publish");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        seed_rest(&mut worker, Duration::ZERO);
+        let persisted = persisted_browser(&worker.store, &worker.id);
+        let remaining = aligned_task_completion_duration(worker.browser_state().unwrap());
+        worker
+            .browser_step(remaining.as_millis() as u64, false)
+            .unwrap();
+
+        assert_eq!(persisted_browser(&worker.store, &worker.id), persisted);
+        let live = live_browser(&worker);
+        assert_eq!(serde_json::to_value(&live).unwrap(), {
+            let mut expected = worker.browser_state.clone().unwrap();
+            expected.profile = live.profile.clone();
+            serde_json::to_value(expected).unwrap()
+        });
+        assert_ne!(serde_json::to_value(&live).unwrap(), persisted);
+        assert!(
+            directory
+                .0
+                .join("live")
+                .join(format!("{}.live.json", worker.id))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn live_inspection_falls_back_to_persisted_state_without_a_live_owner() {
+        let directory = TestDirectory::new("live-fallback");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        seed_rest(&mut worker, Duration::ZERO);
+        let remaining = aligned_task_completion_duration(worker.browser_state().unwrap());
+        worker
+            .browser_step(remaining.as_millis() as u64, false)
+            .unwrap();
+        let observer = Store::open_at(&directory.0).unwrap();
+        let persisted = persisted_browser(&observer, &registered.id);
+        assert_ne!(inspected_browser(&observer, &registered.id), persisted);
+
+        let mut stale = observer.current_live_state(&registered.id).unwrap();
+        stale.pid = stale.pid.wrapping_add(1);
+        observer.publish_live(&registered.id, &stale);
+        assert_eq!(inspected_browser(&observer, &registered.id), persisted);
+
+        worker.publish_live();
+        assert_ne!(inspected_browser(&observer, &registered.id), persisted);
+        drop(worker);
+        assert!(
+            directory
+                .0
+                .join("live")
+                .join(format!("{}.live.json", registered.id))
+                .exists()
+        );
+        assert_eq!(inspected_browser(&observer, &registered.id), persisted);
+    }
+
+    #[test]
+    fn graceful_stop_commits_current_state_and_removes_live_state() {
+        let directory = TestDirectory::new("live-stop");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let mut worker = Worker::start(store, registered.id.clone()).unwrap();
+        seed_rest(&mut worker, Duration::ZERO);
+        let remaining = aligned_task_completion_duration(worker.browser_state().unwrap());
+        worker
+            .browser_step(remaining.as_millis() as u64, false)
+            .unwrap();
+        let mut current = worker.browser_state.clone().unwrap();
+        worker.finish_at(worker.clock).unwrap();
+
+        let persisted = Store::open_at(&directory.0)
+            .unwrap()
+            .get(&registered.id)
+            .unwrap()
+            .state;
+        current.profile = persisted.profile.clone();
+        assert_eq!(
+            serde_json::to_value(persisted).unwrap(),
+            serde_json::to_value(current).unwrap()
+        );
+        assert!(
+            !directory
+                .0
+                .join("live")
+                .join(format!("{}.live.json", registered.id))
+                .exists()
+        );
+    }
+
     #[test]
     fn rested_browser_fractional_time_survives_restart_and_failed_commit_is_atomic() {
         let directory = TestDirectory::new("rested-atomic");
@@ -2519,9 +2729,11 @@ mod tests {
         let registered = store.register(&fixture_character()).unwrap();
         let mut worker = Worker::start(store, registered.id.clone()).unwrap();
         let start = seed_rest(&mut worker, Duration::from_millis(250));
+        // A full commit interval of awake time makes each update a durable
+        // commit point while still contributing only the 1 s worker interval.
         worker
             .browser_update_at(
-                after(start, Duration::from_secs(1), Duration::ZERO),
+                after(start, rested::COMMIT_INTERVAL, Duration::ZERO),
                 Duration::from_secs(1),
             )
             .unwrap();
@@ -2531,7 +2743,7 @@ mod tests {
         assert!(
             worker
                 .browser_update_at(
-                    after(worker.clock, Duration::from_secs(1), Duration::ZERO),
+                    after(worker.clock, rested::COMMIT_INTERVAL, Duration::ZERO),
                     Duration::from_secs(1)
                 )
                 .is_err()
@@ -2666,24 +2878,25 @@ mod tests {
                 .import_metadata
                 .measured_since_import
                 .tasks_completed,
-            1
-        );
-        worker.load_desktop_session().unwrap();
-        assert_eq!(
-            worker
-                .desktop
-                .as_ref()
-                .unwrap()
-                .checkpoint
-                .state
-                .bars
-                .task
-                .position,
             0
         );
+        assert_eq!(live_desktop(&worker).state.bars.task.position, 0);
         worker
-            .desktop_update_at(after(start, Duration::from_secs(2), Duration::ZERO), true)
+            .desktop_update_at(
+                after(start, rested::COMMIT_INTERVAL * 2, Duration::ZERO),
+                true,
+            )
             .unwrap();
+        assert_eq!(
+            worker
+                .store
+                .get_desktop(&worker.id)
+                .unwrap()
+                .import_metadata
+                .measured_since_import
+                .tasks_completed,
+            1
+        );
         assert!(
             worker
                 .store
@@ -3934,6 +4147,17 @@ mod tests {
     }
 
     #[test]
+    fn opening_uses_write_ahead_logging() {
+        let directory = TestDirectory::new("wal-journal");
+        let store = Store::open_at(&directory.0).unwrap();
+        let mode: String = store
+            .connection
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+
+    #[test]
     fn reopening_restricts_sqlite_sidecar_permissions() {
         let directory = TestDirectory::new("sidecar-permissions");
         drop(Store::open_at(&directory.0).unwrap());
@@ -4368,6 +4592,12 @@ mod tests {
         );
 
         worker.desktop_callback(100, false).unwrap();
+        assert_eq!(persisted(&worker).state.bars.task.position, 6_000);
+        let published = live_desktop(&worker);
+        assert_eq!(published.state.bars.task.position, 0);
+        assert_ne!(published.state.current_task, initial_task);
+
+        worker.flush_desktop().unwrap();
         let completed = persisted(&worker);
         assert_eq!(completed.state.bars.task.position, 0);
         assert_ne!(completed.state.current_task, initial_task);

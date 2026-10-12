@@ -287,7 +287,7 @@ fn dashboard_character(
     store: &Store,
     id: &CharacterId,
 ) -> Result<DashboardCharacter, StorageError> {
-    let inspection = store.managed_inspection(id)?;
+    let inspection = store.live_inspection(id)?;
     let mut character = match inspection.state {
         crate::runtime::ManagedInspectionState::Browser(character) => {
             DashboardCharacter::from_browser(character, inspection.compatibility)

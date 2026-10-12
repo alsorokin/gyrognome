@@ -71,9 +71,10 @@ All notable changes to Gyrognome are documented in this file.
   instead of listing it in Adventure, preserving the F6 shortcut for long titles.
 - Simplified dashboard Details by omitting technical ID and compatibility rows
   and the long rested-timeline leaderboard notice (retained in managed inspection).
-- Matched desktop runtime pacing to the original callback cadence, with
-  completion-, report-, provenance-, and stop-boundary persistence and
-  dashboard prediction at the same rate.
+- Kept desktop runtime pacing matched to the original callback cadence.
+  Browser and desktop runtimes publish task completions to the dashboard as
+  live state while durably committing before reports, on provenance/sleep/stop
+  boundaries, and at least every 60 awake seconds while advancing.
 - Refined the compact dashboard with current-quest-only display, a dedicated
   task progress bar, and clearer spacing between Character sections.
 - Reorganized the full dashboard: the Journal title shows the current plot,

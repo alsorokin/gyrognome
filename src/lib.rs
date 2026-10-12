@@ -23,6 +23,7 @@ pub mod export;
 pub mod fixtures;
 pub mod guild;
 pub mod lifecycle;
+mod live_state;
 pub mod newguy;
 pub mod newguy_wizard;
 #[cfg(feature = "desktop-live-conformance")]

@@ -65,7 +65,7 @@ enum Command {
     /// Run a managed character using its persisted continuation profile.
     Worker {
         id: String,
-        /// Milliseconds between monotonic-clock persistence updates.
+        /// Milliseconds between monotonic-clock simulation updates.
         #[arg(long, default_value_t = 1_000)]
         interval_ms: u64,
     },

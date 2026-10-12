@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const CAP: Duration = Duration::from_secs(12 * 60 * 60);
-pub const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(1);
+/// Longest awake interval between live-state publications while advancing.
+pub const PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
+/// Longest awake interval between durable commits while advancing.
+pub const COMMIT_INTERVAL: Duration = Duration::from_secs(60);
 const BROWSER_TICK_NS: u64 = 100_000_000;
 
 #[derive(Debug, Error)]

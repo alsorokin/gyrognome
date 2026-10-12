@@ -14,7 +14,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use gyrognome::{
     dashboard,
-    runtime::{CharacterId, Store, Worker},
+    runtime::{CharacterId, ManagedInspectionState, Store, Worker},
     save,
 };
 use uuid::Uuid;
@@ -510,11 +510,14 @@ fn stopping_a_worker_keeps_its_final_persisted_state_readable() {
     let join = thread::spawn(move || worker.run_until(&worker_stop, Duration::from_millis(2)));
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let state = Store::open_at(&directory.0)
+        let inspection = Store::open_at(&directory.0)
             .unwrap()
-            .get(&registered.id)
+            .live_inspection(&registered.id)
             .unwrap();
-        if state.state.progress.task.position > registered.state.progress.task.position {
+        let ManagedInspectionState::Browser(live) = inspection.state else {
+            panic!("expected browser state");
+        };
+        if live.state.progress.task.position > registered.state.progress.task.position {
             break;
         }
         assert!(
