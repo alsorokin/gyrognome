@@ -14,9 +14,16 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use gyrognome::{
     dashboard,
+    desktop_save::{
+        DesktopAdaptations, DesktopQuestMarker, DesktopValidatedBar, DesktopValidatedBars,
+        DesktopValidatedPrivateMetadata, DesktopValidatedProfile, DesktopValidatedRow,
+        DesktopValidatedSave,
+    },
+    newguy::RandomSource,
     runtime::{CharacterId, ManagedInspectionState, Store, Worker},
     save,
 };
+use rusqlite::Connection;
 use uuid::Uuid;
 
 struct TestDirectory(PathBuf);
@@ -73,6 +80,65 @@ impl TestDirectory {
         child.wait_with_output().unwrap()
     }
 
+    fn command_in_pty(&self, arguments: &[&str], input: &[&str]) -> Output {
+        self.command_in_pty_with_initial_delay(arguments, input, Duration::from_millis(100))
+    }
+
+    fn command_in_pty_with_initial_delay(
+        &self,
+        arguments: &[&str],
+        input: &[&str],
+        initial_delay: Duration,
+    ) -> Output {
+        let dashboard_command = std::iter::once(env!("CARGO_BIN_EXE_gyro"))
+            .chain(arguments.iter().copied())
+            .map(shell_quote)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let transcript = self.0.join("pty.typescript");
+        let before = self.0.join("pty.termios.before");
+        let after = self.0.join("pty.termios.after");
+        let command = format!(
+            "stty -g > {}; {}; status=$?; stty -g > {}; exit \"$status\"",
+            shell_quote(before.to_str().unwrap()),
+            dashboard_command,
+            shell_quote(after.to_str().unwrap())
+        );
+        let mut child = Command::new("script")
+            .args([
+                "--quiet",
+                "--return",
+                "--command",
+                &command,
+                transcript.to_str().unwrap(),
+            ])
+            .env("XDG_DATA_HOME", &self.0)
+            .env("TERM", "xterm-256color")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for (index, chunk) in input.iter().enumerate() {
+            thread::sleep(if index == 0 {
+                initial_delay
+            } else {
+                Duration::from_millis(100)
+            });
+            if let Err(error) = stdin.write_all(chunk.as_bytes()) {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    break;
+                }
+                panic!("failed to send terminal input: {error}");
+            }
+        }
+        drop(stdin);
+        let mut output = child.wait_with_output().unwrap();
+        output.stdout = fs::read(transcript).unwrap();
+        output
+    }
+
     #[cfg(feature = "enrollment-test-transport")]
     fn command_with_env(&self, arguments: &[&str], environment: &[(&str, &str)]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_gyro"));
@@ -82,6 +148,10 @@ impl TestDirectory {
         }
         command.output().unwrap()
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 impl Drop for TestDirectory {
@@ -300,14 +370,97 @@ fn dashboard_rejects_missing_identifiers_before_entering_terminal_mode() {
 #[test]
 fn dashboard_without_registrations_reports_an_error_before_terminal_mode() {
     let directory = TestDirectory::new("dashboard-empty");
-    let output = directory.command(&["dashboard"]);
+    for args in [
+        &["dashboard"][..],
+        &["dashboard", "--resume"][..],
+        &["dashboard", "-r"][..],
+    ] {
+        let output = directory.command(args);
+        assert!(!output.status.success());
+        assert!(stderr(&output).contains("no managed characters are registered"));
+        assert!(
+            ![stdout(&output), stderr(&output)]
+                .join("")
+                .contains("\u{1b}[?1049h")
+        );
+    }
+}
+
+#[test]
+fn dashboard_resume_propagates_storage_errors_instead_of_falling_back() {
+    let directory = TestDirectory::new("dashboard-resume-storage-error");
+    let store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    drop(store);
+    let connection = Connection::open(directory.0.join("gyrognome/characters.sqlite3")).unwrap();
+    connection.execute_batch("DROP TABLE characters;").unwrap();
+    drop(connection);
+
+    let output = directory.command(&["dashboard", "--resume"]);
     assert!(!output.status.success());
-    assert!(stderr(&output).contains("no managed characters are registered"));
-    assert!(
-        ![stdout(&output), stderr(&output)]
-            .join("")
-            .contains("\u{1b}[?1049h")
+    assert!(stderr(&output).contains("no such table: characters"));
+    assert!(!stdout(&output).contains("Select a managed character"));
+}
+
+#[test]
+fn dashboard_failed_terminal_startup_does_not_record_an_access() {
+    let directory = TestDirectory::new("dashboard-startup-failure");
+    let character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let registered = store.register(&character).unwrap();
+    drop(store);
+
+    let output = directory.command(&["dashboard", &registered.id.to_string()]);
+    assert!(!output.status.success());
+    let store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    assert_eq!(
+        store.get(&registered.id).unwrap().updated_at_unix_ms,
+        0,
+        "failed terminal setup must not record an opening"
     );
+}
+
+#[test]
+fn dashboard_refreshes_do_not_repeat_the_opening_write() {
+    let directory = TestDirectory::new("dashboard-single-access-write");
+    let character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let registered = store.register(&character).unwrap();
+    drop(store);
+    let connection = Connection::open(directory.0.join("gyrognome/characters.sqlite3")).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE dashboard_access_writes (count INTEGER NOT NULL);
+             INSERT INTO dashboard_access_writes VALUES (0);
+             CREATE TRIGGER count_dashboard_access
+             AFTER UPDATE OF updated_at_unix_ms ON characters
+             BEGIN
+                 UPDATE dashboard_access_writes SET count = count + 1;
+             END;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let output = directory.command_in_pty_with_initial_delay(
+        &[
+            "dashboard",
+            &registered.id.to_string(),
+            "--refresh-ms",
+            "100",
+        ],
+        &["q"],
+        Duration::from_millis(600),
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+
+    let connection = Connection::open(directory.0.join("gyrognome/characters.sqlite3")).unwrap();
+    let count: i64 = connection
+        .query_row("SELECT count FROM dashboard_access_writes", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(count, 1);
 }
 
 #[test]
@@ -317,8 +470,23 @@ fn dashboard_selection_entries_are_newest_first_with_credential_safe_activity() 
         save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
     let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
     let older = store.register(&character).unwrap();
+    let worker_state_loaded_before_open = store.get(&older.id).unwrap().state;
+    store.record_dashboard_access(&older.id).unwrap();
     thread::sleep(Duration::from_millis(5));
     let newer = store.register(&character).unwrap();
+    store.record_dashboard_access(&newer.id).unwrap();
+    store
+        .replace_profile(
+            &older.id,
+            &gyrognome::state::OnlineProfile {
+                motto: "Does not change recency".to_owned(),
+                guild: String::new(),
+            },
+        )
+        .unwrap();
+    store
+        .replace_state(&older.id, &worker_state_loaded_before_open)
+        .unwrap();
 
     let entries = dashboard::selector_entries(&store, |id| {
         if id == &older.id {
@@ -341,17 +509,269 @@ fn dashboard_selection_entries_are_newest_first_with_credential_safe_activity() 
         entries[1].activity,
         dashboard::SelectorActivity::Unavailable
     );
-    assert_eq!(entries[0].last_accessed_unix_ms, newer.updated_at_unix_ms);
+    assert_ne!(entries[0].last_accessed_unix_ms, 0);
+    assert_eq!(
+        dashboard::most_recently_accessed_character(&store).unwrap(),
+        Some(newer.id.clone())
+    );
     assert_eq!(entries[0].identity.name, "Reference Hero");
     let older_entry = &entries[1];
     assert!(older_entry.rested.available_ms >= 5);
     assert_eq!(older_entry.rested.active_multiplier, 1);
-    // Service activity alone must not claim a boost without a worker lock.
     assert_eq!(entries[0].rested.active_multiplier, 1);
     assert_eq!(
         store.get(&older.id).unwrap().updated_at_unix_ms,
-        older.updated_at_unix_ms
+        entries[1].last_accessed_unix_ms
     );
+}
+
+#[test]
+fn dashboard_resume_end_to_end_uses_access_order_and_selector_fallback() {
+    let directory = TestDirectory::new("dashboard-resume-pty");
+    let character =
+        save::import_text(&STANDARD.encode(include_str!("fixtures/reference-save.json"))).unwrap();
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let browser = store.register(&character).unwrap();
+    let desktop = store
+        .register_desktop(&synthetic_desktop_save(), &mut SyntheticRandom(17))
+        .unwrap();
+    drop(store);
+
+    let opened_browser = directory.command_in_pty(&["dashboard", &browser.id.to_string()], &["q"]);
+    assert!(
+        opened_browser.status.success(),
+        "{}",
+        stderr(&opened_browser)
+    );
+    thread::sleep(Duration::from_millis(5));
+
+    let opened_desktop = directory.command_in_pty(&["dashboard"], &["j", "\r", "q"]);
+    assert!(
+        opened_desktop.status.success(),
+        "{}",
+        stderr(&opened_desktop)
+    );
+
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    let never_opened = store.register(&character).unwrap();
+    let browser_access = store.get(&browser.id).unwrap().updated_at_unix_ms;
+    let desktop_access = store.get_desktop(&desktop.id).unwrap().updated_at_unix_ms;
+    assert!(
+        desktop_access > browser_access,
+        "desktop={desktop_access}, browser={browser_access}; selector output: {}",
+        stdout(&opened_desktop)
+    );
+    let stale_browser_state = store.get(&browser.id).unwrap().state;
+    store
+        .replace_state(&browser.id, &stale_browser_state)
+        .unwrap();
+    let entries =
+        dashboard::selector_entries(&store, |_| dashboard::SelectorActivity::Inactive).unwrap();
+    assert_eq!(entries[0].id, desktop.id);
+    assert_eq!(
+        dashboard::most_recently_accessed_character(&store).unwrap(),
+        Some(desktop.id.clone())
+    );
+    drop(store);
+
+    for flag in ["--resume", "-r"] {
+        let previous_desktop_access = Store::open_at(directory.0.join("gyrognome"))
+            .unwrap()
+            .get_desktop(&desktop.id)
+            .unwrap()
+            .updated_at_unix_ms;
+        thread::sleep(Duration::from_millis(5));
+        let resumed = directory.command_in_pty(&["dashboard", flag], &["q"]);
+        assert!(resumed.status.success(), "{}", stderr(&resumed));
+        let store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+        assert!(
+            store.get_desktop(&desktop.id).unwrap().updated_at_unix_ms > previous_desktop_access
+        );
+        assert_eq!(
+            store.get(&browser.id).unwrap().updated_at_unix_ms,
+            browser_access
+        );
+    }
+
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    store.remove(&desktop.id).unwrap();
+    drop(store);
+    let previous_browser_access = Store::open_at(directory.0.join("gyrognome"))
+        .unwrap()
+        .get(&browser.id)
+        .unwrap()
+        .updated_at_unix_ms;
+    thread::sleep(Duration::from_millis(5));
+    let resumed_browser = directory.command_in_pty(&["dashboard", "-r"], &["q"]);
+    assert!(
+        resumed_browser.status.success(),
+        "{}",
+        stderr(&resumed_browser)
+    );
+    assert!(
+        Store::open_at(directory.0.join("gyrognome"))
+            .unwrap()
+            .get(&browser.id)
+            .unwrap()
+            .updated_at_unix_ms
+            > previous_browser_access
+    );
+
+    let mut store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    store.remove(&browser.id).unwrap();
+    drop(store);
+    let fallback = directory.command_in_pty(&["dashboard", "--resume"], &["q"]);
+    assert!(fallback.status.success(), "{}", stderr(&fallback));
+    let store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    assert_eq!(store.get(&never_opened.id).unwrap().updated_at_unix_ms, 0);
+}
+
+#[test]
+fn dashboard_access_write_errors_propagate_after_terminal_cleanup() {
+    let directory = TestDirectory::new("dashboard-access-error");
+    let save = directory.save_file();
+    let registered = directory.command(&["register", save.to_str().unwrap()]);
+    assert!(registered.status.success(), "{}", stderr(&registered));
+    let id = stdout(&registered)
+        .strip_prefix("Registered managed character: ")
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let connection = Connection::open(directory.0.join("gyrognome/characters.sqlite3")).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_dashboard_access
+             BEFORE UPDATE OF updated_at_unix_ms ON characters
+             BEGIN SELECT RAISE(ABORT, 'injected dashboard access failure'); END;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let output = directory.command_in_pty(&["dashboard", &id], &["q"]);
+    assert!(!output.status.success());
+    assert!(
+        stdout(&output).contains("injected dashboard access failure"),
+        "{}",
+        stdout(&output)
+    );
+    let before = fs::read(directory.0.join("pty.termios.before")).unwrap();
+    let after = fs::read(directory.0.join("pty.termios.after")).unwrap();
+    assert!(!before.is_empty(), "could not read the PTY terminal mode");
+    assert_eq!(
+        before, after,
+        "terminal mode was not restored after the access write failed: {before:?} vs {after:?}"
+    );
+    let store = Store::open_at(directory.0.join("gyrognome")).unwrap();
+    assert_eq!(
+        store
+            .get(&CharacterId::parse(&id).unwrap())
+            .unwrap()
+            .updated_at_unix_ms,
+        0
+    );
+}
+
+struct SyntheticRandom(u32);
+
+impl RandomSource for SyntheticRandom {
+    fn next_u32(&mut self) -> Result<u32, gyrognome::newguy::NewGuyError> {
+        Ok(self.0)
+    }
+}
+
+fn synthetic_desktop_save() -> DesktopValidatedSave {
+    let rows = |values: &[(&str, &str)]| {
+        values
+            .iter()
+            .map(|(caption, value)| DesktopValidatedRow {
+                header: [0, -1, -1, 0, 1],
+                caption: (*caption).to_owned(),
+                subitems: vec![(*value).to_owned()],
+            })
+            .collect()
+    };
+    DesktopValidatedSave {
+        traits: rows(&[
+            ("Name", "Desktop Hero"),
+            ("Race", "Gyrognome"),
+            ("Class", "Robot Monk"),
+            ("Level", "2"),
+        ]),
+        stats: rows(&[
+            ("STR", "12"),
+            ("CON", "11"),
+            ("DEX", "10"),
+            ("INT", "9"),
+            ("WIS", "8"),
+            ("CHA", "7"),
+            ("HP Max", "20"),
+            ("MP Max", "15"),
+        ]),
+        equipment: rows(&[
+            ("Weapon", "Stick"),
+            ("Shield", "Plate"),
+            ("Helm", "Cap"),
+            ("Hauberk", "Burlap"),
+            ("Brassairts", "Cloth"),
+            ("Vambraces", "Cloth"),
+            ("Gauntlets", "Cloth"),
+            ("Gambeson", "Cloth"),
+            ("Cuisses", "Cloth"),
+            ("Greaves", "Cloth"),
+            ("Sollerets", "Cloth"),
+        ]),
+        inventory: rows(&[("Gold", "3")]),
+        spells: Vec::new(),
+        plots: Vec::new(),
+        quests: Vec::new(),
+        current_task: "load".to_owned(),
+        quest: DesktopQuestMarker::None,
+        queue: Vec::new(),
+        activity: "Loading...".to_owned(),
+        bars: DesktopValidatedBars {
+            experience: DesktopValidatedBar {
+                position: 0,
+                maximum: 100,
+            },
+            encumbrance: DesktopValidatedBar {
+                position: 0,
+                maximum: 50,
+            },
+            plot: DesktopValidatedBar {
+                position: 0,
+                maximum: 26,
+            },
+            quest: DesktopValidatedBar {
+                position: 0,
+                maximum: 0,
+            },
+            task: DesktopValidatedBar {
+                position: 0,
+                maximum: 2_000,
+            },
+        },
+        prized_equipment: 0,
+        game_style: 3,
+        profile: DesktopValidatedProfile {
+            motto: "Synthetic motto".to_owned(),
+            guild: "Synthetic Guild".to_owned(),
+        },
+        private: DesktopValidatedPrivateMetadata {
+            passkey: 4_242,
+            realm: "Synthetic Realm".to_owned(),
+            endpoint: "https://synthetic.invalid/".to_owned(),
+            account: "synthetic-account".to_owned(),
+            password: "synthetic-password".to_owned(),
+        },
+        adaptations: DesktopAdaptations {
+            legacy_prologue_62: false,
+            legacy_quest_placeholder: false,
+            spelling_patch_applied: false,
+        },
+        restored: None,
+    }
 }
 
 #[test]

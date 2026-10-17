@@ -76,8 +76,17 @@ gyro dashboard
 ```
 
 Choose a character from the list, or open it directly with
-`gyro dashboard <character-id>`. The dashboard shows progress but does not
-advance the game itself. Closing it leaves a running character active.
+`gyro dashboard <character-id>`. Use `gyro dashboard --resume` or
+`gyro dashboard -r` to open the most recently opened character directly; both
+options use the same last-dashboard-access ordering as the selector. If no
+previously opened character remains, resume shows the selector instead. The ID
+and resume options cannot be combined.
+
+The selector displays `Never` for characters that have not been opened in the
+dashboard. Upgrading resets older worker-derived timestamps, so resume falls
+back to the selector until a character has been opened after the upgrade. The
+dashboard shows progress but does not advance the game itself. Closing it
+leaves a running character active.
 
 ```sh
 gyro status <character-id>

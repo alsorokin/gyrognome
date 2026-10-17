@@ -113,6 +113,9 @@ enum Command {
     Guild { id: String, designation: String },
     /// Open an interactive credential-safe dashboard with an immediate manual Brag action.
     Dashboard {
+        /// Reopen the most recently accessed character, falling back to selection.
+        #[arg(short = 'r', long, conflicts_with = "id")]
+        resume: bool,
         id: Option<String>,
         /// Milliseconds between persisted-state refreshes.
         #[arg(long, default_value_t = 1_000, value_parser = clap::value_parser!(u64).range(100..=60_000))]
@@ -442,21 +445,36 @@ pub fn run() -> Result<(), CliError> {
             let result = reporting::set_guild(&mut store, &id, &designation, &HttpsTransport)?;
             println!("{}", result.outcome.message());
         }
-        Command::Dashboard { id, refresh_ms } => {
+        Command::Dashboard {
+            id,
+            resume,
+            refresh_ms,
+        } => {
             let stop = shutdown_flag()?;
             let id = match id {
                 Some(id) => parse_id(&id)?,
                 None => {
                     let store = Store::open_default()?;
-                    let lifecycle = Lifecycle::new(&store, SystemctlRunner);
-                    let characters =
-                        dashboard::selector_entries(&store, |id| match lifecycle.status(id) {
-                            Ok(status) => {
-                                dashboard::SelectorActivity::from_service(&status.service)
-                            }
-                            Err(_) => dashboard::SelectorActivity::Unavailable,
-                        })?;
-                    match dashboard::select_character(characters, &stop)? {
+                    let select = || -> Result<Option<CharacterId>, CliError> {
+                        let lifecycle = Lifecycle::new(&store, SystemctlRunner);
+                        let characters =
+                            dashboard::selector_entries(&store, |id| match lifecycle.status(id) {
+                                Ok(status) => {
+                                    dashboard::SelectorActivity::from_service(&status.service)
+                                }
+                                Err(_) => dashboard::SelectorActivity::Unavailable,
+                            })?;
+                        Ok(dashboard::select_character(characters, &stop)?)
+                    };
+                    let selected = if resume {
+                        match dashboard::most_recently_accessed_character(&store)? {
+                            Some(id) => Some(id),
+                            None => select()?,
+                        }
+                    } else {
+                        select()?
+                    };
+                    match selected {
                         Some(id) => id,
                         None => return Ok(()),
                     }
@@ -673,6 +691,39 @@ mod tests {
             matches!(Args::try_parse_from(["gyro", "guild", "id", ""]).unwrap().command,
             Command::Guild { designation, .. } if designation.is_empty())
         );
+    }
+
+    #[test]
+    fn dashboard_resume_aliases_conflict_with_ids_and_keep_refresh_option() {
+        for args in [
+            ["gyro", "dashboard", "--resume", "--refresh-ms", "500"],
+            ["gyro", "dashboard", "-r", "--refresh-ms", "500"],
+        ] {
+            assert!(matches!(
+                Args::try_parse_from(args).unwrap().command,
+                Command::Dashboard {
+                    resume: true,
+                    id: None,
+                    refresh_ms: 500,
+                }
+            ));
+        }
+
+        for args in [
+            ["gyro", "dashboard", "--resume", "character-id"],
+            ["gyro", "dashboard", "character-id", "-r"],
+        ] {
+            assert!(Args::try_parse_from(args).is_err());
+        }
+
+        assert!(matches!(
+            Args::try_parse_from(["gyro", "dashboard"]).unwrap().command,
+            Command::Dashboard {
+                resume: false,
+                id: None,
+                refresh_ms: 1_000,
+            }
+        ));
     }
 
     #[test]

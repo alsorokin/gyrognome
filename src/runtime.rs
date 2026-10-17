@@ -46,7 +46,8 @@ use rusqlite::OptionalExtension;
 use serde_json::Value;
 
 const DATABASE_FILENAME: &str = "characters.sqlite3";
-const DATABASE_SCHEMA_VERSION: i64 = 5;
+const DATABASE_SCHEMA_VERSION: i64 = 6;
+const NEVER_ACCESSED_UNIX_MS: i64 = 0;
 pub const CANONICAL_STATE_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -107,6 +108,7 @@ pub struct ManagedCharacter {
     pub identity: CharacterIdentity,
     pub state_version: u32,
     pub created_at_unix_ms: i64,
+    /// Last successful dashboard opening, or zero if never opened.
     pub updated_at_unix_ms: i64,
     pub state: Character,
 }
@@ -123,6 +125,7 @@ pub struct RegisteredDesktopCharacter {
     pub identity: CharacterIdentity,
     pub state_version: u32,
     pub created_at_unix_ms: i64,
+    /// Last successful dashboard opening, or zero if never opened.
     pub updated_at_unix_ms: i64,
     pub state: DesktopCanonicalState,
     pub compatibility: CompatibilityState,
@@ -146,6 +149,7 @@ pub struct ManagedCompatibilityPresentation {
 pub struct ManagedCharacterSummary {
     pub id: CharacterId,
     pub identity: CharacterIdentity,
+    /// Last successful dashboard opening, or zero if never opened.
     pub updated_at_unix_ms: i64,
     pub compatibility: ManagedCompatibilityPresentation,
 }
@@ -409,26 +413,28 @@ impl Store {
         let data_root = data_root.as_ref().to_path_buf();
         fs::create_dir_all(&data_root)?;
         restrict_permissions(&data_root, 0o700)?;
-        let database_path = data_root.join(DATABASE_FILENAME);
-        let mut connection = Connection::open(&database_path)?;
-        restrict_permissions(&database_path, 0o600)?;
-        connection.busy_timeout(Duration::from_secs(5))?;
-        connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
-        connection.pragma_update(None, "synchronous", "NORMAL")?;
-        initialize_schema(&mut connection, &data_root)?;
-        restrict_store_files(&data_root)?;
-        Ok(Self {
-            live_directory: data_root.join("live"),
-            data_root,
-            connection,
-            #[cfg(test)]
-            fail_next_update: false,
-            #[cfg(test)]
-            fail_next_profile_update: false,
-            #[cfg(test)]
-            fail_next_remove: false,
-            #[cfg(test)]
-            fail_next_desktop_registration: false,
+        retry_database_busy(|| {
+            let database_path = data_root.join(DATABASE_FILENAME);
+            let mut connection = Connection::open(&database_path)?;
+            restrict_permissions(&database_path, 0o600)?;
+            connection.busy_timeout(Duration::from_secs(5))?;
+            connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+            connection.pragma_update(None, "synchronous", "NORMAL")?;
+            initialize_schema(&mut connection, &data_root)?;
+            restrict_store_files(&data_root)?;
+            Ok(Self {
+                live_directory: data_root.join("live"),
+                data_root: data_root.clone(),
+                connection,
+                #[cfg(test)]
+                fail_next_update: false,
+                #[cfg(test)]
+                fail_next_profile_update: false,
+                #[cfg(test)]
+                fail_next_remove: false,
+                #[cfg(test)]
+                fail_next_desktop_registration: false,
+            })
         })
     }
 
@@ -574,7 +580,7 @@ impl Store {
                 random_continuation,
                 import_metadata,
                 now,
-                now,
+                NEVER_ACCESSED_UNIX_MS,
             ],
         )?;
         write_rested(
@@ -589,7 +595,7 @@ impl Store {
             identity,
             state_version: CANONICAL_STATE_VERSION,
             created_at_unix_ms: now,
-            updated_at_unix_ms: now,
+            updated_at_unix_ms: NEVER_ACCESSED_UNIX_MS,
             state: character.clone(),
         })
     }
@@ -654,7 +660,7 @@ impl Store {
                 random_continuation,
                 persisted_metadata,
                 now,
-                now,
+                NEVER_ACCESSED_UNIX_MS,
             ],
         )?;
         transaction.execute(
@@ -687,7 +693,7 @@ impl Store {
             identity,
             state_version: CANONICAL_STATE_VERSION,
             created_at_unix_ms: now,
-            updated_at_unix_ms: now,
+            updated_at_unix_ms: NEVER_ACCESSED_UNIX_MS,
             state,
             compatibility,
             import_metadata,
@@ -768,6 +774,18 @@ impl Store {
             .ok_or_else(|| StorageError::NotFound(id.clone()))
     }
 
+    /// Records one successful opening of a character in the dashboard.
+    pub fn record_dashboard_access(&mut self, id: &CharacterId) -> Result<(), StorageError> {
+        let changed = self.connection.execute(
+            "UPDATE characters SET updated_at_unix_ms = ?1 WHERE id = ?2",
+            params![unix_millis(), id.to_string()],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::NotFound(id.clone()));
+        }
+        Ok(())
+    }
+
     pub fn replace_desktop_state(
         &mut self,
         id: &CharacterId,
@@ -786,9 +804,8 @@ impl Store {
         let changed = transaction.execute(
             "UPDATE characters
              SET name = ?1, race = ?2, character_class = ?3, level = ?4,
-                 canonical_state = ?5, canonical_state_version = ?6,
-                 updated_at_unix_ms = ?7
-             WHERE id = ?8 AND compatibility_profile = 'desktop-6.4.4'",
+                 canonical_state = ?5, canonical_state_version = ?6
+             WHERE id = ?7 AND compatibility_profile = 'desktop-6.4.4'",
             params![
                 identity.name,
                 identity.race,
@@ -796,7 +813,6 @@ impl Store {
                 sqlite_integer(identity.level, "level")?,
                 canonical_state,
                 CANONICAL_STATE_VERSION,
-                unix_millis(),
                 id.to_string(),
             ],
         )?;
@@ -882,10 +898,6 @@ impl Store {
 
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_update) {
-            transaction.execute(
-                "UPDATE characters SET updated_at_unix_ms = ?1 WHERE id = ?2",
-                params![unix_millis(), id.to_string()],
-            )?;
             return Err(StorageError::InjectedFailure);
         }
 
@@ -893,9 +905,8 @@ impl Store {
             "UPDATE characters
              SET name = ?1, race = ?2, character_class = ?3, level = ?4,
                  canonical_state = ?5, canonical_state_version = ?6,
-                 random_continuation = ?7, import_metadata = ?8,
-                 updated_at_unix_ms = ?9
-             WHERE id = ?10 AND compatibility_profile = 'desktop-6.4.4'",
+                 random_continuation = ?7, import_metadata = ?8
+             WHERE id = ?9 AND compatibility_profile = 'desktop-6.4.4'",
             params![
                 identity.name,
                 identity.race,
@@ -905,7 +916,6 @@ impl Store {
                 CANONICAL_STATE_VERSION,
                 random_continuation,
                 import_metadata,
-                unix_millis(),
                 id.to_string(),
             ],
         )?;
@@ -1249,10 +1259,8 @@ impl Store {
         }
 
         let changed = transaction.execute(
-            "UPDATE characters
-             SET motto = ?1, guild = ?2, updated_at_unix_ms = ?3
-             WHERE id = ?4",
-            params![profile.motto, profile.guild, unix_millis(), id.to_string()],
+            "UPDATE characters SET motto = ?1, guild = ?2 WHERE id = ?3",
+            params![profile.motto, profile.guild, id.to_string()],
         )?;
         if changed == 0 {
             return Err(StorageError::NotFound(id.clone()));
@@ -1474,10 +1482,6 @@ impl Store {
 
         #[cfg(test)]
         if std::mem::take(&mut self.fail_next_update) {
-            transaction.execute(
-                "UPDATE characters SET updated_at_unix_ms = ?1 WHERE id = ?2",
-                params![unix_millis(), id.to_string()],
-            )?;
             return Err(StorageError::InjectedFailure);
         }
 
@@ -1485,7 +1489,7 @@ impl Store {
             "UPDATE characters
              SET name = ?1, race = ?2, character_class = ?3, level = ?4,
                  canonical_state = ?5, canonical_state_version = ?6,
-                 updated_at_unix_ms = ?7, random_continuation = ?9
+                 random_continuation = ?7
              WHERE id = ?8",
             params![
                 character.traits.name,
@@ -1494,9 +1498,8 @@ impl Store {
                 sqlite_integer(character.traits.level, "level")?,
                 canonical_state,
                 CANONICAL_STATE_VERSION,
-                unix_millis(),
-                id.to_string(),
                 random,
+                id.to_string(),
             ],
         )?;
         if changed == 0 {
@@ -1545,6 +1548,25 @@ impl Store {
 
 pub const RESTED_ONLINE_NOTICE: &str =
     "Rested-timeline leaderboard acceptance and classification are unverified.";
+
+fn retry_database_busy<T>(
+    mut operation: impl FnMut() -> Result<T, StorageError>,
+) -> Result<T, StorageError> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match operation() {
+            Err(StorageError::Sql(rusqlite::Error::SqliteFailure(failure, _)))
+                if matches!(
+                    failure.code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                ) && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            result => return result,
+        }
+    }
+}
 
 fn write_rested(
     transaction: &rusqlite::Transaction<'_>,
@@ -1690,6 +1712,12 @@ fn initialize_schema(connection: &mut Connection, data_root: &Path) -> Result<()
         let json = serde_json::to_string(&RestedState::empty(rested::wall_millis()?))
             .map_err(StorageError::StateJson)?;
         transaction.execute("UPDATE characters SET rested_state = ?1", [json])?;
+    }
+    if version < 6 {
+        transaction.execute(
+            "UPDATE characters SET updated_at_unix_ms = ?1",
+            [NEVER_ACCESSED_UNIX_MS],
+        )?;
     }
     transaction.pragma_update(None, "user_version", DATABASE_SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -2503,6 +2531,15 @@ mod tests {
         let mut migrated = Store::open_at(&directory.0).unwrap();
         for (index, id) in [&browser.id, &desktop.id].into_iter().enumerate() {
             assert_eq!(persisted(&migrated, id), original[index]);
+            let access_time: i64 = migrated
+                .connection
+                .query_row(
+                    "SELECT updated_at_unix_ms FROM characters WHERE id = ?1",
+                    [id.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(access_time, NEVER_ACCESSED_UNIX_MS);
             let state = migrated.rested_state(id).unwrap();
             assert_eq!(state.balance(), Duration::ZERO);
             assert!(state.accounted_wall_ms > 1);
@@ -3630,6 +3667,7 @@ mod tests {
             .unwrap();
         assert_eq!(save, original_save);
 
+        assert_eq!(registered.updated_at_unix_ms, NEVER_ACCESSED_UNIX_MS);
         assert_eq!(registered.identity.name, "Desktop Hero");
         assert_eq!(
             registered.compatibility.random,
@@ -3909,6 +3947,83 @@ mod tests {
         let looked_up = store.get(&registered.id).unwrap();
         assert_eq!(looked_up.state.traits.name, "Reference Hero");
         assert_eq!(looked_up.state.document, Value::Null);
+        assert_eq!(registered.updated_at_unix_ms, NEVER_ACCESSED_UNIX_MS);
+        assert_eq!(
+            looked_up.updated_at_unix_ms, NEVER_ACCESSED_UNIX_MS,
+            "new registrations have never been opened in the dashboard"
+        );
+    }
+
+    #[test]
+    fn dashboard_access_persists_and_survives_worker_and_profile_writes() {
+        let directory = TestDirectory::new("dashboard-access");
+        let mut store = Store::open_at(&directory.0).unwrap();
+        let registered = store.register(&fixture_character()).unwrap();
+        let stale_worker_state = store.get(&registered.id).unwrap().state;
+        let canonical_before = canonical_json(&stale_worker_state).unwrap();
+        let rested_before = store.rested_state(&registered.id).unwrap();
+        let profile_before = store.profile(&registered.id).unwrap();
+
+        assert_eq!(
+            store.get(&registered.id).unwrap().updated_at_unix_ms,
+            NEVER_ACCESSED_UNIX_MS
+        );
+        store.record_dashboard_access(&registered.id).unwrap();
+        let access_time = store.get(&registered.id).unwrap().updated_at_unix_ms;
+        assert_ne!(access_time, NEVER_ACCESSED_UNIX_MS);
+
+        store
+            .replace_profile(
+                &registered.id,
+                &OnlineProfile {
+                    motto: "Dashboard only".to_owned(),
+                    guild: profile_before.guild,
+                },
+            )
+            .unwrap();
+        store
+            .replace_state(&registered.id, &stale_worker_state)
+            .unwrap();
+
+        let after = store.get(&registered.id).unwrap();
+        assert_eq!(after.updated_at_unix_ms, access_time);
+        assert_eq!(canonical_json(&after.state).unwrap(), canonical_before);
+        assert_eq!(after.state.profile.motto, "Dashboard only");
+        assert_eq!(store.rested_state(&registered.id).unwrap(), rested_before);
+
+        let desktop = store
+            .register_desktop(&desktop_fixture(), &mut Numbers(17))
+            .unwrap();
+        let stale_desktop_state = store.get_desktop(&desktop.id).unwrap();
+        let RandomContinuation::Desktop644(random) = stale_desktop_state.compatibility.random
+        else {
+            panic!("desktop registration lost its random continuation");
+        };
+        store.record_dashboard_access(&desktop.id).unwrap();
+        let desktop_access_time = store.get_desktop(&desktop.id).unwrap().updated_at_unix_ms;
+        store
+            .replace_desktop_checkpoint(
+                &desktop.id,
+                &DesktopCallbackCheckpoint {
+                    state: stale_desktop_state.state,
+                    random,
+                },
+                0,
+                0,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            store.get_desktop(&desktop.id).unwrap().updated_at_unix_ms,
+            desktop_access_time
+        );
+        drop(store);
+
+        let reopened = Store::open_at(&directory.0).unwrap();
+        assert_eq!(
+            reopened.get(&registered.id).unwrap().updated_at_unix_ms,
+            access_time
+        );
     }
 
     #[test]

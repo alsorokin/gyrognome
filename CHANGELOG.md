@@ -4,6 +4,13 @@ All notable changes to Gyrognome are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Dashboard character selection now tracks successful dashboard openings, and
+  `gyro dashboard --resume` (or `-r`) directly reopens the most recently opened
+  registered character. Worker updates and profile edits no longer affect
+  dashboard recency.
+
 ### Changed
 
 - Browser and desktop runtimes publish task completions to the dashboard as

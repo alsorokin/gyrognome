@@ -2,6 +2,7 @@
 
 use std::{
     cell::RefCell,
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     io::{self, Stdout},
     time::{Duration, Instant},
@@ -333,6 +334,7 @@ impl LifecycleAction {
 pub trait DashboardProvider {
     fn refresh(&self, id: &CharacterId) -> Result<DashboardSnapshot, DashboardError>;
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError>;
+    fn record_dashboard_access(&self, id: &CharacterId) -> Result<(), DashboardError>;
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError>;
     fn brag(
         &self,
@@ -365,6 +367,11 @@ impl DashboardProvider for LocalProvider {
 
     fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
         Ok(dashboard_character(&self.store.borrow(), id)?)
+    }
+
+    fn record_dashboard_access(&self, id: &CharacterId) -> Result<(), DashboardError> {
+        self.store.borrow_mut().record_dashboard_access(id)?;
+        Ok(())
     }
 
     fn lifecycle(&self, action: LifecycleAction, id: &CharacterId) -> Result<(), DashboardError> {
@@ -676,11 +683,45 @@ pub struct SelectorEntry {
 /// accessed, breaking ties on the stable identifier for deterministic output.
 pub fn sort_by_last_accessed(entries: &mut [SelectorEntry]) {
     entries.sort_by(|left, right| {
-        right
-            .last_accessed_unix_ms
-            .cmp(&left.last_accessed_unix_ms)
-            .then_with(|| left.id.to_string().cmp(&right.id.to_string()))
+        compare_access(
+            left.last_accessed_unix_ms,
+            &left.id,
+            right.last_accessed_unix_ms,
+            &right.id,
+        )
     });
+}
+
+fn compare_access(
+    left_access: i64,
+    left_id: &CharacterId,
+    right_access: i64,
+    right_id: &CharacterId,
+) -> Ordering {
+    (left_access == 0)
+        .cmp(&(right_access == 0))
+        .then_with(|| right_access.cmp(&left_access))
+        .then_with(|| left_id.to_string().cmp(&right_id.to_string()))
+}
+
+/// Returns the most recently opened registered character, using the selector's
+/// exact ordering without collecting activity or rested-time details.
+pub fn most_recently_accessed_character(
+    store: &Store,
+) -> Result<Option<CharacterId>, StorageError> {
+    let mut characters = store.list_managed()?;
+    characters.sort_by(|left, right| {
+        compare_access(
+            left.updated_at_unix_ms,
+            &left.id,
+            right.updated_at_unix_ms,
+            &right.id,
+        )
+    });
+    Ok(characters
+        .into_iter()
+        .find(|character| character.updated_at_unix_ms != 0)
+        .map(|character| character.id))
 }
 
 /// Builds credential-safe selector entries for every registered character,
@@ -746,6 +787,9 @@ fn padded_line(left: String, right: String, width: usize) -> Line<'static> {
 
 /// Renders a Unix millisecond timestamp as a minute-resolution UTC label.
 fn format_last_accessed(unix_ms: i64) -> String {
+    if unix_ms == 0 {
+        return "Never".to_owned();
+    }
     let seconds = unix_ms.div_euclid(1_000);
     let days = seconds.div_euclid(86_400);
     let second_of_day = seconds.rem_euclid(86_400);
@@ -1116,6 +1160,7 @@ pub fn run<P: DashboardProvider>(
     let mut session = TerminalSession::enter()?;
     let observed_at = Instant::now();
     let mut state = DashboardState::new(provider.refresh(&id)?, observed_at, refresh_interval);
+    let mut access_recorded = false;
     loop {
         let now = Instant::now();
         let predicted_task_percent = state.displayed_task_percent(now);
@@ -1135,6 +1180,10 @@ pub fn run<P: DashboardProvider>(
                 render_editor(frame, editor);
             }
         })?;
+        if !access_recorded {
+            provider.record_dashboard_access(&id)?;
+            access_recorded = true;
+        }
         if interrupted.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(());
         }
@@ -3071,6 +3120,9 @@ mod tests {
         fn read_state(&self, id: &CharacterId) -> Result<DashboardCharacter, DashboardError> {
             self.observer.read_state(id)
         }
+        fn record_dashboard_access(&self, id: &CharacterId) -> Result<(), DashboardError> {
+            self.observer.record_dashboard_access(id)
+        }
         fn lifecycle(
             &self,
             action: LifecycleAction,
@@ -3737,6 +3789,10 @@ mod tests {
             self.state_snapshots.borrow_mut().remove(0)
         }
 
+        fn record_dashboard_access(&self, _id: &CharacterId) -> Result<(), DashboardError> {
+            Ok(())
+        }
+
         fn lifecycle(
             &self,
             action: LifecycleAction,
@@ -4306,7 +4362,7 @@ mod tests {
 
         for right_aligned in [
             "Last accessed 2026-03-20 09:46 UTC",
-            "Last accessed 1970-01-01 00:00 UTC",
+            "Last accessed Never",
             "active",
             "inactive",
             "activity unavailable",
@@ -4420,6 +4476,15 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Tied", "Newest", "Oldest"]
         );
+
+        entries.push(selector_entry(
+            "Never Opened",
+            "00000000-0000-4000-8000-000000000000",
+            0,
+            SelectorActivity::Inactive,
+        ));
+        sort_by_last_accessed(&mut entries);
+        assert_eq!(entries.last().unwrap().identity.name, "Never Opened");
     }
 
     #[test]
