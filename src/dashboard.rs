@@ -3055,7 +3055,7 @@ fn inventory_line(items: &[InventoryEntry], updates: &RecentTaskUpdates) -> Line
         };
         *occurrence += 1;
         spans.push(styled_value(
-            format!("{} x{}", item.name, item.quantity),
+            format!("{} x{}", item.name.trim_end_matches(' '), item.quantity),
             updates.inventory.contains(&key),
         ));
     }
@@ -4834,6 +4834,23 @@ mod tests {
         assert!(equipment.contains("Hauberk: Leather"));
         assert!(!equipment.contains("Helm:"));
         assert!(!equipment.contains("Brassairts:"));
+    }
+
+    #[test]
+    fn inventory_line_trims_trailing_spaces() {
+        let item = InventoryEntry {
+            name: "neo-otyugh organ ".to_owned(),
+            quantity: 1,
+        };
+        let line = inventory_line(std::slice::from_ref(&item), &RecentTaskUpdates::default());
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert_eq!(rendered, "Inventory: neo-otyugh organ x1");
+        assert_eq!(item.name, "neo-otyugh organ ");
     }
 
     #[test]
