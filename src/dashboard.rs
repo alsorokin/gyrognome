@@ -464,6 +464,9 @@ struct TaskIdentity {
 #[derive(Debug, Clone, Copy)]
 struct TaskAnchor {
     position_ms: f64,
+    /// Displayed position at anchoring; it advances at half rate so the bar
+    /// never rewinds while the worker-anchored prediction catches up.
+    floor_ms: f64,
     duration_ms: u64,
     identity: TaskIdentity,
     observed_at: Instant,
@@ -480,6 +483,7 @@ impl TaskAnchor {
     fn from_character(character: &DashboardCharacter, observed_at: Instant) -> Self {
         Self {
             position_ms: character.progress.task.position,
+            floor_ms: character.progress.task.position,
             duration_ms: character.progress.task.max,
             identity: TaskIdentity {
                 completed_tasks: character.activity.tasks,
@@ -513,7 +517,24 @@ fn predicted_task_position(anchor: TaskAnchor, elapsed: Duration) -> f64 {
     }
     let virtual_ms =
         (elapsed.as_secs_f64() + elapsed.min(anchor.boost_remaining).as_secs_f64()) * 1_000.0;
-    (anchor.position_ms + virtual_ms * anchor.rate).min(anchor.duration_ms as f64)
+    let advance = virtual_ms * anchor.rate;
+    (anchor.position_ms + advance)
+        .max(anchor.floor_ms + advance / 2.0)
+        .min(anchor.duration_ms as f64)
+}
+
+/// Real time after anchoring at which the displayed position reaches `target`.
+fn time_to_display(anchor: TaskAnchor, target: f64, ceil_virtual_ms: bool) -> Duration {
+    let advance = (target - anchor.position_ms)
+        .min(2.0 * (target - anchor.floor_ms))
+        .max(0.0);
+    let virtual_ms = advance / anchor.rate;
+    let virtual_time = if ceil_virtual_ms {
+        Duration::from_millis(virtual_ms.ceil() as u64)
+    } else {
+        Duration::from_secs_f64(virtual_ms / 1_000.0)
+    };
+    crate::rested::real_duration(virtual_time, anchor.boost_remaining)
 }
 
 fn task_percent(position_ms: f64, duration_ms: u64) -> u64 {
@@ -539,10 +560,7 @@ fn next_task_percent_boundary(anchor: TaskAnchor, elapsed: Duration) -> Option<D
     let percent = task_percent(position, anchor.duration_ms);
     let target_position =
         ((u128::from(percent + 1) * u128::from(anchor.duration_ms)).div_ceil(100)) as f64;
-    let virtual_time =
-        Duration::from_secs_f64(((target_position - position) / anchor.rate / 1_000.0).max(0.0));
-    let real =
-        crate::rested::real_duration(virtual_time, anchor.boost_remaining.saturating_sub(elapsed));
+    let real = time_to_display(anchor, target_position, false).saturating_sub(elapsed);
     Some(Duration::from_millis(
         real.as_nanos().div_ceil(1_000_000).max(1) as u64,
     ))
@@ -1261,11 +1279,8 @@ impl DashboardState {
         let mut next_anchor = TaskAnchor::from_character(&character, now);
         if next_anchor.identity == self.task_anchor.identity
             && self.current.runtime_owned == Some(true)
-            && character.rested == self.current.character.rested
         {
-            next_anchor.position_ms = next_anchor
-                .position_ms
-                .max(self.displayed_task_position(now));
+            next_anchor.floor_ms = self.displayed_task_position(now);
         }
         if character.activity.tasks > self.current.character.activity.tasks {
             self.updates = RecentTaskUpdates::between(&self.current.character, &character);
@@ -1375,6 +1390,7 @@ impl DashboardState {
                     .saturating_sub(now.saturating_duration_since(self.task_anchor.observed_at));
                 self.task_anchor.observed_at = now;
                 self.task_anchor.position_ms = displayed;
+                self.task_anchor.floor_ms = displayed;
             }
         }
     }
@@ -1383,14 +1399,8 @@ impl DashboardState {
         if self.current.runtime_owned != Some(true) {
             return None;
         }
-        let virtual_ms = ((self.task_anchor.duration_ms as f64 - self.task_anchor.position_ms)
-            .max(0.0)
-            / self.task_anchor.rate)
-            .ceil() as u64;
-        let remaining = crate::rested::real_duration(
-            Duration::from_millis(virtual_ms),
-            self.task_anchor.boost_remaining,
-        );
+        let remaining =
+            time_to_display(self.task_anchor, self.task_anchor.duration_ms as f64, true);
         self.task_anchor
             .observed_at
             .checked_add(remaining)
@@ -3960,6 +3970,66 @@ mod tests {
     }
 
     #[test]
+    fn task_bar_slows_instead_of_rewinding_within_a_task() {
+        let now = Instant::now();
+        let mut anchor = TaskAnchor::from_snapshot(&active_snapshot(5_000.0, 100_000), now);
+        let raw = anchor;
+        anchor.floor_ms = 6_000.0;
+        assert_eq!(predicted_task_position(anchor, Duration::ZERO), 6_000.0);
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(1)),
+            6_500.0
+        );
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(2)),
+            7_000.0
+        );
+        assert_eq!(
+            predicted_task_position(anchor, Duration::from_secs(3)),
+            8_000.0
+        );
+        // 6% -> 7% needs 1,000 ms of display advance at half rate.
+        assert_eq!(
+            next_task_percent_boundary(anchor, Duration::ZERO),
+            Some(Duration::from_secs(2))
+        );
+        assert!(
+            next_task_percent_boundary(anchor, Duration::ZERO)
+                > next_task_percent_boundary(raw, Duration::ZERO)
+        );
+
+        let mut snapshot = active_snapshot(5_000.0, 10_000);
+        let mut state = DashboardState::new(snapshot.clone(), now, Duration::from_secs(5));
+        let settling_before = state.settling_deadline();
+        state.task_anchor.floor_ms = 9_000.0;
+        assert!(state.settling_deadline() < settling_before);
+
+        for rested in [false, true] {
+            if rested {
+                snapshot.character.rested = crate::rested::RestedView {
+                    available_ms: 60_000,
+                    active_multiplier: 2,
+                };
+            }
+            let mut state = DashboardState::new(snapshot.clone(), now, Duration::from_secs(5));
+            let later = now + Duration::from_millis(500);
+            let shown = state.displayed_task_position(later);
+            let mut behind = snapshot.character.clone();
+            behind.progress.task.position = 5_100.0;
+            behind.rested.available_ms = behind.rested.available_ms.saturating_sub(500);
+            state.replace_character(behind, later);
+            assert_eq!(state.displayed_task_position(later), shown);
+            assert!(state.displayed_task_position(later + Duration::from_millis(100)) > shown);
+
+            let mut next_task = snapshot.character.clone();
+            next_task.activity.tasks += 1;
+            next_task.progress.task.position = 10.0;
+            state.replace_character(next_task, later);
+            assert_eq!(state.displayed_task_position(later), 10.0);
+        }
+    }
+
+    #[test]
     fn rested_prediction_splits_at_exhaustion_for_both_profiles() {
         let now = Instant::now();
         let mut snapshot = active_snapshot(0.0, 10_000);
@@ -4124,6 +4194,7 @@ mod tests {
 
         let zero = TaskAnchor {
             position_ms: 0.0,
+            floor_ms: 0.0,
             duration_ms: 0,
             identity: TaskIdentity {
                 completed_tasks: 0,

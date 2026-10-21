@@ -564,6 +564,16 @@ unchanged.
 When the dashboard reads a newer persisted state, it SHALL discard the previous
 prediction and re-anchor to the newly observed state.
 
+Within a single task, identified by an unchanged completed-task count and task
+duration, the displayed task position SHALL NOT decrease, including across
+re-anchors and regardless of rested state. When a re-anchor finds the displayed
+position ahead of the newly anchored prediction, the dashboard SHALL display the
+greater of the newly anchored prediction and the previously displayed position
+advancing at half the applicable predicted rate, so the displayed bar slows
+down until the anchored prediction catches up and then follows it. When the
+task identity changes, the dashboard SHALL display the newly persisted position
+directly, including a reset to the start of the next task.
+
 The dashboard SHALL schedule its redraws so that a predicted task bar advances
 in whole-percent steps for tasks of any duration. When a redraw is delayed, it
 SHALL display the currently predicted percentage rather than replaying the
@@ -592,10 +602,33 @@ percentages it did not draw.
 
 #### Scenario: Re-anchoring on newer persisted state
 
-- **WHEN** the dashboard reads a persisted state that differs from the state
-  the current prediction was anchored to
+- **WHEN** the dashboard reads a persisted state for a different task than the
+  state the current prediction was anchored to
 - **THEN** it discards the prediction and displays the newly persisted task
   position, activity, and rewards
+
+#### Scenario: Never rewinding within a task
+
+- **WHEN** an owned character's task bar displays 52 percent and the dashboard
+  reads a persisted state for the same task at 50 percent
+- **THEN** the displayed task bar does not drop below 52 percent
+
+#### Scenario: Never rewinding while rested
+
+- **WHEN** an owned character has active rest, and the dashboard reads a
+  persisted state for the same task whose position is behind the displayed
+  position and whose rested balance differs from the previous state
+- **THEN** the displayed task bar does not decrease
+
+#### Scenario: Slowing down while ahead of the worker
+
+- **WHEN** an owned browser character without rest displays task position
+  6,000 milliseconds and the dashboard reads the same task at 5,000
+  milliseconds
+- **THEN** one elapsed second displays 6,500 milliseconds rather than 6,000 or
+  7,000
+- **AND** after two elapsed seconds the anchored prediction has caught up and
+  the bar advances at the normal rate thereafter
 
 #### Scenario: Observing a character with no active runtime
 

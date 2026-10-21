@@ -17,6 +17,12 @@ All notable changes to Gyrognome are documented in this file.
   live state while durably committing before reports, on provenance/sleep/stop
   boundaries, and at least every 60 awake seconds while advancing.
 
+### Fixed
+
+- The dashboard task bar no longer snaps back within a task, especially while
+  rested. When it is ahead of the worker, it slows to half speed until the
+  worker catches up.
+
 ## [1.2.1] - 2026-10-12
 
 ### Fixed
