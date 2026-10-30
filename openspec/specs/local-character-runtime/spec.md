@@ -10,42 +10,33 @@ simulation.
 
 ### Requirement: Local character registration and persistence
 
-The system SHALL import a valid supported browser or desktop save into the
-invoking user's local managed-character store with a stable identifier. It
-SHALL atomically persist canonical state, compatibility profile, random
-continuation, safe online profile metadata, private credentials, import
-provenance, reporting eligibility history, and runtime metadata. Browser
-registration SHALL continue retaining the original JSON document. Desktop
-registration SHALL retain validated data needed for continuation and
-authentication without retaining a raw binary save or fabricating browser DNA.
-Profile metadata SHALL remain independently updateable without overwriting
-concurrent simulation progress.
-
-Existing browser records SHALL migrate to the browser profile without changing
-their state, random continuation, original JSON, credentials, or identifiers.
-Unknown persisted profile/schema versions SHALL fail explicitly. Invalid
-imports SHALL leave no partial registration; failed updates SHALL retain the
-previous complete value. Desktop private data SHALL receive the same
-user-private storage protections as browser credentials and SHALL be removed
-with the character.
+System SHALL import browser/desktop saves to the user's local store with
+stable IDs. Atomically persist state/profile, random continuation, safe
+metadata, credentials, provenance, eligibility, and runtime data. Preserve
+browser JSON; desktop keeps validated auth data, never raw binaries or browser
+DNA. Profile updates preserve concurrent progress. Protect/delete desktop
+credentials as private data.
 
 #### Scenario: Registering a valid browser save
 
 - **WHEN** a user registers a valid browser `.pqw` save
 - **THEN** one managed character with a stable identifier and browser profile
-  is created and its safe canonical/profile state is inspectable
+  is created, its original JSON is retained, and its safe canonical/profile
+  state is inspectable
 
 #### Scenario: Rejecting an invalid browser save
 
-- **WHEN** a user registers malformed or invalid browser save data
-- **THEN** an import error is reported without creating or modifying a
-  character
+- **WHEN** a user registers malformed, invalid, or unknown profile/schema
+  version save data
+- **THEN** an explicit import error is reported without creating or modifying
+  a character
 
 #### Scenario: Recovering after an interrupted update
 
 - **WHEN** persistence is interrupted while recording advancement
 - **THEN** the character retains either its complete pre-advancement state or
-  complete post-advancement state, including random continuation and eligibility
+  complete post-advancement state, including random continuation and
+  eligibility
 
 #### Scenario: Recovering after an interrupted profile update
 
@@ -57,13 +48,15 @@ with the character.
 
 - **WHEN** a supported desktop save includes online authentication
 - **THEN** state, desktop profile, continuation, and private credentials are
-  stored atomically and safe inspection omits credentials and raw properties
+  stored atomically with user-private protection, removed with the character,
+  and omitted from safe inspection along with raw properties
 
 #### Scenario: Migrating an existing browser store
 
 - **WHEN** a pre-profile database is opened by the new runtime
 - **THEN** existing records receive the browser profile without changing their
-  previous simulation, export, or online behavior
+  state, random continuation, original JSON, credentials, identifiers, or
+  previous simulation, export, and online behavior
 
 ### Requirement: Safe managed-character removal
 
@@ -128,21 +121,12 @@ future active progression.
 
 ### Requirement: Browser runtime scheduling and persistence
 
-For browser characters, the system SHALL publish each successful result with
-its rested accounting as live runtime state, and SHALL durably record results
-at the runtime commit boundaries. Each update SHALL cap contributing real
-active time at the configured worker interval and discard excess scheduler
-delay permanently. Updates SHALL occur at the earlier of the interval,
-rested-bank exhaustion, and the tick-aligned task completion at the applicable
-speed. The runtime SHALL service stable 100-millisecond virtual ticks,
-retaining any fractional virtual-time remainder in its rested accounting
-without padding it into extra progression.
-The interval SHALL remain the maximum single real-time contribution; virtual
-time earned SHALL be at most twice that contribution, with an earlier
-remainder available to complete a tick. Task-aligned scheduling SHALL preserve
-the browser's canonical/random continuation compared with equivalent fixed
-scheduling that supplies the same complete tick sequence. Arbitrary
-non-tick-aligned partitions SHALL NOT be claimed equivalent.
+Browser updates SHALL publish successful results with rested accounting and
+persist at commit boundaries. Cap real input at the worker interval, discard
+excess delay, and schedule at the earliest interval, rest exhaustion, or
+tick-aligned completion. Service 100-ms virtual ticks, retain fractions
+without extra progress, and limit virtual time to twice real input. For equal
+complete-tick sequences, task-aligned and fixed scheduling SHALL match.
 
 #### Scenario: Recording a task completion when it occurs
 
@@ -172,26 +156,12 @@ non-tick-aligned partitions SHALL NOT be claimed equivalent.
 
 ### Requirement: Desktop runtime callback pacing
 
-For desktop characters, the runtime SHALL schedule callbacks at a fixed rate
-of one per 109.375 milliseconds, approximating the original client's 100 ms
-timer on default Windows timer resolution, so that time spent processing a
-callback does not lengthen the period. Each actual callback SHALL credit its
-monotonic elapsed input, distinguishing real awake active time from simulated
-time. Without rest, callbacks SHALL remain one per 109.375 milliseconds. While
-rested, the runtime SHALL use a 2x virtual clock, with callbacks spaced by
-54.6875 real milliseconds and callback elapsed inputs scaled by the applicable
-speed. Inputs spanning rest exhaustion SHALL account for their boosted and
-normal portions rather than applying 2x to the entire interval.
-
-Each actual desktop callback SHALL credit its virtual elapsed input according
-to the unchanged 0..100-millisecond profile cap and SHALL preserve the
-full-bar-then-complete boundary. When callbacks fall behind schedule, the
-runtime SHALL skip missed callbacks rather than run them back to back. It SHALL
-NOT synthesize missed callbacks or accelerate callback frequency to drain a
-full task; rested pacing SHALL be the sole intentional acceleration. Restart
-and wake SHALL reestablish timing baselines while retaining the last durably
-recorded state and accounted rest. Time delayed by online delivery SHALL NOT
-become catch-up advancement or earned rest.
+Desktop callbacks SHALL run every 109.375 ms (54.6875 ms while rested),
+independent of processing time, and credit monotonic awake time. Split inputs
+at rest exhaustion; preserve the 0..100-ms cap and full-bar boundary. Skip
+missed callbacks without synthesis or bursts; rest alone accelerates.
+Restart/wake resets timing baselines but retains durable state/rest.
+Online-delivery delays cause no catch-up or earned rest.
 
 #### Scenario: Pacing desktop callbacks independent of processing time
 
@@ -229,15 +199,12 @@ become catch-up advancement or earned rest.
 
 ### Requirement: Runtime durable commit boundaries
 
-For both compatibility profiles, runtime state, random continuation,
-measured counters, and rested accounting SHALL be durably recorded together at
-least: before any report is delivered; when local-only provenance is first
-recorded; when suspend or sleep is observed; on graceful stop; and at bounded
-checkpoints no farther than sixty awake seconds apart while the runtime is
-advancing. Task completion and partial task progress SHALL NOT by themselves
-require a durable write. Between commit points, unrecorded progress and
-accounting SHALL roll back together on abnormal exit, without duplicating
-committed completion rewards or reports.
+For both profiles, the runtime SHALL persist state, random continuation,
+counters, and rest together before reports, on first local-only provenance,
+observed suspend/sleep, graceful stop, and at least every 60 awake seconds
+while advancing. Task completion or partial progress alone need not persist.
+On abnormal exit, uncommitted progress and accounting SHALL roll back together
+without duplicating committed rewards or reports.
 
 #### Scenario: Not committing every task completion
 
@@ -281,17 +248,12 @@ committed completion rewards or reports.
 
 ### Requirement: Live runtime state publication
 
-A runtime that owns a character SHALL publish its current credential-safe
-character state and rested accounting to a user-private location for local
-observers. It SHALL publish at each task completion, after each durable
-commit, and at intervals no longer than one awake second while advancing.
-Publication SHALL replace the previous live state atomically, so observers
-never read a partial value. It SHALL NOT write to the managed-character
-database and SHALL NOT include online credentials or private save data. Live
-state SHALL identify its owning runtime process. Observers SHALL treat it as
-current only while that process still owns the character. A graceful stop
-SHALL remove the live state after its final durable commit. A publication
-failure SHALL NOT stop advancement or affect durable commits.
+Owning runtimes SHALL atomically publish credential-safe state/rest to a
+private location on task completion, durable commits, and at least once per
+awake second while advancing. Do not write to the character database or
+include credentials/private saves. Identify the owning process; observers
+trust state only while it owns the character. Remove after graceful-stop
+commit. Publication failure does not stop advancement or affect commits.
 
 #### Scenario: Publishing a task completion
 
@@ -360,15 +322,12 @@ character or user service cannot be managed.
 
 ### Requirement: Local-only runtime boundary
 
-The runtime SHALL store and operate character data locally, except that an
-eligible active online character SHALL attempt one request to its verified
-official endpoint for each persisted profile-equivalent level-up or
-act-completion event. Each report SHALL use its exact transition snapshot and
-the current persisted motto. State SHALL be persisted before delivery, online
-actions SHALL be serialized, failed delivery SHALL NOT be queued or retried,
-and local advancement SHALL continue after failure. Offline and gated desktop
-characters SHALL never report. Commands and diagnostics SHALL NOT expose
-passkeys, account logins/passwords, authenticated URLs, or raw save fields.
+Keep character data local. Eligible active online characters SHALL send one
+report to the verified official endpoint per persisted profile-equivalent
+level/act event, with its transition snapshot and current motto. Persist before
+delivery and serialize online actions. Do not queue/retry failures; keep
+advancing. Offline/gated desktop characters never report. Omit credentials,
+authenticated URLs, and raw save fields from commands/diagnostics.
 
 #### Scenario: Reporting persisted online progression
 
@@ -409,17 +368,13 @@ passkeys, account logins/passwords, authenticated URLs, or raw save fields.
 
 ### Requirement: Durable desktop local-only advancement provenance
 
-An online-originated desktop import SHALL be allowed to advance locally while
-required classic progress-reporting evidence is unavailable. Its first
-successful advancement under that gate SHALL atomically and durably mark it as
-local-only. This restriction SHALL survive restart and later evidence updates
-and SHALL disable every online operation for that managed import. Inspection,
-registration, and startup without advancement SHALL NOT themselves mark a fork.
-
-Later online use SHALL require a fresh supported official-client import under
-matching passing evidence. The existing advanced record SHALL NOT be reset,
-reenrolled, or made eligible by replacing credentials or clearing a flag.
-Reports accumulated during gated advancement SHALL never be submitted.
+Online-origin desktop imports SHALL be allowed to advance without classic
+reporting evidence; first gated advancement atomically persists local-only
+provenance, which survives restarts/evidence updates and disables online
+actions. Inspection/registration/startup without advancement do not fork.
+Later online use requires a fresh supported official-client import with
+matching passing evidence. Old forks cannot be reenrolled/re-enabled; gated
+reports are never submitted.
 
 #### Scenario: Advancing before classic evidence passes
 
@@ -441,18 +396,12 @@ Reports accumulated during gated advancement SHALL never be submitted.
 
 ### Requirement: Managed character export
 
-The system SHALL provide a command that exports a managed character by
-identifier to a save file: `.pqw` for browser-profile characters and `.pq` for
-desktop-profile characters. The output path SHALL default to `<save-name>`
-with the matching extension in the current directory and MAY be overridden. If
-the target exists, the command SHALL ask for confirmation and SHALL NOT
-overwrite without it unless a force option is given. Files SHALL be written
-atomically with user-private permissions, and a failed or declined export SHALL
-leave any existing file unchanged. Exported files contain credentials, which
-SHALL NOT be printed. Export SHALL NOT modify the stored character.
-
-If the character's worker is running, export SHALL stop it, export a consistent
-snapshot, and restart it, including when the export fails.
+The system SHALL export by ID as `.pqw` (browser) or `.pq` (desktop), defaulting
+to `<save-name>` with the matching extension in the current directory; allow a
+path override. Confirm overwrite unless forced. Write atomically with private
+permissions and preserve existing files on failure or decline. Never print
+credentials or change stored data. If running, stop the worker, export a
+consistent snapshot, and restart it even on failure.
 
 #### Scenario: Exporting a browser character
 
@@ -477,20 +426,13 @@ snapshot, and restart it, including when the export fails.
 
 ### Requirement: Persistent per-character autostart
 
-The system SHALL provide `gyro autostart <id> on|off` to enable or disable
-persistent automatic startup of a registered character's user service.
-Autostart SHALL remain independent of current service activity: changing it
-SHALL NOT start, stop, or recover a worker, and Start/Stop/Recover SHALL NOT
-change it. Repeating the same setting SHALL succeed without changing runtime
-activity. Registration SHALL NOT automatically enable autostart.
-
-Enabled characters SHALL start when the user's service manager starts,
-including after reboot when that manager starts. The system SHALL NOT promise
-startup before login unless account-wide lingering is configured. It SHALL
-document that prerequisite without automatically enabling lingering or
-requesting elevated privileges. Automatic startup SHALL retain existing
-persisted-state, exclusive-ownership, reporting-eligibility, and rested-time
-semantics, including no immediate downtime catch-up.
+The system SHALL provide `gyro autostart <id> on|off` for persistent
+per-character user-service startup. Changing it SHALL NOT affect activity;
+Start/Stop/Recover SHALL NOT change preference. Repeats succeed; registration
+leaves it disabled. Enabled characters start with the user manager, including
+after reboot. Document that pre-login requires lingering, without enabling it
+or requiring privilege. Preserve state, ownership, reporting, and rest
+semantics without downtime catch-up.
 
 #### Scenario: Enabling an inactive character
 
