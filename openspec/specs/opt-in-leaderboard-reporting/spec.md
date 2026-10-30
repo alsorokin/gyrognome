@@ -29,25 +29,12 @@ and leave state unchanged. Desktop confirmation SHALL NOT override eligibility.
 
 ### Requirement: Open the public leaderboard after manual brag
 
-After an eligible manual brag has been explicitly confirmed and its single
-report attempt has completed, the system SHALL open the selected character's
-public Progress Quest leaderboard page through the system browser. The page
-SHALL correspond to the character's supported realm and identify the character
-by its display name, safely encoded as a query value. The page URL SHALL use a
-fixed official HTTPS origin and SHALL NOT contain credentials, signed report
-data, or user-supplied endpoint data. This behavior SHALL apply to both the
-confirmed CLI report command and the dashboard Brag action, regardless of the
-categorized report-delivery outcome. Failure to open the page SHALL be reported
-separately and SHALL NOT change the report outcome.
-
-The browser SHALL be launched detached from Gyrognome's terminal: it SHALL NOT
-inherit Gyrognome's standard input, output, or error, and SHALL NOT share
-Gyrognome's terminal process group. Opening the page SHALL NOT block the
-dashboard. The system SHALL wait at most 3 seconds for the browser launcher to
-finish; a launch error or unsuccessful launcher exit within that time SHALL be
-reported as an opening failure, and a launcher still running after 3 seconds
-SHALL be treated as a successful open. In the dashboard, an opening failure
-SHALL be shown in the dashboard's own interface rather than written over it.
+After a confirmed eligible manual brag completes its single report attempt,
+the CLI and dashboard SHALL open the character's realm-specific leaderboard
+using the fixed official HTTPS origin and safely encoded display name. The URL
+SHALL exclude credentials, signed report data, and user-supplied endpoints.
+Opening SHALL be detached and nonblocking; failure SHALL be reported
+separately without changing the report outcome.
 
 #### Scenario: Opening the leaderboard after a confirmed CLI brag
 
@@ -77,7 +64,7 @@ SHALL be shown in the dashboard's own interface rather than written over it.
 #### Scenario: Browser started fresh from the dashboard
 
 - **WHEN** a dashboard brag opens the page while no browser is running and the newly started browser stays running and writes diagnostic output
-- **THEN** none of that output appears in the terminal, the dashboard stays responsive, and the open is treated as successful after at most 3 seconds
+- **THEN** the browser does not inherit Gyrognome's standard input, output, or error or share its terminal process group, none of its output appears in the terminal, the dashboard stays responsive, and a launcher still running after 3 seconds is treated as a successful open
 
 #### Scenario: Launcher fails quickly in the dashboard
 
@@ -86,24 +73,12 @@ SHALL be shown in the dashboard's own interface rather than written over it.
 
 ### Requirement: Reporting eligibility and conformance gate
 
-The system SHALL allow manual brag, motto, and guild actions for valid imported
-online browser characters with retained passkeys while active or inactive when
-applicable evidence passes. Desktop characters SHALL additionally require
-matching profile, import-path, realm, endpoint, credential-mode, encoding, and
-operation evidence or the explicit Pemptus public-confirmation guild strategy,
-and SHALL NOT have local-only advancement provenance.
-For import-path matching, an explicitly proven deterministic load
-normalization MAY match its canonical path only under the equivalence rule
-defined by desktop leaderboard conformance. The separately approved Pemptus
-family also permits exact indexed quest-placeholder-only imports. Unknown,
-unapproved progression-affecting, or combined adaptations do not inherit eligibility.
-Each explicit action SHALL serialize with other online actions without
-stopping, restarting, or interrupting runtime ownership.
-
-Offline origins, invalid/missing credentials, unsupported authentication or
-endpoints, local-only provenance, and incomplete evidence SHALL be rejected
-before transport, with a safe reason. Valid browser evidence SHALL NOT confer
-desktop eligibility.
+The system SHALL permit manual brag, motto, and guild actions only for eligible
+imported online characters, active or inactive, based on their profile, import
+provenance, credentials, and current evidence for the requested operation.
+Local-only provenance SHALL prohibit online actions. Actions SHALL serialize
+without interrupting runtime ownership. Ineligible requests SHALL be rejected
+before transport with a safe reason.
 
 #### Scenario: Reporting an offline-originated character
 
@@ -148,37 +123,20 @@ desktop eligibility.
 - **THEN** the request is refused before transport even if one recorded
   adaptation would be eligible by itself
 
+#### Scenario: Browser evidence does not authorize desktop reporting
+
+- **WHEN** desktop reporting is requested with passing browser evidence but
+  without matching desktop evidence
+- **THEN** the request is refused before transport
+
 ### Requirement: Credential-safe report delivery
 
-The reporting surface SHALL construct profile-compatible manual-brag,
-motto-change, and guild requests from coherent persisted state, online profile,
-and retained private authentication. Browser delivery SHALL retain its existing
-official endpoint behavior. Desktop delivery SHALL use only an explicitly
-verified allowlisted official HTTPS endpoint and authentication contract; a
-saved host or URL userinfo SHALL NOT authorize a destination. Redirects SHALL
-NOT leak authentication or switch to an unapproved endpoint or HTTP.
-
-Output SHALL contain only safe identity, operation, eligibility reason, and
-categorized outcome. Logs/errors SHALL NOT contain passkeys, account
-logins/passwords, signed or authenticated URLs, raw saves/responses, browser
-profiles, or normalized response text. Successful HTTP status SHALL mean
-delivered, not proof of normal leaderboard classification.
-
-Fingerprint-based guild responses SHALL be bounded and matched only to sanitized
-profile-and-realm-specific fingerprints produced by the same versioned
-normalization contract as the live evidence. The production classifier SHALL
-supply the same ordered categories of dynamic values and use the same
-replacement marker as the evidence generator. After an indeterminate desktop
-guild response, the same explicit action MAY perform one bounded,
-credential-free read of the verified realm page and treat an exact character
-and case-insensitive ASCII guild match as acceptance without retrying the guild
-mutation.
-
-Supported Pemptus guild actions SHALL instead require one bounded public
-membership observation after the sole mutation attempt, including uncertain
-delivery. They SHALL NOT use response fingerprints as acceptance or rejection
-proof; confirmed desired state, safe uncertainty, and persistence SHALL follow
-the Pemptus profile-action requirement.
+Requests SHALL use coherent persisted state and private authentication, and
+only the profile's verified endpoint and contract. Redirects SHALL NOT leak
+credentials or switch to unapproved or HTTP destinations. Logs and output
+SHALL contain only safe identity, operation, eligibility reason, and outcome;
+secrets, browser profiles, and raw or normalized responses SHALL be excluded.
+HTTP success SHALL NOT prove leaderboard acceptance.
 
 #### Scenario: Delivering an eligible report
 
@@ -201,13 +159,29 @@ the Pemptus profile-action requirement.
 - **THEN** it uses the identical normalization version, ordered dynamic-value
   categories, replacement marker, and SHA-256 encoding
 
+#### Scenario: Matching a guild response fingerprint
+
+- **WHEN** a guild response is classified by fingerprint
+- **THEN** it is bounded and matched only against sanitized fingerprints for
+  that profile and realm using the same versioned normalization and dynamic
+  value categories as live evidence
+
 #### Scenario: Guild response fingerprint is unknown
 
 - **WHEN** a bounded guild response matches no validated accepted or rejected
   fingerprint
 - **THEN** the response outcome remains indeterminate unless the one permitted
-  public-profile observation verifies the requested membership, and neither
-  raw nor normalized response text is exposed or persisted
+  credential-free read of the verified realm page confirms the exact character
+  and case-insensitive ASCII guild membership, and neither raw nor normalized
+  response text is exposed or persisted
+
+#### Scenario: Confirming Pemptus guild membership
+
+- **WHEN** a supported Pemptus guild mutation has been attempted, including
+  when delivery is uncertain
+- **THEN** one bounded public membership observation determines confirmed
+  desired state or safe uncertainty, without using response fingerprints or
+  retrying the mutation
 
 #### Scenario: Handling delivery failure
 
@@ -224,13 +198,12 @@ the Pemptus profile-action requirement.
 
 ### Requirement: No implicit or automated reporting
 
-The system SHALL submit profile-compatible requests only for persisted
-level-up/act-completion events from an eligible active online runtime or an
-operator's explicit manual-brag, motto-change, or guild-designation submission.
-Empty guild means leave. Automatic delivery SHALL be one attempt, never queued
-or retried. Registration, inspection, dashboard refresh, lifecycle operations,
-and administration SHALL NOT independently submit requests. Ineligible desktop
-events SHALL be discarded for delivery, not held for a later evidence update.
+The system SHALL report only persisted level/act events from eligible active
+online runtimes or explicit operator submissions for manual brag, motto, or
+guild. Automatic delivery SHALL be one attempt with no queue or retry.
+Registration, inspection, refresh, lifecycle, and administration SHALL NOT
+submit reports. Ineligible events SHALL be discarded, never held for later
+evidence.
 
 #### Scenario: Advancing a managed online character
 
@@ -260,39 +233,18 @@ events SHALL be discarded for delivery, not held for a later evidence update.
 - **THEN** it advances locally, records required local-only provenance, and
   neither sends nor queues the report
 
-### Requirement: Evidence-scoped Pemptus desktop reporting
+#### Scenario: Leaving a guild unchanged
 
-The system SHALL support reporting from managed Pemptus desktop-6.4.4 imports
-when current passing evidence covers the requested operation through exact or
-explicitly approved equivalent import coverage, encoding, and authentication
-contract. The Pemptus
-contract SHALL require a valid passkey, empty account/password fields, the exact
+- **WHEN** an operator submits an empty guild value
+- **THEN** no guild mutation request is sent
+
+### Requirement: Pemptus desktop request contract
+
+Pemptus requests SHALL require a valid passkey, empty account/password fields,
 realm `Pemptus`, and the exact saved endpoint
 `http://progressquest.com/pemptus.php?`, delivered to
 `https://progressquest.com/pemptus.php` without an Authorization header.
-
-Manual brag, automatic level reporting, and automatic act reporting SHALL be
-gated independently. Inspection and runtime SHALL agree on those gates for
-equivalent inputs. Neither an endpoint mapping nor evidence for another realm,
-credential mode, or operation SHALL confer eligibility. Unsupported
-destinations, credentials, and encoding SHALL fail before transport.
-
-Unadapted, load-spelling-only, and exact indexed quest-placeholder-only Pemptus
-imports SHALL share the explicitly approved readiness family for automatic and
-manual reporting. Inspection, runtime, and requested-operation callers SHALL
-agree, including previously imported unadvanced records. Exact matching records
-SHALL take precedence; stale, invalid, inconclusive, or duplicate matching
-records SHALL NOT be bypassed with equivalent coverage. Selected evidence SHALL
-retain its true observed adaptation path. Original import provenance SHALL
-remain authoritative after existing runtime marker resolution. Unsupported
-or combined adaptations SHALL remain excluded.
-
-Pemptus reporting SHALL retain the existing persistence, serialization,
-no-retry, callback timing, and durable local-only provenance contracts.
-Advancement with either automatic progress operation gated SHALL permanently
-mark the managed timeline local-only; missing only manual or profile-action
-evidence SHALL NOT do so. Browser reporting and valid Spoltog
-account/password reporting SHALL retain their existing behavior.
+Unsupported destinations, credentials, or encoding SHALL fail before transport.
 
 #### Scenario: Sending an eligible Pemptus manual brag
 
@@ -308,12 +260,6 @@ account/password reporting SHALL retain their existing behavior.
 - **THEN** manual brag remains eligible and the missing operations remain
   individually gated
 
-#### Scenario: Reporting persisted Pemptus progress
-
-- **WHEN** an eligible Pemptus runtime persists a level or act transition
-- **THEN** it attempts the corresponding report after persistence using the
-  current serialized profile, without a retry or deferred report queue
-
 #### Scenario: Rejecting a mismatched Pemptus contract
 
 - **WHEN** a Pemptus request uses a different saved endpoint, non-empty account
@@ -321,26 +267,28 @@ account/password reporting SHALL retain their existing behavior.
 - **THEN** the requested action is blocked with a credential-safe reason
   before an HTTP request is attempted
 
-#### Scenario: Advancing before progress evidence is complete
+### Requirement: Pemptus operation-specific evidence
 
-- **WHEN** a Pemptus managed import first advances while level or act reporting
-  is gated
-- **THEN** advancement and local-only provenance are persisted atomically and
-  later passing evidence cannot reconnect that timeline
+Current passing evidence SHALL cover the requested operation, import path,
+encoding, and authentication contract. Manual brag, automatic level, and
+automatic act reporting SHALL be gated independently. Inspection, runtime, and
+callers SHALL agree; evidence for another realm, credential mode, or operation
+SHALL NOT confer eligibility.
 
-#### Scenario: Advancing independently of guild verification
+#### Scenario: Reporting persisted Pemptus progress
 
-- **WHEN** all other operations, including level and act reporting, are eligible
-  but a guild action's public confirmation fails
-- **THEN** the runtime retains online provenance and automatic reporting remains
-  available without treating the guild result as an automatic-evidence failure
+- **WHEN** an eligible Pemptus runtime persists a level or act transition
+- **THEN** it attempts the corresponding report after persistence using the
+  current serialized profile, without a retry or deferred report queue
 
-#### Scenario: Preserving existing reporting paths
+### Requirement: Pemptus import-family evidence
 
-- **WHEN** browser imports or Spoltog account/password imports use their
-  currently valid supported contracts
-- **THEN** request construction, authentication, explicit-action behavior, and
-  automatic-report ordering remain unchanged
+Unadapted, load-spelling-only, and exact indexed quest-placeholder-only Pemptus
+imports MAY share explicitly approved readiness evidence. Exact evidence SHALL
+take precedence; stale, invalid, inconclusive, or duplicate exact evidence
+SHALL NOT be bypassed. Equivalent evidence SHALL retain its observed adaptation
+path. Unsupported or combined adaptations SHALL remain ineligible, and original
+import provenance SHALL remain authoritative after runtime marker resolution.
 
 #### Scenario: Enabling automatic reporting across the supported family
 
@@ -374,6 +322,35 @@ account/password reporting SHALL retain their existing behavior.
 - **WHEN** an import combines quest-placeholder with spelling correction or
   legacy prologue despite a passing placeholder automatic record
 - **THEN** the combined path remains ineligible before transport
+
+### Requirement: Pemptus persistence and compatibility
+
+Pemptus reporting SHALL preserve persistence, serialization, single-attempt,
+callback timing, and durable local-only provenance. Advancement while automatic
+level or act reporting is gated SHALL permanently mark the timeline local-only;
+missing only manual or profile-action evidence SHALL NOT. Browser reporting and
+valid Spoltog reporting SHALL retain their existing behavior.
+
+#### Scenario: Advancing before progress evidence is complete
+
+- **WHEN** a Pemptus managed import first advances while level or act reporting
+  is gated
+- **THEN** advancement and local-only provenance are persisted atomically and
+  later passing evidence cannot reconnect that timeline
+
+#### Scenario: Advancing independently of guild verification
+
+- **WHEN** all other operations, including level and act reporting, are eligible
+  but a guild action's public confirmation fails
+- **THEN** the runtime retains online provenance and automatic reporting remains
+  available without treating the guild result as an automatic-evidence failure
+
+#### Scenario: Preserving existing reporting paths
+
+- **WHEN** browser imports or Spoltog account/password imports use their
+  currently valid supported contracts
+- **THEN** request construction, authentication, explicit-action behavior, and
+  automatic-report ordering remain unchanged
 
 #### Scenario: Preserving local-only permanence when placeholder coverage changes
 
