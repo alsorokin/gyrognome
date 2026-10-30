@@ -8,7 +8,7 @@ Enable Linux users to install Gyrognome without a Rust toolchain while keeping d
 
 ### Requirement: Versioned Linux download bundles
 
-The release preparation process SHALL build separately labeled Linux x86_64 and aarch64 bundles from a specified source revision and version, containing runnable `gyro` and compatibility `gyrognome` executables, the `gyrognome@.service` user-service template, and installation instructions. Each bundle SHALL declare its architecture, Linux C library compatibility, version, and SHA-256 digest. Test-only executables, player saves, private credentials, and browser profiles MUST NOT be included.
+Release preparation SHALL build separately labeled x86_64 and aarch64 Linux bundles from a specified revision and version. Each bundle SHALL contain runnable `gyro` and compatibility `gyrognome` executables, the user-service template, and installation instructions; declare its architecture, libc compatibility, version, and SHA-256 digest; and exclude test-only executables, player saves, private credentials, and browser profiles.
 
 #### Scenario: Inspecting a prepared bundle
 - **WHEN** a Linux release bundle is produced for a supported target
@@ -20,8 +20,7 @@ The release preparation process SHALL build separately labeled Linux x86_64 and 
 
 ### Requirement: Toolchain-free installation and safe upgrade
 
-The distribution instructions SHALL enable an unprivileged Linux user to verify and install a compatible bundle without Rust or Node.js, find the interactive `gyro` command, and configure the installed user service to invoke that same binary by a reliable absolute path. The instructions SHALL explain service-manager prerequisites, a direct worker option when `systemd --user` is unavailable, how to upgrade or roll back a binary while preserving the existing XDG character store, and when a database backup is required.
-The instructions SHALL distinguish verified native service lifecycle coverage from architecture-specific installation trials under emulation.
+Installation instructions SHALL enable unprivileged bundle verification and installation without Rust or Node.js, expose the `gyro` command, and configure the user service with its absolute binary path. They SHALL document service-manager prerequisites, a direct-worker fallback, upgrade and rollback while preserving the XDG store, backup needs, and distinguish native lifecycle tests from emulated architecture trials.
 
 #### Scenario: Installing as an ordinary user
 - **WHEN** a user follows the bundle's installation instructions on a documented compatible host
@@ -37,7 +36,7 @@ The instructions SHALL distinguish verified native service lifecycle coverage fr
 
 ### Requirement: Non-publishing release verification
 
-The repository SHALL offer a repeatable, explicitly invoked release-preparation workflow that checks the version/target labels, builds the proposed bundles and checksums, verifies their contents, runs an executable smoke check on each supported target, and retains temporary artifacts for review. Documentation SHALL disclose that artifacts from a public repository are available to signed-in users with read access and distinguish them from durable release downloads. The workflow SHALL NOT change repository visibility, create a GitHub Release, or publish to any package registry.
+The repository SHALL provide an explicitly invoked release-preparation workflow that labels targets and versions, builds bundles and checksums, verifies contents, runs executable smoke checks on supported targets, and retains artifacts for review. Documentation SHALL explain access to artifacts from a public repository and distinguish them from durable downloads. The workflow SHALL NOT change repository visibility, create a GitHub Release, or publish packages.
 
 #### Scenario: Successful candidate build
 - **WHEN** a maintainer invokes the release-preparation workflow on a supported source revision
@@ -49,7 +48,7 @@ The repository SHALL offer a repeatable, explicitly invoked release-preparation 
 
 ### Requirement: Explicit publication-readiness review
 
-The repository SHALL document a review of reachable Git history and GitHub-hosted Actions logs/artifacts and other repository material for sensitive or non-redistributable content. Publication guidance SHALL require an explicit owner-approved project license and resolution of rights for bundled upstream-derived material, with consistent manifest license claims and attribution where applicable. Missing review evidence, unresolved rights, or discovered sensitive material MUST be reported as blockers rather than treated as successful publication readiness. Test-fixture validation alone SHALL NOT count as the full-history review.
+The repository SHALL document review of reachable Git history, GitHub Actions logs/artifacts, and other exposed material for sensitive or non-redistributable content. Publication SHALL be blocked until an owner-approved project license and bundled-content rights are resolved, with consistent manifest claims and required attribution. Missing review evidence, unresolved rights, and sensitive findings MUST remain blockers. Fixture checks alone SHALL NOT satisfy full-history review.
 
 #### Scenario: Unresolved licensing
 - **WHEN** the project license or redistribution rights for bundled content remain undecided
