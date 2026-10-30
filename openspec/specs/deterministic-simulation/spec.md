@@ -11,19 +11,26 @@ are introduced.
 ### Requirement: Deterministic state advancement
 
 The system SHALL advance a typed canonical character state with explicit
-inputs without reading a wall clock, performing I/O, mutating a source save,
-or making a network request. Advancement SHALL select the character's
-persisted compatibility profile and SHALL reject unsupported profiles or
-mismatched random state.
+inputs without wall-clock access, I/O, save mutation, or network requests. It
+SHALL select and validate the persisted compatibility profile and random
+state, and reject unsupported profiles or mismatched random state.
 
-For the browser profile, it SHALL apply browser-compatible task-bar
-advancement by supplied duration in bounded ticks and process completion
-effects in browser order. Equivalent nonzero partitions of a supplied total
-duration SHALL produce the same canonical state and Alea continuation as
-advancing by that total in one call. It SHALL expose ordered credential-free
-browser report snapshots without changing final state or simulation purity.
-Desktop advancement SHALL instead use the desktop callback contract; equal
-elapsed totals with different callback sequences do not imply equivalence.
+#### Scenario: Preserving offline purity
+
+- **WHEN** a caller advances a character under either profile
+- **THEN** no wall-clock read, save-file write, database operation, or network
+  request occurs
+
+#### Scenario: Preventing cross-profile continuation
+
+- **WHEN** a caller supplies a desktop state with browser random state or an
+  unknown profile
+- **THEN** advancement fails explicitly without substituting browser behavior
+
+### Requirement: Browser task-bar advancement
+
+Browser advancement SHALL apply supplied duration in bounded ticks and process
+task completion effects in browser order.
 
 #### Scenario: Advancing less than a task duration
 
@@ -38,11 +45,12 @@ elapsed totals with different callback sequences do not imply equivalence.
 - **THEN** task count, elapsed time, progress effects, next activity, and random
   state update in browser-compatible order
 
-#### Scenario: Preserving offline purity
+### Requirement: Browser duration partitioning and report snapshots
 
-- **WHEN** a caller advances a character under either profile
-- **THEN** no wall-clock read, save-file write, database operation, or network
-  request occurs
+Equivalent nonzero partitions of a supplied total browser duration SHALL
+produce the same canonical state and Alea continuation as one advancement by
+that total. Ordered credential-free report snapshots SHALL represent browser
+transitions without affecting final state.
 
 #### Scenario: Partitioning elapsed duration
 
@@ -56,12 +64,6 @@ elapsed totals with different callback sequences do not imply equivalence.
 - **WHEN** browser advancement crosses a level-up or act-completion report point
 - **THEN** its ordered snapshot represents that exact browser transition and
   final state matches advancement without trace capture
-
-#### Scenario: Preventing cross-profile continuation
-
-- **WHEN** a caller supplies a desktop state with browser random state or an
-  unknown profile
-- **THEN** advancement fails explicitly without substituting browser behavior
 
 ### Requirement: Bundled browser ruleset fidelity
 
@@ -152,18 +154,10 @@ signed leaderboard requests.
 ### Requirement: Deterministic desktop callback advancement
 
 The desktop-6.4.4 profile SHALL consume an explicit ordered sequence of callback
-elapsed inputs. When a task is full at callback entry, it SHALL process
-completion effects without also advancing the next task during that callback.
-Otherwise it SHALL advance the task by the nonnegative elapsed input capped
-at 100 milliseconds, without processing completion until a later callback.
-It SHALL discard excess elapsed time rather than carry it forward.
-
-It SHALL expose ordered credential-free report snapshots at desktop report
-points: level-up before subsequent completion effects, and act-completion
-before the plot command is removed and the following loading task is selected.
-Checkpoint restore SHALL preserve full-bar pending-completion state and
-desktop randomness. Identical callback sequences SHALL remain equivalent
-across call batching and checkpoint restoration.
+elapsed inputs. A task already full at callback entry SHALL complete without
+advancing the next task. Otherwise, the profile SHALL credit at most 100 ms of
+nonnegative elapsed input, defer completion until a later callback, and discard
+excess time.
 
 #### Scenario: Filling a desktop task bar
 
@@ -179,11 +173,23 @@ across call batching and checkpoint restoration.
 - **THEN** at most 100 milliseconds is credited and the discarded time never
   advances later tasks
 
+### Requirement: Desktop checkpoint restoration
+
+Checkpoint restore SHALL preserve pending full-bar completion and desktop
+randomness. Identical callback sequences SHALL remain equivalent across call
+batching and checkpoint restoration.
+
 #### Scenario: Resuming pending completion
 
 - **WHEN** a full desktop task bar is checkpointed and restored
 - **THEN** the next callback completes that task exactly once, with the same
   rewards, report snapshots, and random continuation as uninterrupted execution
+
+### Requirement: Desktop report snapshots
+
+The profile SHALL expose ordered credential-free snapshots at desktop report
+points: level-up before subsequent completion effects, and act-completion
+before the plot command is removed and the following loading task is selected.
 
 #### Scenario: Capturing desktop report order
 
