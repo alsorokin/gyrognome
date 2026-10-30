@@ -58,29 +58,12 @@ passkeys, browser profiles, or complete signed leaderboard URLs.
 
 ### Requirement: Controlled anti-cheat conformance evidence
 
-The project SHALL define a documented, explicitly confirmed Playwright-harness
-procedure for external leaderboard conformance experiments. The official
-browser client SHALL create the newly created, disposable online character and
-its passkey SHALL remain only in the ephemeral browser experiment. The
-procedure SHALL compare browser and Gyrognome report histories across initial
-load, pause, restart, delayed callbacks, task completion, level-up, act
-completion, manual bragging, and motto change. It SHALL additionally exercise
-an accepted non-empty guild-designation submission, an accepted empty
-guild-designation submission, and a deliberately invalid designation through
-the official browser, record their request shape and sanitized accepted or
-rejected outcome categories, and restore the disposable character to no guild
-before completion.
-
-Guild-response evidence generation and production classification SHALL use one
-versioned normalization and fingerprint contract. The contract SHALL replace
-the same ordered set of dynamic identity, authentication, passkey, and
-prior/submitted guild values with the same placeholder before hashing.
-Credential-free cross-path vectors SHALL prove that a fingerprint emitted by
-the evidence path is accepted by the production classifier. The procedure
-SHALL record only credential-free observations and SHALL require evidence that
-the Gyrognome character appears in the normal leaderboard population rather
-than the cheater population. Native `newguy` character-generation support is
-not required.
+The project SHALL define an explicitly confirmed Playwright procedure using a
+new disposable official-browser character. It SHALL compare browser and
+Gyrognome report histories, exercise accepted non-empty, accepted empty, and
+invalid guild submissions, use a shared versioned credential-safe fingerprint
+contract, and require normal-population evidence before enabling production
+actions.
 
 #### Scenario: Running an external conformance experiment
 
@@ -88,7 +71,8 @@ not required.
 - **THEN** the harness creates the character through the official browser,
   sends no reports or guild requests for any existing managed character, and
   records credential-free comparison, guild-outcome, and
-  leaderboard-classification evidence for the disposable character
+  leaderboard-classification evidence for the disposable character, restoring
+  it to no guild before completion
 
 #### Scenario: Observing accepted and rejected guild submissions
 
@@ -126,26 +110,30 @@ not required.
 - **THEN** the conformance gate fails and the corresponding general online
   operations remain unsupported
 
+#### Scenario: Comparing the complete browser report history
+
+- **WHEN** the approved browser experiment runs
+- **THEN** it compares initial load, pause, restart, delayed callbacks, task
+  completion, level-up, act completion, manual brag, and motto change; the
+  passkey remains in the ephemeral experiment and native `newguy` support is
+  not required
+
+#### Scenario: Normalizing guild response fingerprints
+
+- **WHEN** evidence and production classify guild responses
+- **THEN** both use the same versioned normalization, replacing the same
+  ordered identity, authentication, passkey, and prior/submitted guild values
+  before hashing, with credential-free vectors proving cross-path agreement
+
 ### Requirement: Source-derived desktop local conformance
 
-The project SHALL establish local conformance against a separately authored
-reference harness derived from the pinned desktop 6.4.4 source rather than the
-production implementation. Evidence SHALL record source/build identity,
-reference-harness and production implementation identities, relevant numeric
-assumptions, synthetic starting state and random state, callback inputs,
-ordered transitions, resulting state, and desktop random continuation.
-Unsigned request fields, byte encoding, omitted fields, and synthetic validator
-results SHALL match at each report point. Evidence without separately approved
-official-runtime corroboration SHALL identify exact Delphi compiler/runtime
-numeric and random edge equivalence as unverified.
-
-Coverage SHALL include supported 6.2 loading adaptations, fresh prologues,
-legacy quest markers, spelling patches, weighted randomness, numeric rounding,
-fractional-second task maxima, full-bar callbacks, pause/restart/delay, market
-and noncombat progression, level-up, Act II and later acts, and manual/motto/
-guild request construction. Browser conformance SHALL continue to pass
-unchanged. Fixtures SHALL be generated from synthetic data and SHALL NOT
-contain real desktop saves, credentials, authenticated URLs, or raw responses.
+Local conformance SHALL compare production against a separately authored
+reference derived from pinned desktop 6.4.4 source. Credential-free evidence
+SHALL identify source/build and implementation identities, synthetic starting
+and random state, inputs, transitions, resulting state, random continuation,
+request representation, and unverified Delphi edges. Coverage SHALL include
+supported loading, progression, callbacks, and requests while preserving
+browser conformance.
 
 #### Scenario: Replaying a desktop checkpoint
 
@@ -169,43 +157,26 @@ contain real desktop saves, credentials, authenticated URLs, or raw responses.
   legacy queues, quest placeholders, and spell collection-order effects, while
   any missing official-runtime corroboration remains disclosed
 
+#### Scenario: Covering desktop source-derived edge cases
+
+- **WHEN** local conformance fixtures are generated and replayed
+- **THEN** coverage includes supported 6.2 adaptations, fresh prologues,
+  legacy markers, spelling patches, weighted randomness, numeric assumptions,
+  rounding,
+  fractional-second maxima, full-bar callbacks, pause/restart/delay,
+  market/noncombat, level-up, later acts, and manual/motto/guild requests;
+  byte encoding, omitted fields, and synthetic validator results match, and
+  fixtures contain no real saves, credentials, authenticated URLs, or raw
+  responses
+
 ### Requirement: Scoped classic-realm live evidence
 
-Except for the explicit Pemptus readiness contract below, classic online
-operations SHALL require separate passing evidence for the
-desktop profile, supported import/adaptation path, realm, HTTPS endpoint,
-credential mode, encoding, operation, and relevant implementation identity.
-Browser/Alpaquil evidence SHALL NOT enable classic reporting. A change to
-conformance-relevant behavior SHALL invalidate affected evidence.
-
-A deterministic load normalization MAY share passing live operation evidence
-with its canonical import path only when source-derived differential evidence
-proves that both inputs converge to identical canonical post-load state and
-identical request construction before transport. The recorded
-`load-spelling-patch` adaptation MAY qualify through this rule for the
-source-derived `Innoculate`/`Inoculate` and
-`Tonsilectomy`/`Tonsillectomy` corrections. Progression-affecting, unknown, or
-combined adaptations SHALL remain ineligible without separately matching live
-evidence or the narrowly approved Pemptus family equivalence below.
-
-Live experiments SHALL require separate explicit operator approval of the
-realm, disposable account/character scope, operations, and bounds. Only a newly
-created disposable character established through the official desktop client
-SHALL be used by default; only the explicitly approved Pemptus immediate-stage
-exception below permits an older disposable identity. Client handoff SHALL prevent simultaneous reporters. Live
-progression SHALL remain bounded by real active time, with no accelerated
-synthetic state or replay of accumulated reports. Evidence SHALL verify
-authentication, accepted request semantics, sanitized responses, and normal
-rather than cheater leaderboard classification; HTTP success alone is
-insufficient. Credentials SHALL remain private and ephemeral to the experiment.
-The experiment MAY be staged so immediate operations pass before normal-time
-progression begins. An inconclusive exact request intent SHALL NOT be replayed;
-a different motto value is a separate intent and MAY be attempted only when
-separately approved and within the experiment's explicit attempt bound.
-The bounded progression stage SHALL include every distinct level transition
-generated before the first act transition. These later level transitions are
-separate intents rather than retries. The first act request SHALL be attempted
-at most once and ends the required progression trace when verified.
+Except for the explicit Pemptus readiness contract, classic operations SHALL
+require matching passing evidence for desktop profile, import path,
+realm/endpoint, credential mode, encoding, operation, and implementation
+identity. Live tests require explicit bounded disposable scope, exclusive
+client handoff, real-time progression, sanitized evidence, and normal
+classification; relevant behavior changes invalidate affected evidence.
 
 #### Scenario: No approval for live experimentation
 
@@ -213,6 +184,14 @@ at most once and ends the required progression trace when verified.
   experiment is not
 - **THEN** no online character is created or reported by the experiment and
   the experiment confers no additional production readiness
+
+#### Scenario: Approving a classic live experiment
+
+- **WHEN** a classic live experiment is approved
+- **THEN** approval names the realm, disposable account/character, operations,
+  and bounds; a new official-desktop character is used unless the explicit
+  Pemptus immediate-stage exception applies, credentials stay ephemeral, and
+  client handoff prevents simultaneous reporters
 
 #### Scenario: Browser evidence offered for a desktop character
 
@@ -258,22 +237,22 @@ at most once and ends the required progression trace when verified.
 - **THEN** classic online operations remain ineligible without contacting the
   endpoint
 
+#### Scenario: Bounding classic progression requests
+
+- **WHEN** an approved classic progression stage runs
+- **THEN** it uses real active time without accelerated state or report replay,
+  records each distinct level transition before the first act as its own
+  intent, attempts the first act at most once, and never replays an
+  inconclusive exact request
+
 ### Requirement: Bounded Pemptus manual-report diagnostic
 
-The project SHALL provide a development-only native diagnostic for an explicitly
-approved newly created disposable Pemptus character established through the
-official desktop client. Execution SHALL require confirmation that the official
-client is stopped and that one live manual-brag request is authorized.
-Validation-only execution SHALL contact no server.
-
-The diagnostic SHALL accept only a supported desktop-6.4.4 canonical import,
-Pemptus realm, exact saved endpoint `http://progressquest.com/pemptus.php?`,
-positive passkey, empty account/password credentials, and supported ASCII
-request data. It SHALL construct the manual report from the imported state
-without progression and send it only to `https://progressquest.com/pemptus.php`,
-without an Authorization header, redirects, HTTP downgrades, or mutation
-retries. It SHALL preserve source files and SHALL NOT register a managed
-character, change motto/guild, or save credentials or signed requests.
+The project SHALL provide a development-only, explicitly approved one-shot
+native manual-report diagnostic for a disposable Pemptus import. It SHALL
+enforce the exact import, realm, endpoint, credential, and ASCII contract,
+send only to the HTTPS endpoint without authentication, redirects, downgrade,
+or retries, and preserve source state without registering or modifying the
+character.
 
 #### Scenario: Approved diagnostic execution
 
@@ -295,23 +274,31 @@ character, change motto/guild, or save credentials or signed requests.
 - **THEN** its outcome is categorized safely, the mutation is not retried, and a
   later mutation requires new explicit operator authorization
 
+#### Scenario: Running validation without network access
+
+- **WHEN** the diagnostic runs in validation-only mode
+- **THEN** it contacts no server; live mode uses only the exact saved endpoint,
+  positive passkey, empty account/password, supported ASCII request, no
+  Authorization header, and no redirect or HTTP downgrade
+
+#### Scenario: Restricting diagnostic scope
+
+- **WHEN** an approved diagnostic executes against an imported character
+- **THEN** the source is a supported desktop-6.4.4 canonical import established
+  through the official desktop client, the saved endpoint is exactly
+  `http://progressquest.com/pemptus.php?`, delivery targets only
+  `https://progressquest.com/pemptus.php`, and no progression, managed
+  registration, motto/guild change, source mutation, or credential/request
+  persistence occurs
+
 ### Requirement: Honest and credential-safe diagnostic observations
 
-The diagnostic SHALL make bounded credential-free public observations of the
-exact character before submission and for at most 60 seconds afterward.
-Each post-submission observation request and wait SHALL be bounded by the
-remaining observation deadline. Responses SHALL have explicit size limits.
-
-Output SHALL distinguish transport delivery, explicit rejection, normal,
-cheater, or unknown public classification, and whether observable public state
-matches the submitted report. A preexisting unchanged normal row SHALL NOT be
-presented as proof that the mutation was accepted. Public-page ambiguity,
-malformed data, size-limit failure, or observation timeout SHALL remain
-inconclusive rather than being converted into acceptance.
-
-Output SHALL exclude passkeys, credentials, signed URLs, source-save contents,
-and raw or normalized response bodies. Diagnostic results SHALL NOT enable
-production operations or substitute for full scoped classic-realm live evidence.
+The diagnostic SHALL make bounded, credential-free public observations of the
+exact character before and for at most 60 seconds after submission, with
+bounded requests and responses. Output SHALL distinguish delivery, rejection,
+classification, and state agreement; ambiguous or unchanged public state is
+inconclusive. Results SHALL exclude sensitive data and SHALL NOT enable
+production operations.
 
 #### Scenario: Delivered report with a matching normal row
 
@@ -333,26 +320,21 @@ production operations or substitute for full scoped classic-realm live evidence.
 - **THEN** execution reports cheater or inconclusive status respectively and
   leaves production reporting eligibility unchanged
 
+#### Scenario: Bounding and sanitizing observations
+
+- **WHEN** the diagnostic observes public state
+- **THEN** each request and wait fits the remaining 60-second deadline, response
+  sizes are limited, and output excludes passkeys, credentials, signed URLs,
+  save contents, and raw or normalized response bodies; malformed data,
+  ambiguous pages, size-limit failures, and timeouts remain inconclusive
+
 ### Requirement: Independent classic operation evidence
 
-Classic production eligibility SHALL validate evidence for the requested
-realm, endpoint, credential mode, supported import path, encoding, and operation
-without requiring passing coverage for unrelated operations. Every enabling
-record SHALL retain the existing source/implementation identity, integrity,
-freshness, normal-classification, and completed-cleanup requirements.
-
-Non-guild evidence SHALL NOT require guild-response fingerprints. New
-operation-scoped fingerprint-based guild evidence SHALL require complete matching
-join/change/leave and rejection coverage using the shared versioned normalization
-contract. Missing, stale, malformed, or mismatched guild-only evidence SHALL NOT
-invalidate independently valid non-guild evidence. Supported Pemptus guild
-actions SHALL instead use the explicit public-confirmation readiness contract;
-the absence of such fingerprints SHALL NOT block that strategy.
-
-Previously bundled Spoltog evidence SHALL remain usable within its original
-scope only when its evidence-relevant behavior remains unchanged. Evidence
-SHALL NOT be copied or relabeled to cover a different realm or authentication
-contract.
+Classic eligibility SHALL validate current, integrity-valid evidence for the
+requested realm, endpoint, credential mode, import path, encoding, and
+operation independently. Guild fingerprints are guild-only evidence; invalid
+or missing guild evidence SHALL NOT invalidate non-guild evidence, and
+evidence SHALL NOT be copied across contracts.
 
 #### Scenario: Validating manual evidence without guild fingerprints
 
@@ -382,28 +364,21 @@ contract.
 - **THEN** its covered account/password operations remain eligible without
   granting Pemptus coverage
 
+#### Scenario: Requiring complete guild-only fingerprint coverage
+
+- **WHEN** fingerprint-based guild evidence is used
+- **THEN** matching join, change, leave, and rejection coverage uses the shared
+  normalization contract; Pemptus public-confirmation readiness does not
+  require those historical fingerprints
+
 ### Requirement: Usable Pemptus delivery under explicit equivalence
 
-Otherwise eligible Pemptus imports on the unadapted, load-spelling-only, and
-exact quest-placeholder-only paths SHALL support automatic level, automatic act,
-manual brag, motto set/clear, and guild join/change/leave. The exact placeholder
-SHALL require a valid saved pinned-table index and otherwise supported state.
-Other or combined adaptations SHALL remain excluded.
-
-The approved readiness policy SHALL reuse existing current valid level/act/
-manual/motto observations across that narrow equivalent family, preserving
-actual source-path metadata, integrity, freshness, classification, and cleanup.
-It SHALL NOT relabel records, manufacture observations, share another realm's
-coverage, or treat an offline study alone as live evidence. Supported guild
-actions SHALL use one native attempt and bounded public confirmation without
-requiring missing historical fingerprints.
-
-Completion SHALL require usable five-operation coverage on every supported path,
-consistent inspection/runtime/UI behavior, preserved local-only history, and
-directly affected compatibility/privacy regressions. It SHALL NOT require a new
-per-path live campaign. Documentation SHALL distinguish readiness from exhaustive
-live/Delphi/anti-cheat certification and preserve the non-conclusive guild
-fingerprint audit. This revision SHALL NOT authorize a live experiment or replay.
+Otherwise eligible Pemptus imports on unadapted, spelling-only, or exact
+supported placeholder-only paths SHALL support five operations through narrow
+evidence reuse and bounded public guild confirmation. The policy SHALL preserve
+source provenance and local-only history; completion requires cross-path
+behavior and regression checks, not another live campaign or exhaustive
+certification.
 
 #### Scenario: Delivering all five operations on each supported path
 
@@ -429,35 +404,30 @@ fingerprint audit. This revision SHALL NOT authorize a live experiment or replay
 - **WHEN** an import uses another realm, unknown adaptation, or combined path
 - **THEN** the Pemptus family policy does not confer eligibility
 
+#### Scenario: Limiting equivalent Pemptus coverage
+
+- **WHEN** a Pemptus import uses an unadapted, spelling-only, or exact
+  placeholder-only path
+- **THEN** the five operations are supported only with current valid evidence
+  reused without relabeling or cross-realm inheritance; the placeholder path
+  also requires a valid saved pinned-table index
+
 ### Requirement: Non-enabling offline adaptation studies
 
-An offline study of `legacy-quest-placeholder` equivalence SHALL be limited to
-the exact `fQuest` placeholder with a valid saved monster-table index in an
-otherwise supported state. It SHALL trace integrity-verified pinned official
-source semantics and compare credential-free synthetic placeholder/canonical
-pairs for canonical game state after the relevant load normalization, RNG use,
-callback/report ordering, and all five unsigned operation request shapes.
-Adaptation provenance SHALL remain visible.
-
-Wrong or out-of-range indexes, unknown captions, unsupported task forms,
-legacy-prologue state, and other substantive/combined adaptations SHALL NOT
-gain eligibility from the study. Real saves, credentials, and signed requests
-SHALL NOT enter proof fixtures. Synthetic execution SHALL NOT be represented as
-live acceptance or as satisfying real active-time requirements.
-
-A proof result SHALL NOT itself change eligibility, relabel existing evidence,
-authorize a request, or waive live acceptance/cleanup requirements. Any
-eligibility/evidence policy change SHALL require a separately approved planning
-revision; live execution SHALL still require a separately verified matching
-identity/source/scope handoff. Failed or inconclusive proof SHALL leave the
-existing gates closed.
+Offline placeholder-equivalence study SHALL cover only the exact indexed
+`fQuest` placeholder in an otherwise supported state, using verified pinned
+source semantics and credential-free synthetic pairs for state, RNG,
+callback/report order, and all five unsigned requests. Findings SHALL NOT
+change eligibility, relabel evidence, or authorize live requests; broader,
+failed, or inconclusive cases remain gated.
 
 #### Scenario: Establishing offline equivalence without live authorization
 
 - **WHEN** synthetic comparisons establish the narrowly defined placeholder
   equivalence under verified source semantics
 - **THEN** the result is recorded for review without enabling an operation,
-  inheriting bundled evidence, or authorizing live execution
+  inheriting bundled evidence, authorizing live execution, or satisfying real
+  active-time requirements
 
 #### Scenario: Rejecting a broader normalization claim
 
@@ -481,42 +451,13 @@ existing gates closed.
 
 ### Requirement: Explicit placeholder-only progression conformance
 
-The development runner MAY accept a freshly approved Pemptus progression source
-with exactly `[legacy-quest-placeholder]` recorded as its adaptation path, using
-the explicit `--allow-quest-placeholder` scope flag and requesting both automatic
-level and act operations. It SHALL validate the original exact `fQuest` marker
-and valid saved monster-table index before the existing task-completion
-resolution. All other fresh-handoff and realm/authentication requirements SHALL
-remain mandatory.
-
-The flag SHALL be refused for an unadapted source, another realm or stage,
-missing authorization, an unknown marker caption, unsupported task form, invalid
-index, or any combined/other adaptation. The original source/state, saved index,
-adaptation path, and flag SHALL be bound into the checkpoint scope. Source
-provenance SHALL remain visible and unchanged after runtime marker resolution;
-neither real-save edits nor importer/task-normalization changes are authorized.
-Changed scope or uncertain primary requests SHALL NOT be resumed by replay.
-
-Successful live coverage MAY emit new automatic-operation v3 records declaring
-the actual original-source singleton adaptation path. The validator SHALL accept
-that path only for Pemptus automatic level/act operations, with all existing
-integrity, source/implementation identity, freshness, attributable acceptance,
-normal-classification, and completed-cleanup requirements. The offline study
-SHALL remain non-enabling. Existing records SHALL NOT be relabeled or widened.
-
-Record validation SHALL match registered and actual declared source paths.
-Readiness selection SHALL prefer an exact contract/operation/path record and
-preserve established spelling equivalence. Only absence of a matching record
-SHALL permit the explicitly approved Pemptus family equivalence for that same
-operation. Stale, invalid, inconclusive, or duplicate matching records SHALL
-block that operation without fallback. Ambiguous or invalid equivalent
-selections SHALL likewise fail closed. Combined paths SHALL remain excluded.
-
-Planning approval of this policy SHALL NOT authorize live execution. A fresh
-matching identity/source/exclusive handoff and explicit bounded live scope SHALL
-still be required. No completed immediate case SHALL be repeated. Existing
-active-time, no-acceleration, no-retry, observation, and private-only cleanup
-requirements SHALL remain unchanged.
+The development runner MAY admit only a freshly approved Pemptus progression
+source with the exact indexed placeholder as its sole adaptation and the
+`--allow-quest-placeholder` flag. It SHALL bind original source/state/path and
+flag to checkpoint scope and preserve provenance. Exact-path records take
+precedence; only their absence permits approved equivalent fallback, while
+invalid or duplicate matches fail closed. This policy SHALL NOT authorize live
+execution.
 
 #### Scenario: Validating an explicitly scoped placeholder-only source
 
@@ -528,7 +469,8 @@ requirements SHALL remain unchanged.
 #### Scenario: Refusing implicit or broader placeholder admission
 
 - **WHEN** the flag is absent, the stage/realm is wrong, the marker/index is
-  invalid, or the source combines placeholder with spelling/prologue adaptation
+  invalid, authorization is missing, the caption/task form is unsupported, or
+  the source combines placeholder with spelling/prologue adaptation
 - **THEN** the runner rejects placeholder admission before network activity
 
 #### Scenario: Refusing a changed placeholder checkpoint scope
@@ -542,7 +484,9 @@ requirements SHALL remain unchanged.
 - **WHEN** approved placeholder-only automatic cases pass live acceptance,
   normal classification, and final cleanup
 - **THEN** their new records declare `[legacy-quest-placeholder]`, not an empty
-  adaptation array inferred from the later canonical callback state
+  adaptation array inferred from the later canonical callback state; only
+  Pemptus automatic level/act records with the required identity, integrity,
+  freshness, acceptance, and cleanup can validate
 
 #### Scenario: Selecting independently pinned records for distinct paths
 
@@ -570,107 +514,22 @@ requirements SHALL remain unchanged.
   another realm, or a combined adaptation path
 - **THEN** validation rejects it without weakening independently valid records
 
+#### Scenario: Preserving task-resolution and handoff constraints
+
+- **WHEN** the development runner admits a placeholder-only progression source
+- **THEN** it requests both automatic level and act operations, validates the
+  exact original marker and saved index before task resolution, retains normal
+  realm/authentication handoff checks, and changes neither the real save nor
+  importer/task normalization
+
 ### Requirement: Separately authorized Pemptus live conformance
 
-The development conformance procedure SHALL support the exact Pemptus
-passkey-only contract through the native desktop import, simulation, request,
-and delivery path. Every live stage SHALL require explicit approval of newly
-created disposable official-client identities by default, official/native operations,
-mutation-attempt bounds, observation bounds, active progression duration where
-applicable, exclusive client handoff, and cleanup. Approval of a previous
-diagnostic or creation of planning artifacts SHALL NOT authorize another
-mutation.
+The development procedure SHALL support the native Pemptus passkey-only path.
+Live stages SHALL require explicit bounded approval, disposable-character
+scope, exclusive client handoff, attributable observations, normal
+classification, and cleanup.
 
-An immediate-stage-only exception MAY use an explicitly approved older
-disposable Pemptus official-client character that still passes the fresh
-level-1 handoff checks. The exception SHALL require a separately declared scope,
-exact normal public/saved baseline and current-guild agreement before mutation,
-and exclusive stopped-client handoff. Its approved control motto MAY be empty;
-manual and motto-operation markers SHALL remain non-empty ASCII and distinct
-from each other and the control baseline. No official-client mutations are
-authorized by this exception.
 
-An existing baseline guild SHALL require one explicitly approved preparatory
-leave, counted against the same native mutation cap and conclusively observed
-before the requested cases. Preparation SHALL NOT satisfy the required final
-guild-leave case or confer any other operation's proof. Full immediate coverage
-with preparation SHALL require an eight-attempt scope. Interrupted or uncertain
-preparation SHALL NOT be replayed or promoted. The exploratory source/backup
-SHALL remain untouched; cleanup SHALL remove only approved private copies and
-runner-owned state. Progression SHALL retain its separately approved newly
-created disposable identity requirement.
-
-Pemptus observations MAY recognize an omitted empty trailing guild cell only
-when the matching table explicitly declares that column and the unique
-exact-name row has every preceding cell with unambiguous alignment. Missing
-headers, unsupported spans, extra columns, duplicate rows, and conflicting
-content SHALL remain unknown. Production and development Pemptus readers SHALL
-agree; historical Spoltog parsing and response semantics SHALL remain unchanged.
-
-Guild-name reconciliation SHALL use the existing ASCII-case-insensitive
-production contract in development as well, retaining the observed public
-spelling. Character-row identity SHALL remain an exact-name match.
-
-An explicitly approved fresh read-only window MAY reconcile preparation for an
-existing-disposable immediate stage containing exactly one recorded preparatory
-leave intent, no conclusive observations, and no callback progress. Recovery
-SHALL verify the original source/scope and intent, current normal report-field
-agreement, and confirmed no-guild state within its new bound, without another
-mutation. The original intent/count SHALL be preserved and recovery recorded
-separately with actual timing/authorization, without a fabricated response
-fingerprint. Failed or expired recovery SHALL prevent continuation.
-
-Reconciled preparation SHALL NOT become operation evidence or retrospectively
-validate an expired observation. The seven requested primary cases SHALL still
-require new bounded acceptance, final guild leave, and completed cleanup under
-the original eight-attempt total cap. This recovery SHALL NOT apply to unknown
-primary operations, progression, changed scopes, or replay of any mutation.
-
-A separate explicitly approved operator-acceptance exception MAY continue the
-2026-10-01 immediate checkpoint containing exactly five attempts, three
-conclusive manual/motto observations, completed preparation recovery, no
-callback progress, and the sole unobserved final guild-join intent. The operator
-SHALL confirm no competing join request and accept the linked `BEERguild`
-membership resulting from the approved `BEERGuild` request. Continuation SHALL
-verify the unchanged source/original scope and exact join intent, then confirm
-normal report-field agreement and that linked guild within a freshly approved
-60-second read-only window. Mismatch, unknown state, expiration, or another
-uncertain primary case SHALL prevent continuation.
-
-Operator acceptance SHALL be recorded separately with actual authorization and
-reconciliation timing, preserving the original attempts/count and observations.
-It SHALL NOT fabricate a within-deadline join observation or the missing
-response fingerprint. Only the unattempted guild change to `QoD`, invalid
-designation rejection, and final leave MAY follow, with fresh 60-second primary
-observations under the original eight-attempt total cap and stopped-reporter
-handoff. Completed preparation, manual, motto, and join cases SHALL NOT be
-repeated. This exception SHALL NOT authorize progression or general primary
-recovery.
-
-Confirmed final no-guild state and approved private-only cleanup MAY permit
-promotion of independently complete manual/motto records. Operator-accepted
-join lifecycle completion SHALL NOT provide guild production evidence;
-missing join fingerprints SHALL remain an explicit diagnostic audit gap, not
-block the separately approved public-confirmation strategy. Original source/backup preservation and all other
-production evidence requirements SHALL remain unchanged.
-
-Immediate-operation and automatic-progression stages SHALL be independently
-bounded. Immediate coverage SHALL establish manual brag consumption, motto
-set/clear, guild join/change/leave, and deliberately rejected guild designation
-outcomes. Automatic coverage SHALL exercise native level and act transitions
-using actual active time without accelerated simulation or fabricated progress.
-Each covered operation SHALL have independently attributable acceptance
-evidence and normal leaderboard classification. HTTP success, an empty
-response, or an unchanged pre-existing public row alone SHALL be inconclusive.
-
-Attempts SHALL be recorded before mutation so interrupted or uncertain requests
-are not replayed. Rejected, ambiguous, missing, expired, or abnormal observations
-SHALL leave affected evidence non-passing. Only credential-free, conclusive
-operation records with confirmed cleanup SHALL be eligible for production
-promotion. Live records SHALL claim only their actually proven operation/path.
-Usable-support completion SHALL follow the explicit equivalence/public-confirmation
-readiness requirement, not be represented as exhaustive per-path live certification.
-The archived acceptance probe SHALL remain diagnostic evidence only.
 
 #### Scenario: Running local validation without live approval
 
@@ -722,6 +581,13 @@ The archived acceptance probe SHALL remain diagnostic evidence only.
 - **WHEN** an approved existing-character immediate stage completes
 - **THEN** final no-guild state and private-copy cleanup are confirmed without
   deleting or modifying the original source save or backup
+
+#### Scenario: Authorizing an existing-character exception
+
+- **WHEN** an older disposable character is approved for the immediate stage
+- **THEN** it passes fresh level-1 handoff checks, matches the normal public and
+  saved report baseline and current guild, and uses an exclusive stopped-client
+  handoff; the exception authorizes no official-client mutation
 
 #### Scenario: Recognizing a declared but empty trailing guild column
 
@@ -816,37 +682,39 @@ The archived acceptance probe SHALL remain diagnostic evidence only.
 - **THEN** it fails the production-enabling contract rather than being upgraded
   merely because HTTP delivery succeeded
 
+#### Scenario: Preserving Pemptus table and guild identity semantics
+
+- **WHEN** public Pemptus guild state is parsed or reconciled
+- **THEN** only an explicitly declared empty trailing Guild cell in a uniquely
+  aligned exact-name row can mean no guild; malformed or ambiguous rows remain
+  unknown, production and development readers agree, Spoltog semantics stay
+  unchanged, guild names compare ASCII-case-insensitively while retaining
+  observed spelling, and character identity remains exact
+
+#### Scenario: Recording and bounding every live mutation
+
+- **WHEN** an approved Pemptus operation is attempted
+- **THEN** the attempt is recorded before mutation, independently attributable
+  acceptance and normal classification are required, HTTP success alone is
+  inconclusive, and only credential-free records for the proven operation and
+  path with confirmed cleanup can enable production
+
 ### Requirement: Rested runtime pacing readiness exception
 
 Managed production runtimes SHALL apply rested progression to otherwise
-eligible online characters without requiring new live leaderboard evidence
-for the rested pacing change. This SHALL be a narrow exception to
-timing-related evidence invalidation in scoped classic-realm live evidence and
-independent classic operation evidence: unchanged profile simulation rules,
-callback transitions, request construction, realm/authentication contracts,
-and operation evidence SHALL remain usable despite rested runtime pacing
-alone.
-
-Rested progression SHALL NOT make an otherwise ineligible character eligible,
-clear local-only provenance, widen import-path coverage, alter
-authentication/validators, or fabricate passing evidence. Automatic reports
-SHALL retain their exact transition snapshots, persistence-before-delivery
-ordering, serialized delivery, and no-retry behavior.
-
-Documentation and safe managed inspection SHALL distinguish existing
-operation readiness from unverified rested-timeline acceptance and leaderboard
-classification; dashboard views SHALL omit the long acceptance notice.
-Implementing this feature SHALL NOT require or authorize a live conformance
-experiment. Existing development conformance procedures SHALL retain their
-original-speed, real-active-time constraints; they SHALL NOT inherit
-production rested acceleration.
+eligible online characters without requiring new leaderboard evidence for
+timing alone, provided non-pacing simulation, callback, request, realm, and
+authentication contracts remain unchanged. Rested time SHALL NOT change
+eligibility, provenance, evidence, report ordering, or no-retry behavior, nor
+authorize live verification.
 
 #### Scenario: Reporting a rested eligible character
 
 - **WHEN** an otherwise eligible online browser or desktop character reaches
   a report-producing transition under rested progression
 - **THEN** the runtime attempts the existing profile-compatible report after
-  committing state and accounting, without a new rested-evidence gate
+  committing the exact transition snapshot and accounting, with serialized
+  delivery and no retry, without a new rested-evidence gate
 
 #### Scenario: Retaining existing operation evidence
 
@@ -875,3 +743,10 @@ production rested acceleration.
   authorized experimental character
 - **THEN** it retains the existing unaccelerated active-time contract and
   does not earn or consume a managed rested bank
+
+#### Scenario: Documenting rested readiness without live claims
+
+- **WHEN** rested progression is presented in inspection or documentation
+- **THEN** existing operation readiness is distinguished from unverified
+  rested-timeline acceptance and leaderboard classification, and dashboard
+  views omit the long acceptance notice
