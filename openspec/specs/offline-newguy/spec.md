@@ -10,12 +10,10 @@ browser-like terminal creation experience or explicit command-line inputs.
 ### Requirement: Offline character generation
 
 The system SHALL generate a valid level-one canonical character from a name,
-race, class, and randomized initial character state drawn from the bundled
-ruleset. A generated character SHALL have no online metadata, passkey, or
-network-derived data. Generation SHALL use fresh local randomness; it is not
-required to reproduce browser character-creation RNG results, except that
-initial prime stats SHALL use the desktop New Guy `3 + 3d6` algorithm where
-each die is an integer in the inclusive range `0..5`.
+race, class, and bundled ruleset state, without online metadata, passkeys, or
+network-derived data. Generation SHALL use fresh local randomness; browser RNG
+parity is not required. Initial prime stats SHALL use desktop New Guy's
+`3 + 3d6` algorithm, with each die in the inclusive range `0..5`.
 
 #### Scenario: Generating an offline character
 
@@ -71,14 +69,11 @@ creating or registering a character.
 
 ### Requirement: Interactive New Guy creation
 
-The system SHALL provide an interactive terminal creation flow when the
-`new-guy` command is invoked without explicit creation inputs. The flow SHALL
-provide navigable Mode, Name, Race, Class, and Stats rows. The focused row
-SHALL determine the available editing actions and displayed key bindings. When
-Offline is selected in the Mode row, the flow SHALL let the user edit or
-randomly replace the name, manually select the initially randomized race and
-class, roll or unroll initial stats, confirm the displayed offline character
-with “Sold!”, or cancel.
+When `new-guy` is invoked without explicit creation inputs, the system SHALL
+provide an interactive terminal flow with navigable Mode, Name, Race, Class,
+and Stats rows. In Offline mode, the user SHALL be able to edit or randomize
+the name, select race and class, roll or unroll stats, confirm with “Sold!”,
+or cancel.
 
 #### Scenario: Editing the focused name row
 
