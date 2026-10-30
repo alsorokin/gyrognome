@@ -127,21 +127,27 @@ since import.
 
 ### Requirement: Desktop rules and random continuation
 
-The desktop profile SHALL use the pinned 6.4.4 ordered rules, integer random
-operations, weighted-stat selection, numeric rounding, and load behavior
-validated against the separately authored source-derived desktop reference
-harness. An import SHALL initialize and persist a new desktop random
-continuation state without claiming to reproduce the original client's unsaved
-next random outcome or exact uncorroborated Delphi runtime edge behavior.
-Identical imported state, supplied desktop random state, and callback inputs
-SHALL yield identical results and restored-state continuation.
+The desktop profile SHALL follow the pinned 6.4.4 rules and deterministic
+continuation behavior, including progression and reward semantics.
 
-The profile SHALL preserve desktop integer XP/quest/plot credit, non-loading
-task plot advancement, level-up ordering, and act rewards. Act II SHALL award
-an item but no equipment; Act III onward SHALL award both. Specialty SHALL
-select by saved learned-list position plus one times rank, retaining the
-earliest tie. Prime-stat ties SHALL retain the earliest of STR, CON, DEX, INT,
-WIS, and CHA.
+#### Scenario: Matching the desktop reference rules
+
+- **WHEN** the profile performs ordered rule lookup, random operations,
+  weighted-stat selection, numeric rounding, or load behavior
+- **THEN** results match the pinned 6.4.4 reference harness
+
+#### Scenario: Initializing a desktop random continuation
+
+- **WHEN** a desktop save is imported
+- **THEN** a new desktop random state is initialized and persisted without
+  claiming the original client's unsaved next outcome or exact uncorroborated
+  Delphi edge behavior
+
+#### Scenario: Repeating deterministic desktop callbacks
+
+- **WHEN** imported state, desktop random state, and callback inputs are
+  identical
+- **THEN** results and restored-state continuation are identical
 
 #### Scenario: Crediting a fractional-second task duration
 
@@ -154,11 +160,32 @@ WIS, and CHA.
 - **WHEN** a non-loading noncombat task completes with applicable plot progress
 - **THEN** desktop plot credit is applied even though the task is not combat
 
+#### Scenario: Ordering desktop level-up effects
+
+- **WHEN** a desktop task triggers a level-up
+- **THEN** level-up effects occur in the pinned 6.4.4 order
+
 #### Scenario: Entering Act II
 
 - **WHEN** the desktop transition enters Act II
 - **THEN** its reward includes an item and excludes the later-act equipment
   award
+
+#### Scenario: Entering Act III or later
+
+- **WHEN** the desktop transition enters Act III or a later act
+- **THEN** its reward includes both an item and equipment
+
+#### Scenario: Selecting the desktop specialty
+
+- **WHEN** multiple learned spells contribute to specialty
+- **THEN** the selected value is the greatest of (saved learned-list position
+  plus one) times rank, with ties retaining the earliest spell
+
+#### Scenario: Resolving tied prime stats
+
+- **WHEN** multiple stats tie for the prime stat
+- **THEN** the earliest stat in STR, CON, DEX, INT, WIS, CHA order is selected
 
 #### Scenario: Resuming desktop randomness
 
@@ -169,13 +196,20 @@ WIS, and CHA.
 
 ### Requirement: Offline desktop protocol construction
 
-The system SHALL construct desktop-6.4.4 progress, motto, and guild request
-data without transport, using revision 8, evidenced desktop byte encoding and
-field order, passkey validation, and exact transition snapshots. An empty
-learned-spell list SHALL omit the specialty field rather than send `z=`.
-Account authentication SHALL be represented separately and retained where
-present; it SHALL NOT be assumed unnecessary because a passkey is available.
-Unsupported encoding or authentication SHALL fail explicitly.
+The system SHALL construct desktop request data without transport and reject
+unsupported encoding or authentication explicitly.
+
+#### Scenario: Constructing desktop protocol payloads
+
+- **WHEN** progress, motto, or guild request data is constructed
+- **THEN** it uses revision 8, evidenced desktop byte encoding and field order,
+  and validates the passkey without sending a request
+
+#### Scenario: Matching exact transition snapshots
+
+- **WHEN** a desktop level-up or act-completion snapshot is supplied
+- **THEN** unsigned fields and the synthetic validator match the
+  source-derived desktop vector at that exact boundary
 
 #### Scenario: Reporting before any spell is learned
 
@@ -195,16 +229,23 @@ Unsupported encoding or authentication SHALL fail explicitly.
 - **THEN** both remain available privately to the selected transport contract,
   with neither exposed through request previews or diagnostic output
 
+#### Scenario: Rejecting unsupported protocol inputs
+
+- **WHEN** request construction encounters unsupported encoding or
+  authentication
+- **THEN** it fails explicitly rather than producing a request payload
+
 ### Requirement: Desktop save export
 
-The system SHALL encode a managed desktop-profile character as a `.pq` save
-that the original Progress Quest 6.4.4 client can open and that imports back
-through this system to a canonical state identical to the stored state. The
-export SHALL include the character's stored passkey and online credentials so
-the client can continue the character. The export SHALL also include a
-Gyrognome metadata block with the state that no desktop component carries.
-Encoding SHALL NOT require launching the original client, contacting a server,
-or retaining a raw binary save.
+The system SHALL export managed desktop characters as compatible `.pq` saves
+that round-trip to the same canonical state.
+
+#### Scenario: Exporting without external effects
+
+- **WHEN** a managed desktop character is exported
+- **THEN** export includes its passkey, online credentials, and Gyrognome
+  metadata without launching the client, contacting a server, or retaining a
+  raw binary save
 
 #### Scenario: Round-tripping an exported desktop character
 
@@ -220,19 +261,21 @@ or retaining a raw binary save.
 
 ### Requirement: Gyrognome metadata in desktop exports
 
-A desktop export's metadata block SHALL carry the since-import counters
-(tasks completed and elapsed milliseconds), the desktop random continuation,
-the source provenance and adaptations, and the advancement provenance. It
-SHALL also carry a version and a digest of the desktop component content it
-accompanies. The block SHALL NOT contain credentials, and it SHALL be placed
-where pq.exe 6.4.4 neither reads nor rewrites it.
+Metadata SHALL preserve local-only character state across desktop export and
+import, and invalid metadata SHALL fail import.
 
-On import, a valid block SHALL restore those values in place of fresh
-registration values. Restored counters SHALL keep their "measured since
-import" labeling, counted from the character's first import. A block whose
-digest doesn't match its components, or whose version or content is
-unsupported, SHALL fail the import rather than being ignored. Saves without a
-block SHALL import with fresh registration values as before.
+#### Scenario: Preserving metadata state
+
+- **WHEN** an export includes a metadata block
+- **THEN** it carries since-import task and elapsed-time counters, desktop
+  random continuation, source provenance and adaptations, advancement
+  provenance, a version, and a digest of its desktop components
+
+#### Scenario: Keeping metadata private and client-compatible
+
+- **WHEN** a metadata block is written to a desktop export
+- **THEN** it contains no credentials and is placed where pq.exe 6.4.4 neither
+  reads nor rewrites it
 
 #### Scenario: Re-importing a Gyrognome export
 
@@ -240,7 +283,8 @@ block SHALL import with fresh registration values as before.
   and has a random continuation is exported and imported into another
   Gyrognome store
 - **THEN** its counters, random continuation, provenance, and local-only
-  advancement equal the exported character's
+  advancement equal the exported character's, and counters remain labeled as
+  measured since the first import
 
 #### Scenario: Saving the export in the original client
 
@@ -255,3 +299,13 @@ block SHALL import with fresh registration values as before.
   block is kept
 - **THEN** import fails with a credential-safe error and does not register the
   character
+
+#### Scenario: Rejecting unsupported metadata
+
+- **WHEN** a metadata block has an unsupported version or content
+- **THEN** import fails rather than ignoring the block
+
+#### Scenario: Importing a save without metadata
+
+- **WHEN** a desktop save has no Gyrognome metadata block
+- **THEN** it imports with fresh registration values
