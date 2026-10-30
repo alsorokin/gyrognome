@@ -12,16 +12,11 @@ inspection.
 
 Every managed browser and desktop character SHALL automatically accumulate
 one second of rested time per second its worker is stopped or its computer is
-asleep or hibernating, capped at 43,200 seconds. This SHALL apply to offline
-and online characters without an enablement command. Rest accumulation SHALL
-NOT itself advance game state or produce reports. Ordinary scheduler stalls,
-task-completion callbacks, persistence, and report-delivery delays while the
-computer remains awake SHALL NOT earn rest.
-
-New registrations SHALL begin with an empty bank and accrue rest from
-registration onward. Existing records SHALL receive an empty bank and a timing
-baseline when migrated; pre-migration history SHALL NOT be interpreted as
-rest. Profile edits and read-only inspection SHALL NOT reset the rest baseline.
+asleep or hibernating, capped at 43,200 seconds, whether online or offline.
+This SHALL apply without an enablement command.
+Rest accumulation SHALL NOT advance game state or produce reports. Ordinary
+scheduler stalls, task-completion callbacks, persistence, and report-delivery
+delays while the computer remains awake SHALL NOT earn rest.
 
 #### Scenario: Resting for eight hours
 
@@ -47,6 +42,18 @@ rest. Profile edits and read-only inspection SHALL NOT reset the rest baseline.
 - **WHEN** the computer remains awake while scheduling, storage, or network
   delivery delays a worker
 - **THEN** the delay does not increase its rested bank
+
+### Requirement: Rest accumulation baseline
+
+New registrations SHALL begin with an empty bank and accrue rest from
+registration onward. Existing records SHALL receive an empty bank and a timing
+baseline when migrated; pre-migration history SHALL NOT count as rest. Profile
+edits and read-only inspection SHALL NOT reset the rest baseline.
+
+#### Scenario: Registering a new character
+
+- **WHEN** a new character is registered
+- **THEN** it starts with an empty bank and accrues rest from registration
 
 #### Scenario: Initializing existing characters
 
