@@ -57,16 +57,10 @@ and SHALL NOT make network requests.
 ### Requirement: Autostart cleanup during character deletion
 
 Confirmed deletion of an inactive, unowned character SHALL remove its persistent
-user-service startup registration before removing character data. Cleanup SHALL
-NOT stop a worker or change other characters' startup preferences. Active-runtime
-protection and cancellation SHALL remain unchanged. A missing service template
-with no startup registration SHALL NOT prevent deletion.
-
-If cleanup fails, the command SHALL report the failure and retain all character
-data. If data removal fails after successful cleanup, the command SHALL retain
-the character data according to the existing atomic-removal contract and
-explicitly report that autostart was disabled; it SHALL NOT claim complete
-deletion or silently restore enablement.
+user-service startup registration before character data. It SHALL NOT stop a
+worker, change other characters' startup preferences, or alter active-runtime
+protection or cancellation. Deletion SHALL proceed if no startup registration
+exists.
 
 #### Scenario: Deleting an autostart-enabled inactive character
 
@@ -86,7 +80,9 @@ deletion or silently restore enablement.
 #### Scenario: Failed data removal after cleanup
 
 - **WHEN** startup cleanup succeeds but atomic data removal fails
-- **THEN** the character remains registered and the error explicitly states that its autostart is now disabled
+- **THEN** the character remains registered, the error states that autostart is
+  disabled, and the command does not claim deletion or silently restore
+  enablement
 
 #### Scenario: Deletion without an installed template
 
