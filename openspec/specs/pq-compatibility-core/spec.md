@@ -10,21 +10,34 @@ character data and a future Linux-native client without reporting game progress.
 ### Requirement: Browser save interchange
 
 The system SHALL import a browser `.pqw` export by Base64-decoding and parsing
-its JSON document. It SHALL expose a typed canonical character state
-containing traits, initial and current deterministic random state, attributes,
-active and elapsed task state, progress bars, equipment, inventory, spells,
-plots, quests, online metadata, and optional motto and guild profile values.
-Missing motto and guild fields SHALL be interpreted as empty values because
-the browser omits them until first assigned. It SHALL validate the nested type
-and required content of each canonical field with field-specific errors. It
-SHALL export a compatible Base64-encoded JSON document and preserve
-unrecognized imported JSON data when no canonical state has been changed.
+its JSON document into a typed canonical character state.
 
 #### Scenario: Importing a valid browser save
 
 - **WHEN** a user supplies a well-formed `.pqw` export from the browser client
-- **THEN** the system makes its complete typed canonical character and online
-  profile state available for inspection
+- **THEN** the system makes typed traits, initial and current deterministic
+  random state, attributes, active and elapsed task state, progress bars,
+  equipment, inventory, spells, plots, quests, and online metadata available
+  for inspection
+
+### Requirement: Validating canonical save fields
+
+The system SHALL validate the nested type and required content of each
+canonical field with field-specific errors.
+
+#### Scenario: Rejecting an invalid save without loss
+
+- **WHEN** a user supplies text that is not a valid Base64-encoded JSON save or
+  has an invalid required nested canonical field or an invalid present profile
+  field
+- **THEN** the system reports a field-specific import error and does not create
+  or modify character state
+
+### Requirement: Importing optional profile fields
+
+The system SHALL expose string-valued motto and guild fields as
+credential-safe online profile state, defaulting omitted fields to empty
+values.
 
 #### Scenario: Importing optional profile fields
 
@@ -37,13 +50,10 @@ unrecognized imported JSON data when no canonical state has been changed.
 - **WHEN** a valid browser save omits motto or guild
 - **THEN** the system imports it with an empty value for each omitted field
 
-#### Scenario: Rejecting an invalid save without loss
+### Requirement: Exporting compatible browser saves
 
-- **WHEN** a user supplies text that is not a valid Base64-encoded JSON save or
-  has an invalid required nested canonical field or an invalid present profile
-  field
-- **THEN** the system reports a field-specific import error and does not create
-  or modify character state
+The system SHALL export compatible Base64-encoded JSON and preserve
+unrecognized imported data when canonical state is unchanged.
 
 #### Scenario: Round-tripping unmodified imported data
 
@@ -71,18 +81,20 @@ same reference random values and restored-state continuation.
 
 ### Requirement: Offline construction of leaderboard requests
 
-The system SHALL construct the creation, progress-report, guild, and motto request
-data used by the browser client, including browser-compatible parameter encoding,
-protocol revision, URL normalization, and LFSR validation. Given a
-credential-free browser-report transition snapshot and a synthetic passkey, it
-SHALL construct the trigger-specific progress-report payload in the exact field
-order and at the exact state represented by that snapshot. This compatibility
-core SHALL NOT transmit those requests or create characters on a leaderboard.
+The system SHALL construct browser-compatible creation, progress-report, guild,
+and motto request data using the correct parameter encoding, protocol revision,
+URL normalization, and LFSR validation.
 
 #### Scenario: Constructing a sanitized progress report
 
 - **WHEN** a caller provides a canonical online character state and a synthetic passkey
 - **THEN** the system produces the expected sanitized report URL and validator from the reference fixture
+
+### Requirement: Constructing trigger-specific report payloads
+
+Given a credential-free browser-report transition snapshot and a synthetic
+passkey, the system SHALL construct the progress-report payload in the exact
+field order and state represented by that snapshot.
 
 #### Scenario: Constructing a trigger-specific report
 
@@ -91,44 +103,45 @@ core SHALL NOT transmit those requests or create characters on a leaderboard.
 - **THEN** the system produces the browser-equivalent unsigned fields,
   normalized request representation, and validator for that exact snapshot
 
+### Requirement: Keeping request construction offline
+
+The compatibility core SHALL NOT transmit constructed requests or create
+characters on a leaderboard.
+
 #### Scenario: Preventing network activity
 
 - **WHEN** a caller invokes save inspection or any request-construction operation
 - **THEN** the system performs no network request
 
-### Requirement: Safe character inspection and reference data
+### Requirement: Providing read-only character inspection
 
 The system SHALL provide a read-only character inspection interface with a
 human-readable character sheet and a machine-readable JSON representation of
-canonical state. Both representations SHALL include traits, attributes, active
-and available elapsed task state, progress bars, equipment, inventory, spells,
-plots, quests, online realm metadata, and credential-safe motto and guild
-values. They SHALL identify the source format, continuation profile, unavailable
-desktop history, and reporting eligibility without claiming an unproven writer
-version. The interface SHALL redact online passkeys and omit account logins,
-passwords, authenticated endpoint URLs, unrecognized raw JSON data, and raw
-desktop properties by default. Committed reference fixtures and diagnostic
-output SHALL NOT contain real credentials, full signed/authenticated request
-URLs, browser profiles, or player save exports of any supported format.
+canonical state.
 
-#### Scenario: Inspecting an online character safely
+#### Scenario: Choosing an inspection format
 
-- **WHEN** a user inspects an imported online character with the default format
-- **THEN** the character sheet identifies its realm and complete
-  credential-safe state, including motto and guild when present, while
-  redacting its passkey and excluding account credentials
+- **WHEN** a user requests either the character sheet or JSON inspection output
+- **THEN** the system provides the requested read-only representation
 
-#### Scenario: Producing machine-readable inspection output
+### Requirement: Including canonical character state
 
-- **WHEN** a user requests JSON inspection output for an imported character
-- **THEN** the system produces valid JSON for its canonical and online profile
-  state without credentials or unrecognized raw save fields
+Both representations SHALL include character traits, attributes, task state,
+progress bars, equipment, inventory, spells, plots, quests, online realm
+metadata, and credential-safe motto and guild values.
 
-#### Scenario: Committing compatibility fixtures
+#### Scenario: Inspecting canonical state in both formats
 
-- **WHEN** browser or desktop observations are converted into project fixtures
-- **THEN** the fixtures use synthetic credentials and contain no
-  player-identifying save data
+- **WHEN** a user inspects an imported online character in either format
+- **THEN** the output identifies its realm and includes traits, attributes,
+  active and available elapsed task state, progress bars, equipment, inventory,
+  spells, plots, quests, and credential-safe motto and guild values
+
+### Requirement: Identifying character provenance
+
+Inspection output SHALL identify the source format, continuation profile,
+unavailable desktop history, and reporting eligibility without claiming an
+unproven writer version.
 
 #### Scenario: Inspecting desktop provenance
 
@@ -136,3 +149,35 @@ URLs, browser profiles, or player save exports of any supported format.
 - **THEN** output identifies desktop-6.4.4 continuation separately from source
   provenance, marks unavailable history, and explains any online ineligibility
   without a network request
+
+### Requirement: Redacting sensitive character data
+
+The interface SHALL redact online passkeys and omit account logins, passwords,
+authenticated endpoint URLs, unrecognized raw JSON data, and raw desktop
+properties by default.
+
+#### Scenario: Redacting a character sheet
+
+- **WHEN** a user inspects an imported online character with the default format
+- **THEN** the character sheet shows its credential-safe profile and state
+  while redacting its passkey and excluding account credentials, authenticated
+  endpoint URLs, unrecognized raw JSON data, and raw desktop properties
+
+#### Scenario: Redacting machine-readable inspection output
+
+- **WHEN** a user requests JSON inspection output for an imported character
+- **THEN** the system produces valid JSON with the same canonical and online
+  profile state, without account logins, passwords, passkeys, authenticated
+  endpoint URLs, unrecognized raw save fields, or raw desktop properties
+
+### Requirement: Protecting reference data and diagnostics
+
+Committed reference fixtures and diagnostic output SHALL NOT contain real
+credentials, full signed or authenticated request URLs, browser profiles, or
+player save exports of any supported format.
+
+#### Scenario: Committing compatibility fixtures
+
+- **WHEN** browser or desktop observations are converted into project fixtures
+- **THEN** the fixtures use synthetic credentials and contain no
+  player-identifying save data
