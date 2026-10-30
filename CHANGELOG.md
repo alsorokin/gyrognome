@@ -19,6 +19,8 @@ All notable changes to Gyrognome are documented in this file.
 
 ### Fixed
 
+- Dashboard letter shortcuts now accept either case, including Ctrl+C, while
+  motto and guild editors preserve the case of typed text.
 - The dashboard task bar no longer snaps back within a task, especially while
   rested. When it is ahead of the worker, it slows to half speed until the
   worker catches up.

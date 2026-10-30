@@ -109,6 +109,9 @@ with Ctrl-C. You can open the dashboard in another terminal.
 | `Tab` / `Shift+Tab` | Select a pane to scroll |
 | Arrow keys / `PageUp` / `PageDown` | Scroll selected content |
 
+Letter shortcuts accept either case, including with Caps Lock on. Profile
+editors preserve the case of typed text.
+
 Service and autostart changes require Enter to confirm; Escape cancels.
 Profile editors also use Enter to submit and Escape to cancel. Empty text
 clears a motto or leaves a guild. The mouse wheel scrolls the pane under the

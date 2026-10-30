@@ -618,14 +618,15 @@ fn selection_command(event: Event) -> SelectionCommand {
     if key.kind != KeyEventKind::Press {
         return SelectionCommand::None;
     }
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'C'))
+    {
         return SelectionCommand::Cancel;
     }
     match key.code {
-        KeyCode::Up | KeyCode::Char('k') => SelectionCommand::Previous,
-        KeyCode::Down | KeyCode::Char('j') => SelectionCommand::Next,
+        KeyCode::Up | KeyCode::Char('k' | 'K') => SelectionCommand::Previous,
+        KeyCode::Down | KeyCode::Char('j' | 'J') => SelectionCommand::Next,
         KeyCode::Enter => SelectionCommand::Select,
-        KeyCode::Char('q') | KeyCode::Esc => SelectionCommand::Cancel,
+        KeyCode::Char('q' | 'Q') | KeyCode::Esc => SelectionCommand::Cancel,
         _ => SelectionCommand::None,
     }
 }
@@ -1113,16 +1114,18 @@ fn command(event: Event) -> Command {
             if key.kind != KeyEventKind::Press {
                 return Command::None;
             }
-            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c' | 'C'))
+            {
                 return Command::Quit;
             }
             match key.code {
-                KeyCode::Char('q') => Command::Quit,
-                KeyCode::Char('b') => Command::Brag,
-                KeyCode::Char('m') => Command::Edit(ProfileField::Motto),
-                KeyCode::Char('g') => Command::Edit(ProfileField::Guild),
-                KeyCode::Char('s') => Command::ToggleLifecycle,
-                KeyCode::Char('a') => Command::ToggleAutostart,
+                KeyCode::Char('q' | 'Q') => Command::Quit,
+                KeyCode::Char('b' | 'B') => Command::Brag,
+                KeyCode::Char('m' | 'M') => Command::Edit(ProfileField::Motto),
+                KeyCode::Char('g' | 'G') => Command::Edit(ProfileField::Guild),
+                KeyCode::Char('s' | 'S') => Command::ToggleLifecycle,
+                KeyCode::Char('a' | 'A') => Command::ToggleAutostart,
                 KeyCode::Enter => Command::ConfirmAction,
                 KeyCode::Esc => Command::Cancel,
                 KeyCode::Tab => Command::FocusNextPane,
@@ -1151,7 +1154,8 @@ fn editor_command(event: Event) -> Command {
     if key.kind == KeyEventKind::Release {
         return Command::None;
     }
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c' | 'C'))
+    {
         return Command::Quit;
     }
     if key
@@ -3191,13 +3195,16 @@ mod tests {
             state.handle_event(&provider, &id, key_event(KeyCode::Char(key)), now);
             assert_eq!(state.editor.as_ref().unwrap().field, field);
             assert_eq!(state.editor.as_ref().unwrap().text, "Old");
-            for value in "qrbmsxcg\u{2603}\u{754c}".chars() {
+            for value in "qrbmsxcgQBM GSA\u{2603}\u{754c}".chars() {
                 assert!(!state.handle_event(&provider, &id, key_event(KeyCode::Char(value)), now));
             }
             state.handle_event(&provider, &id, key_event(KeyCode::Backspace), now);
             state.handle_event(&provider, &id, key_event(KeyCode::Char('\n')), now);
             state.handle_event(&provider, &id, key_event(KeyCode::F(1)), now);
-            assert_eq!(state.editor.as_ref().unwrap().text, "Oldqrbmsxcg\u{2603}");
+            assert_eq!(
+                state.editor.as_ref().unwrap().text,
+                "OldqrbmsxcgQBM GSA\u{2603}"
+            );
             assert!(!state.panes.is_collapsed(Pane::Activity));
             assert!(state.confirmation.is_none());
             state.handle_event(&provider, &id, key_event(KeyCode::Esc), now);
@@ -3226,7 +3233,7 @@ mod tests {
     fn profile_submissions_refresh_the_persisted_value_and_safe_outcome() {
         let now = Instant::now();
         for field in [ProfileField::Motto, ProfileField::Guild] {
-            for text in ["Changed \u{2603}", ""] {
+            for text in ["Changed QBM GSA \u{2603}", ""] {
                 let mut initial = snapshot_with_profile("Old", "Old");
                 initial.runtime_owned = Some(true);
                 let id = initial.character.id.clone();
@@ -3339,21 +3346,21 @@ mod tests {
                 Command::None
             );
         }
-        assert_eq!(
-            editor_command(Event::Key(crossterm::event::KeyEvent::new(
-                KeyCode::Char('c'),
-                KeyModifiers::CONTROL
-            ))),
-            Command::Quit
-        );
-        let initial = sample();
-        let id = initial.character.id.clone();
-        let provider = profile_provider(initial.clone());
-        let now = Instant::now();
-        let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
-        state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
-        assert!(state.apply(&provider, &id, Command::Quit, now));
-        assert!(provider.calls.borrow().is_empty());
+        for value in ['c', 'C'] {
+            let event = Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Char(value),
+                KeyModifiers::CONTROL,
+            ));
+            assert_eq!(editor_command(event.clone()), Command::Quit);
+            let initial = sample();
+            let id = initial.character.id.clone();
+            let provider = profile_provider(initial.clone());
+            let now = Instant::now();
+            let mut state = DashboardState::new(initial, now, Duration::from_secs(1));
+            state.apply(&provider, &id, Command::Edit(ProfileField::Motto), now);
+            assert!(state.handle_event(&provider, &id, event, now));
+            assert!(provider.calls.borrow().is_empty());
+        }
     }
 
     #[test]
@@ -4327,6 +4334,24 @@ mod tests {
 
     #[test]
     fn selector_maps_documented_keys() {
+        for (lower, upper, expected) in [
+            ('j', 'J', SelectionCommand::Next),
+            ('k', 'K', SelectionCommand::Previous),
+            ('q', 'Q', SelectionCommand::Cancel),
+        ] {
+            for value in [lower, upper] {
+                assert_eq!(selection_command(key_event(KeyCode::Char(value))), expected);
+            }
+        }
+        for value in ['c', 'C'] {
+            assert_eq!(
+                selection_command(Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Char(value),
+                    KeyModifiers::CONTROL,
+                ))),
+                SelectionCommand::Cancel
+            );
+        }
         assert_eq!(
             selection_command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Up))),
             SelectionCommand::Previous
@@ -5279,6 +5304,26 @@ mod tests {
 
     #[test]
     fn maps_documented_keys_and_confirmation_keys() {
+        for (lower, upper, expected) in [
+            ('q', 'Q', Command::Quit),
+            ('b', 'B', Command::Brag),
+            ('m', 'M', Command::Edit(ProfileField::Motto)),
+            ('g', 'G', Command::Edit(ProfileField::Guild)),
+            ('s', 'S', Command::ToggleLifecycle),
+            ('a', 'A', Command::ToggleAutostart),
+        ] {
+            for value in [lower, upper] {
+                for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                    assert_eq!(
+                        command(Event::Key(crossterm::event::KeyEvent::new(
+                            KeyCode::Char(value),
+                            modifiers,
+                        ))),
+                        expected
+                    );
+                }
+            }
+        }
         assert_eq!(
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char(
                 'q'
@@ -5334,13 +5379,15 @@ mod tests {
             command(Event::Key(crossterm::event::KeyEvent::from(KeyCode::F(7)))),
             Command::None
         );
-        assert_eq!(
-            command(Event::Key(crossterm::event::KeyEvent::new(
-                KeyCode::Char('c'),
-                KeyModifiers::CONTROL,
-            ))),
-            Command::Quit
-        );
+        for value in ['c', 'C'] {
+            assert_eq!(
+                command(Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Char(value),
+                    KeyModifiers::CONTROL,
+                ))),
+                Command::Quit
+            );
+        }
     }
 
     #[test]
