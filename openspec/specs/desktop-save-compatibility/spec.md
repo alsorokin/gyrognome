@@ -80,19 +80,31 @@ fail safely without lossy decoding or code-page guesses.
 
 ### Requirement: Explicit desktop continuation provenance
 
-The system SHALL distinguish source format, supported legacy adaptation, and
-the selected desktop-6.4.4 continuation profile. It SHALL NOT claim an exact
-writer version from a filename, executable version resource, realm name, or
-the absence of newer fields. It SHALL support observed 6.2 and 6.4.4 save
-layouts only through validated 6.4.4 load/continuation semantics.
+The system SHALL distinguish source format, evidenced legacy adaptation, and
+the selected desktop-6.4.4 continuation profile. It SHALL support observed
+6.2/6.4.4 layouts only through validated 6.4.4 load/continuation semantics,
+apply pinned reference behavior to legacy state, reject ambiguous state, and
+report unavailable history. New local counters SHALL be labeled as measured
+since import.
 
-Legacy prologue queues, placeholder quest markers, and load-time spelling
-changes SHALL follow the pinned source-derived desktop reference behavior,
-including collection-order effects. An unsupported ambiguous state SHALL be
-rejected with an actionable safe explanation rather than silently converted to
-browser rules. Historical RNG state, birthday, seed history, task counts, or
-elapsed totals not present in the save SHALL be identified as unavailable. New
-local counters SHALL be labeled as measured since import.
+#### Scenario: Avoiding unsupported writer-version claims
+
+- **WHEN** a save's writer version is inferred only from its filename,
+  executable version resource, realm name, or absence of newer fields
+- **THEN** the system does not claim an exact writer version
+
+#### Scenario: Applying legacy load behavior
+
+- **WHEN** a supported save uses a legacy prologue queue, quest placeholder, or
+  load-time spelling change
+- **THEN** interpretation follows the pinned source-derived reference,
+  including collection-order effects
+
+#### Scenario: Rejecting ambiguous legacy state
+
+- **WHEN** a save contains ambiguous state without a supported interpretation
+- **THEN** import rejects it with a safe, actionable explanation instead of
+  silently converting it to browser rules
 
 #### Scenario: Importing a legacy prologue
 
@@ -108,7 +120,8 @@ local counters SHALL be labeled as measured since import.
 
 #### Scenario: Displaying unavailable history
 
-- **WHEN** an imported character has no saved RNG or lifetime task history
+- **WHEN** an imported character lacks saved RNG state, birthday, seed history,
+  task counts, or elapsed totals
 - **THEN** inspection identifies the missing history and distinguishes newly
   measured counters from historical totals
 
