@@ -9,19 +9,19 @@ enrollment and first-report sequence before normal-user transport is enabled.
 
 ### Requirement: Disposable browser enrollment conformance
 
-The project SHALL provide an explicitly confirmed conformance procedure that
-uses the official browser client to create newly generated, disposable online
-characters. The procedure SHALL capture credential-free evidence of the
-browser's creation request shape, successful enrollment outcome, and the
-ordered relationship between successful creation and the initial `s` report.
-It SHALL not expose, persist, or print a passkey, response body, browser
-profile, raw browser save, or complete signed request URL.
+The project SHALL provide an explicitly confirmed conformance procedure using
+the official browser client to enroll newly generated, disposable online
+characters. It SHALL capture credential-free evidence and SHALL not expose,
+persist, or print a passkey, response body, browser profile, raw browser save,
+or complete signed request URL.
 
 #### Scenario: Recording successful enrollment
 
 - **WHEN** an operator explicitly confirms a disposable enrollment experiment
 - **THEN** the procedure records credential-free creation and initial-report
-  observations from a browser-created disposable character
+  observations from a browser-created disposable character, including the
+  creation request shape, successful enrollment outcome, and proof that the
+  initial `s` report follows successful creation
 
 #### Scenario: Rejecting unconfirmed enrollment
 
