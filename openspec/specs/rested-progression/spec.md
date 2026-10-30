@@ -69,16 +69,13 @@ edits and read-only inspection SHALL NOT reset the rest baseline.
 
 ### Requirement: Active-time rested spending
 
-A running character with available rest SHALL progress at twice its profile's
-normal speed, accelerating tasks and their normal completion effects rather
-than multiplying experience rewards alone. One real second of awake active
-runtime SHALL spend one banked second, including time spent in ordinary runtime
-processing and delays. Stopped and sleeping time SHALL NOT spend rest.
-
-When a bank expires during an active interval, only the portion covered by
-remaining rest SHALL receive the bonus; the remainder SHALL use normal speed.
-Interrupted play SHALL preserve the unused balance before subsequent rest
-accrues. Scheduling delays SHALL NOT be repaid as accelerated catch-up.
+Available rest SHALL double a running character's profile speed, accelerating
+task completion effects, not only experience. Each awake second SHALL spend one
+banked second, including processing and delays. Stopped or sleeping time SHALL
+neither spend nor earn rest. When rest expires mid-interval, only covered time
+SHALL receive the bonus; the remainder uses normal speed. Interrupted play
+SHALL preserve unused rest before downtime accrues. Scheduling delays SHALL NOT
+be repaid as catch-up.
 
 #### Scenario: Spending a full bank
 
@@ -112,28 +109,11 @@ accrues. Scheduling delays SHALL NOT be repaid as accelerated catch-up.
 
 Rested balance, fractional virtual-time remainder, and timing metadata SHALL
 be separate from canonical official-save data and general record-update
-timestamps. Successful state commits SHALL atomically record the corresponding
-rested accounting, canonical state, random continuation, and applicable
-provenance/counters. A failed commit SHALL preserve the previous complete
-checkpoint. Graceful stop SHALL record the latest balance and stop baseline
-for both profiles, even when no task completes.
-
-Restart SHALL recover the last complete accounting checkpoint without
-restoring rest consumed by committed progression or duplicating an accounted
-sleep interval. An abnormal exit SHALL retain the existing rollback
-guarantees; its unobserved stop time SHALL be approximated from the last
-durable runtime timing checkpoint rather than claimed as exact.
-
-Backwards wall-clock movement SHALL NOT create negative balances or repeatedly
-credit previously accounted time. Invalid persisted timing/balance data and
-clock-read failures SHALL produce explicit safe errors rather than fabricate
-rest or progression.
-
-#### Scenario: Restarting after a committed boost
-
-- **WHEN** a boosted advancement is committed and the worker restarts
-- **THEN** the committed advancement and its spent rest remain paired, with
-  only subsequent downtime added
+timestamps. Successful commits SHALL atomically record rested accounting,
+canonical state, random continuation, and applicable provenance/counters;
+failed commits SHALL preserve the previous complete checkpoint. Graceful stop
+SHALL record the latest balance and stop baseline for both profiles, even when
+no task completes.
 
 #### Scenario: Failing a boosted commit
 
@@ -146,6 +126,22 @@ rest or progression.
 - **WHEN** a browser or desktop worker stops gracefully partway through a task
 - **THEN** its latest runtime state, remaining rest, and stopped timing
   baseline are persisted together
+
+### Requirement: Restart recovery and timing safety
+
+Restart SHALL recover the last complete checkpoint without restoring rest
+spent on committed progression or duplicating accounted sleep. Abnormal exits
+SHALL retain rollback guarantees; unobserved stopped time SHALL be estimated
+from the last durable timing checkpoint, not as exact. Backwards clock movement
+SHALL NOT create negative balances or repeat credits. Invalid timing or balance
+data and clock-read failures SHALL produce explicit safe errors, never
+fabricated rest or progression.
+
+#### Scenario: Restarting after a committed boost
+
+- **WHEN** a boosted advancement is committed and the worker restarts
+- **THEN** the committed advancement and its spent rest remain paired, with
+  only subsequent downtime added
 
 #### Scenario: Recovering an abnormal exit
 
@@ -163,13 +159,12 @@ rest or progression.
 
 ### Requirement: Safe rested inspection
 
-Managed-character inspection SHALL expose credential-free rested information
-in human-readable and JSON output: remaining available rest in milliseconds
-and the current active progression multiplier, either 1 or 2. A stopped
-character SHALL have an active multiplier of 1 while retaining its available
-bank. Read-only output SHALL account for pending stopped-time accrual without
-persisting or consuming it. Official save export/import SHALL NOT transfer the
-rested bank or timing metadata.
+Human-readable and JSON inspection SHALL expose available rest in milliseconds
+and active multiplier (1 or 2), without credentials. A stopped character SHALL
+report multiplier 1 while retaining its bank. Read-only inspection SHALL
+include pending stopped-time accrual without persisting or consuming it.
+Official save export/import SHALL NOT transfer rested balance or timing
+metadata.
 
 #### Scenario: Inspecting a boosted character
 
