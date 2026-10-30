@@ -41,16 +41,10 @@ Updates SHALL NOT overwrite concurrent simulation progress.
 ### Requirement: Explicit motto management
 
 CLI and dashboard SHALL let an operator set or clear an eligible online
-character's motto while active or inactive. The action SHALL persist the motto
-and attempt exactly one profile-compatible motto-change (`t=m`) report. The
-selected motto SHALL remain after delivery failure and be used by later
-reports. Cancelling SHALL preserve state and send nothing.
-
-Input SHALL accept non-control Unicode text, including empty text, and reject
-controls before persistence/transport. For the initial desktop ASCII contract,
-non-ASCII input SHALL additionally fail with an unsupported-encoding error
-before changing state or sending a request, rather than being transliterated.
-Browser Unicode support SHALL remain unchanged.
+character's motto while active or inactive. Each confirmed action SHALL persist
+the selected motto and attempt exactly one profile-compatible motto-change
+(`t=m`) report. Later reports SHALL use the persisted motto. Cancelling SHALL
+preserve state and send nothing.
 
 #### Scenario: Setting a motto
 
@@ -80,32 +74,26 @@ Browser Unicode support SHALL remain unchanged.
 - **THEN** neither local state nor server state is changed and a safe encoding
   error is shown
 
+#### Scenario: Rejecting control characters in a motto
+
+- **WHEN** an operator submits motto text containing control characters
+- **THEN** it is rejected before persistence or transport
+
+#### Scenario: Preserving browser Unicode motto support
+
+- **WHEN** an eligible browser character receives non-control Unicode motto
+  input
+- **THEN** the input remains supported without transliteration
+
 ### Requirement: Explicit guild membership management
 
-CLI and dashboard SHALL let an operator submit a guild designation for an
-eligible online character while active or inactive. Non-empty input SHALL
-request joining/changing guild; empty input SHALL request leaving. Each
-confirmed submission SHALL attempt exactly one profile-compatible mutation.
-
-For fingerprint-based verification, persisted guild SHALL change when the response matches an accepted fingerprint
-produced by the same versioned normalization contract used for live evidence.
-If the response remains indeterminate, the same explicit action MAY perform
-one credential-free read of the verified realm page. The observed guild SHALL
-be persisted only when the exact character is present and the observed guild
-matches the submitted ASCII designation case-insensitively; the server's
-canonical capitalization SHALL be retained. An observed empty membership
-SHALL similarly confirm an explicit leave request.
-
-Rejected or unconfirmed outcomes SHALL preserve the prior designation.
-Unsuccessful or undeliverable outcomes SHALL likewise preserve it unless the
-permitted public observation confirms desired membership. Reconciliation SHALL
-NOT repeat the guild mutation. Supported Pemptus imports SHALL use the explicit
-public-confirmation strategy below rather than mandatory response fingerprints.
-
-Designations SHALL accept non-control Unicode text including empty text. The
-initial desktop ASCII contract SHALL reject non-ASCII input before state
-change/transport; browser Unicode behavior SHALL remain unchanged. Cancelling
-SHALL preserve state and send nothing.
+CLI and dashboard SHALL accept guild designations for eligible online
+characters while active or inactive. Non-empty input SHALL request
+joining/changing guild; empty input SHALL request leaving. Each confirmed
+submission SHALL attempt one profile-compatible mutation. Only accepted
+fingerprints under the shared versioned normalization contract or permitted
+public confirmation SHALL change persisted membership. Non-control Unicode
+SHALL be accepted except under the desktop ASCII contract.
 
 #### Scenario: Joining a guild
 
@@ -148,6 +136,18 @@ SHALL preserve state and send nothing.
   and no supported public-confirmation strategy
 - **THEN** it is refused before delivery rather than using those fingerprints
 
+#### Scenario: Rejecting unsupported guild designations
+
+- **WHEN** an operator submits control characters for any character or
+  non-ASCII input for a desktop character
+- **THEN** the designation is rejected before persistence or transport
+
+#### Scenario: Preserving browser Unicode guild support
+
+- **WHEN** an eligible browser character receives a non-control Unicode guild
+  designation
+- **THEN** the designation remains supported without transliteration
+
 ### Requirement: Live online-action ordering
 
 The system SHALL serialize a managed character's explicit motto changes, guild
@@ -172,15 +172,11 @@ the order in which they acquire that boundary.
 
 ### Requirement: Credential-safe profile actions
 
-Online profile actions SHALL require valid retained authentication, passing
-profile/realm/operation readiness, an approved official endpoint, and eligible
-advancement provenance. Offline characters, invalid credentials, unsupported
-endpoints or authentication, invalid/incomplete evidence, and local-only
-desktop imports SHALL be refused before transport or profile mutation.
-Supported Pemptus guild readiness SHALL use its explicit public-confirmation
-contract without requiring historical guild-response fingerprints.
-Output/diagnostics SHALL NOT expose account logins/passwords, passkeys, signed
-or authenticated URLs, raw saves/responses, or browser profiles.
+Before transport or profile mutation, online profile actions SHALL require
+valid retained authentication, passing profile/realm/operation readiness, an
+approved official endpoint, and eligible advancement provenance. Supported
+Pemptus guild actions SHALL use explicit public confirmation. Output and
+diagnostics SHALL exclude credentials and other sensitive profile data.
 
 #### Scenario: Editing an offline character
 
@@ -203,34 +199,25 @@ or authenticated URLs, raw saves/responses, or browser profiles.
 - **THEN** the action is refused without persistence or network activity and
   the need for a fresh official-client import is explained
 
+#### Scenario: Refusing unsupported profile actions
+
+- **WHEN** credentials are invalid, authentication or endpoint is unsupported,
+  readiness fails, or advancement provenance is ineligible
+- **THEN** the action is refused before transport or profile mutation
+
+#### Scenario: Keeping sensitive data out of diagnostics
+
+- **WHEN** a profile action succeeds, is rejected, or fails
+- **THEN** output excludes logins, passwords, passkeys, signed or authenticated
+  URLs, raw saves or responses, and browser profiles
+
 ### Requirement: Evidence-scoped Pemptus profile actions
 
-Eligible Pemptus desktop imports SHALL support motto set/clear and guild
-join/change/leave through their fixed HTTPS passkey-only contract. Motto and
-guild eligibility SHALL be independent of each other and of manual/automatic
-reporting evidence, subject to the existing import, encoding, and provenance
-restrictions.
-
-Unadapted, spelling-only, and exact indexed quest-placeholder-only imports SHALL
-share approved motto readiness without relabeling actual evidence. Supported
-Pemptus guild actions SHALL use explicit public confirmation instead of requiring
-historical response fingerprints. Spoltog fingerprints SHALL NOT classify
-Pemptus responses, and Spoltog's existing verification SHALL remain unchanged.
-
-A guild action SHALL attempt at most one native mutation, then perform one
-bounded credential-free observation of the exact character in the Pemptus realm.
-Desired membership SHALL match ASCII-case-insensitively and retain observed
-canonical spelling; leave SHALL require authoritative no-guild state. HTTP
-success or an empty body alone SHALL NOT confirm membership. A confirmed desired
-state SHALL NOT be described as uniquely attributable request consumption when
-the state already existed. Missing, malformed, ambiguous, conflicting, or failed
-observations SHALL preserve prior membership and produce a safe non-success
-outcome. A delivery error SHALL NOT authorize retry and MAY be reconciled against
-the same public state.
-
-Motto persistence, confirmed-only guild persistence, serialization with worker
-reports, safe outcomes, and no-retry behavior SHALL remain unchanged. Unsupported
-or combined adaptations and permanent local-only histories SHALL remain excluded.
+Eligible Pemptus desktop imports SHALL support motto and guild actions under
+their fixed HTTPS passkey-only contract and existing import, encoding, and
+provenance restrictions. Motto and guild eligibility SHALL be independent.
+Pemptus guild actions SHALL require public confirmation, not response
+fingerprints.
 
 #### Scenario: Changing or clearing a Pemptus motto
 
@@ -245,6 +232,20 @@ or combined adaptations and permanent local-only histories SHALL remain excluded
   guild-response fingerprint record
 - **THEN** motto and publicly confirmed guild actions remain available without
   inventing fingerprints or enabling evidence
+
+#### Scenario: Applying independent Pemptus evidence
+
+- **WHEN** an unadapted, spelling-only, or exact indexed quest-placeholder-only
+  import is eligible for a Pemptus profile action
+- **THEN** approved motto readiness is shared without relabeling evidence, and
+  motto and guild eligibility remain independent of manual or automatic
+  reporting evidence
+
+#### Scenario: Excluding unsupported Pemptus imports
+
+- **WHEN** an import uses an unsupported or combined adaptation, or is a
+  permanent local-only history
+- **THEN** Pemptus profile actions remain unavailable
 
 #### Scenario: Joining, changing, or leaving a Pemptus guild
 
@@ -265,6 +266,28 @@ or combined adaptations and permanent local-only histories SHALL remain excluded
   be reconciled against the exact character on the Pemptus public page
 - **THEN** the previous persisted guild remains intact and a safe categorized
   failure is reported without a retry
+
+#### Scenario: Confirming Pemptus guild membership publicly
+
+- **WHEN** one Pemptus guild mutation is followed by a bounded,
+  credential-free observation of the exact character
+- **THEN** a matching designation is confirmed ASCII-case-insensitively with
+  observed spelling retained, and leave requires authoritative no-guild state;
+  HTTP success or an empty response alone is insufficient
+
+#### Scenario: Handling uncertain Pemptus guild outcomes
+
+- **WHEN** public guild observation is missing, malformed, ambiguous,
+  conflicting, or fails, or delivery of the sole mutation fails
+- **THEN** prior membership is preserved unless that same observation confirms
+  the desired state, and the mutation is never retried
+
+#### Scenario: Avoiding claims about pre-existing Pemptus membership
+
+- **WHEN** public observation confirms a desired guild state that already
+  existed
+- **THEN** the result is not described as uniquely attributable request
+  consumption
 
 #### Scenario: Confirming canonical public guild spelling
 
