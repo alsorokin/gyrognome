@@ -37,14 +37,13 @@ request before the user selects Sold!.
 
 ### Requirement: Browser-compatible successful enrollment
 
-The system SHALL validate the bundled passing enrollment-conformance evidence
-before sending an enrollment request. Upon Sold!, it SHALL validate the draft
-name, send one browser-compatible `cmd=create` request to the official
-Alpaquil endpoint, privately validate the successful enrollment result and its
-credential, and send one browser-compatible initial `s` report using the final
-draft state. It SHALL register one managed character only after both remote
-operations succeed. The persisted character SHALL contain the official online
-realm and endpoint and retain the credential only in private managed storage.
+The system SHALL require passing bundled enrollment-conformance evidence. On
+Sold!, it SHALL validate the draft name, send one browser-compatible
+`cmd=create` request to the official Alpaquil endpoint, privately validate the
+result and credential, then send one browser-compatible initial `s` report
+with the final draft state. It SHALL register a managed character only after
+both succeed, store the official online realm and endpoint, and retain the
+credential only in private managed storage.
 
 #### Scenario: Enrolling and registering a new online character
 
