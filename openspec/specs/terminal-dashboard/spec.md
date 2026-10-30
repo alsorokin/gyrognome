@@ -97,25 +97,12 @@ It SHALL report an actionable error when the requested character is not register
 
 ### Requirement: Dashboard character selection and recency
 
-The `dashboard` command SHALL accept an optional managed character identifier
-and equivalent `--resume` and `-r` flags. A resume flag and an explicit
-identifier SHALL be mutually exclusive. When neither an identifier nor a
-resume flag is supplied, it SHALL present a credential-safe interactive list
-of registered characters and open the dashboard for the user-selected
-character. When a resume flag is supplied, it SHALL open the most recently
-opened registered character directly using the same last-access ordering as
-the selection list. If no registered character has previously been opened
-in the dashboard, it SHALL present the normal selection list.
-
-The selection list SHALL display each character's credential-safe identity,
-stable identifier, last accessed time, and whether its local runtime is
-currently active. Last accessed SHALL mean the last successful dashboard
-opening, not a worker update or profile edit. The selection list SHALL order
-opened characters by last accessed time descending, followed by never-opened
-characters, whose access time SHALL display as `Never`. Equal access times,
-including never-opened entries, SHALL use stable identifier ascending as a
-deterministic tie-breaker. Resume SHALL use this same order rather than a
-separately remembered character identifier.
+The `dashboard` command SHALL accept a character identifier or `--resume`/`-r`,
+but not both. Without either, it SHALL show a credential-safe character list
+with stable identifiers, last-access times (`Never` if unopened), and runtime
+activity, ordered by access time descending then identifier ascending. Resume
+SHALL open the first previously opened character in that same order, or show
+the list if none has been opened.
 
 #### Scenario: Selecting a character before opening the dashboard
 
@@ -183,26 +170,12 @@ separately remembered character identifier.
 
 ### Requirement: Dashboard-only last-access recording
 
-The system SHALL persist each character's last successful dashboard-opening
-time across command invocations in the same local data store. Direct-ID,
-selector-based, and resumed openings SHALL update that character's last
-accessed time once the initial dashboard view has been rendered successfully.
-Failed validation, failed terminal setup or initial rendering, and cancelled
-selection SHALL NOT change any last-access timestamp. Subsequent dashboard
-refreshes SHALL NOT update last accessed.
-
-Recording a dashboard opening SHALL change only last-access metadata, not
-canonical simulation state, profile values, rested accounting, or worker
-timing baselines. It SHALL NOT start or stop a worker, acquire simulation
-ownership, or send network requests. Worker updates, profile edits,
-registration, and other commands SHALL NOT record dashboard accesses.
-Newly registered characters SHALL begin as never opened.
-
-Legacy saved-update timestamps SHALL NOT be interpreted as dashboard openings:
-on upgrade, characters without known dashboard-opening times SHALL begin as
-never opened. Failures reading or writing last-access metadata SHALL be
-reported explicitly rather than silently treated as absent access history;
-terminal mode SHALL be restored before an error exits the dashboard.
+The system SHALL persist a successful dashboard opening's time in the local
+store only after the initial view renders. Failed or cancelled openings and
+later refreshes SHALL NOT update recency. Recording SHALL NOT change character
+or worker state, start or stop a worker, acquire simulation ownership, or send
+requests. New characters and legacy records without known openings SHALL be
+unopened. Storage failures SHALL be reported, with terminal mode restored.
 
 #### Scenario: Recording direct and selected openings across invocations
 
@@ -251,23 +224,13 @@ terminal mode SHALL be restored before an error exits the dashboard.
 
 ### Requirement: Full-layout Journal and Adventure presentation
 
-In the full dashboard layout, the Adventure content SHALL NOT include a separate plot
-row or current-quest row, regardless of Journal collapse state. The Adventure
-pane SHALL separate its inventory and spells lists with an empty line.
-The dashboard SHALL present a separate Journal pane whose expanded title
-appends the canonical current plot caption after `Journal - `, for example
-`Journal - Act VIII`. When Journal is collapsed and the canonical current quest
-is non-empty, its title SHALL append ` - <current quest>` after that plot
-caption, for example `Journal - Act VIII - Fetch me an anvil`, without a
-`Current quest:` label. When the current quest is empty, the collapsed title
-SHALL remain `Journal - <plot caption>` without an extra separator.
-The collapsed Journal SHALL retain its two-row allocation and right-aligned
-F6 shortcut. Titles exceeding the available header width SHALL be clipped
-within the header without wrapping or hiding F6.
-The expanded Journal pane's first line SHALL be the bold current-quest value
-without a label and its subsequent completed quests SHALL be ordered from most
-recent to oldest. The collapsed title SHALL reflect the latest displayed
-persisted quest on refresh.
+In the full layout, Journal SHALL show the plot caption and quest history;
+Adventure SHALL omit duplicate plot and current-quest rows and separate
+inventory from spells with a blank line. Expanded Journal SHALL show the bold
+current quest first, then completed quests newest-first. Collapsed Journal
+SHALL append a non-empty current quest to its plot title, refresh that title
+with displayed state, and clip it within the header while retaining two rows
+and the right-aligned F6 shortcut.
 
 #### Scenario: Viewing plot context in the full dashboard
 
@@ -321,19 +284,11 @@ persisted quest on refresh.
 
 ### Requirement: Recent task update indicator
 
-The dashboard SHALL display character stats in its header alongside the
-character identity, rather than in an additional pane or the Adventure pane.
-Adjacent stats SHALL be separated by ` | `.
-When the header has sufficient width, stats SHALL occupy the right side of the
-identity row. When it does not, stats SHALL occupy a second header row. When a
-refreshed persisted state records one or more completed tasks since the
-dashboard's previously displayed state, the dashboard SHALL visually highlight
-each currently displayed stat, equipment slot, inventory item, and spell whose
-value was added or changed during that observed completion interval. The
-indicator SHALL remain visible during subsequent refreshes that do not record
-another completed task. On the next observed completed task, the dashboard
-SHALL clear the previous indicator and show only values changed in the new
-completion interval.
+The dashboard SHALL show stats in its identity header, right-aligned when they
+fit and otherwise on a second row, separated by ` | `. After a persisted
+completed-task update, it SHALL highlight currently displayed stats, equipment,
+inventory, and spells that changed. The highlight SHALL persist across refreshes
+until another completed task replaces it with the newly changed values.
 
 #### Scenario: Highlighting values updated by a task
 
@@ -405,18 +360,11 @@ every other pane.
 
 ### Requirement: Full-layout pane space allocation
 
-When both are expanded, Journal SHALL consume no more than
-one quarter of the usable right-column height and Adventure SHALL receive the
-remaining space. When expanded in the full dashboard layout, Activity SHALL
-occupy exactly four terminal rows, consisting of two border rows and two
-inner-content rows. Expanded Details SHALL fill all remaining left-column
-height after allocating Activity, Progress, and the capped Equipment pane,
-with at least eight total rows when space permits. Collapsed Details SHALL
-occupy only its two border rows. Progress SHALL occupy exactly seven terminal
-rows, consisting of two border rows and five inner progress-bar rows.
-Equipment SHALL receive flexible space when available but its inner content
-height SHALL NOT exceed eleven rows, matching the maximum number of equipment
-slots.
+In the full layout, Journal SHALL use at most one quarter of the usable right
+column, with Adventure receiving the rest. Expanded Activity SHALL use four
+rows, Progress seven, and Equipment at most eleven content rows. Expanded
+Details SHALL fill remaining left-column space, reserving at least eight total
+rows when possible; collapsed Details SHALL use only its two border rows.
 
 #### Scenario: Allocating Journal height
 
@@ -455,17 +403,11 @@ slots.
 
 ### Requirement: Dashboard Keys and Status arrangement
 
-The full dashboard SHALL place Keys and Status in
-the same bottom row, with Keys on the left and Status on the right. Keys SHALL
-use the same one-third width as the full dashboard's left pane column, and
-Status SHALL use the remaining two-thirds width. In the normal full-dashboard
-state, each bottom pane SHALL occupy three terminal rows when the complete
-Keys line fits in one inner-content row. When the Keys line does not fit, both
-bottom panes SHALL expand to four terminal rows so Keys can wrap across two
-inner-content rows.
-The Keys pane SHALL render each shortcut key with bold emphasis.
-Confirmation warnings MAY temporarily increase the bottom-row height so their
-safety text remains visible.
+The full layout SHALL place Keys left of Status in the bottom row, at one-third
+and two-thirds widths respectively. Each pane SHALL use three rows when Keys
+fits on one content row, or four when Keys wraps to two. Shortcut keys SHALL
+be bold; confirmation warnings MAY increase the row height to keep safety
+text visible.
 
 #### Scenario: Arranging the bottom panes
 
@@ -496,22 +438,13 @@ expand to two inner-content rows only when that line wraps.
 
 ### Requirement: Compact character content layout
 
-The compact dashboard SHALL display only the canonical current quest with the
-`Current quest:` label, rather than the full quest list or completed quest
-history. It SHALL retain the plot information.
-
-The compact percentage summary SHALL contain experience, encumbrance, plot,
-and quest percentages only. Immediately above that summary, the dashboard
-SHALL display task progress on a dedicated, single-row progress bar spanning
-the Character pane's inner width. The bar SHALL use the same filled/unfilled
-appearance and centered `Task <percent>%` label as the full-mode task bar,
-and SHALL use the same display-only predicted task percentage.
-
-The compact Character content SHALL include one empty line before equipment,
-one empty line after equipment and before inventory, and one empty line after
-the spellbook and before plot information. The task bar and empty separator
-lines SHALL participate in the combined Character pane's normal scrolling.
-These changes SHALL NOT change full-layout presentation.
+The compact dashboard SHALL show only the labeled current quest and retain plot
+information. Its percentage summary SHALL contain experience, encumbrance,
+plot, and quest only, with a full-width, single-row task bar immediately above
+it using the full-layout appearance and predicted percentage. Character content
+SHALL separate the summary, equipment, inventory, spells, and plot with blank
+lines; the bar and separators SHALL scroll with the pane. Full-layout
+presentation SHALL remain unchanged.
 
 #### Scenario: Showing only the current quest
 
@@ -546,21 +479,12 @@ These changes SHALL NOT change full-layout presentation.
 
 ### Requirement: Visible rested progression
 
-Both full and compact dashboards SHALL display the available rested duration.
-Details and the character-selection list SHALL display only
-`Rested: <time>`, without an "available" suffix or multiplier. Compact
-Character content SHALL retain the active progression multiplier. Stopped
-characters SHALL show banked rest without claiming active boosted progression.
-Active characters with rest SHALL show 2x in compact Character content;
-exhausted banks SHALL show normal 1x there. Rested status SHALL remain
-available without changing existing dashboard pane height contracts. Details
-SHALL omit technical ID and compatibility-profile rows. Dashboard views SHALL
-omit the rested-timeline leaderboard acceptance notice; managed inspection
-and documentation SHALL retain that disclosure.
-
-Rested presentation SHALL be read-only. Local countdown or pending-accrual
-estimates SHALL NOT consume or persist rest, advance game state, reset timing
-baselines, or issue requests.
+Both layouts SHALL display rested duration; Details and the selector SHALL use
+`Rested: <time>`. Compact content SHALL show 2x only during active rest, and 1x
+otherwise. Display SHALL remain read-only and within pane-height contracts:
+estimates SHALL NOT consume or persist rest, advance state, reset timing, or
+issue requests. Details omit ID/compatibility; the dashboard omits the
+rested-timeline notice retained in inspection and documentation.
 
 #### Scenario: Viewing a boosted character
 
@@ -595,56 +519,12 @@ baselines, or issue requests.
 
 ### Requirement: Predicted current-task progress
 
-The dashboard SHALL display a predicted position for the current task progress
-bar between persisted state reads, derived from monotonic time elapsed since it
-observed the most recent persisted state. Prediction SHALL use observed task
-position, duration, compatibility profile, and rested timing information; it
-SHALL NOT invoke simulation, acquire a character lock, or write character
-state.
-
-For browser characters, normal prediction SHALL advance at wall-clock rate.
-For desktop characters, normal prediction SHALL advance at 100 task
-milliseconds per 109.375 elapsed milliseconds. While rest is available, the
-applicable rate SHALL be doubled. Prediction SHALL split elapsed time at
-estimated rest exhaustion, using normal rate thereafter. It SHALL NOT apply a
-full 2x rate beyond the observed bank's remaining duration.
-
-The prediction SHALL be display-only. It SHALL NOT be persisted, included in
-any leaderboard report, or used to determine task completion, the
-recent-task-update indicator, lifecycle eligibility, or manual-brag
-eligibility.
-
-The prediction SHALL apply only to the task progress bar, in both the full
-Progress pane and the compact Character pane's dedicated task-bar row. The
-experience, encumbrance, plot, and quest bars, the completed-task count, the
-activity description, the character stats, equipment, inventory, spells,
-plots, and quests SHALL change only when a newer persisted state is read.
-
-The predicted position SHALL NOT exceed the current task's duration. When the
-predicted position reaches that duration, the dashboard SHALL display a full
-task bar and SHALL hold it there until a newer persisted state is read.
-
-The dashboard SHALL predict only while a local runtime owns the character. If
-not owned, or ownership is unknown, it SHALL show persisted task position
-unchanged.
-
-When the dashboard reads a newer persisted state, it SHALL discard the previous
-prediction and re-anchor to the newly observed state.
-
-Within a single task, identified by an unchanged completed-task count and task
-duration, the displayed task position SHALL NOT decrease, including across
-re-anchors and regardless of rested state. When a re-anchor finds the displayed
-position ahead of the newly anchored prediction, the dashboard SHALL display the
-greater of the newly anchored prediction and the previously displayed position
-advancing at half the applicable predicted rate, so the displayed bar slows
-down until the anchored prediction catches up and then follows it. When the
-task identity changes, the dashboard SHALL display the newly persisted position
-directly, including a reset to the start of the next task.
-
-The dashboard SHALL schedule its redraws so that a predicted task bar advances
-in whole-percent steps for tasks of any duration. When a redraw is delayed, it
-SHALL display the currently predicted percentage rather than replaying the
-percentages it did not draw.
+Between reads, the dashboard SHALL predict the owned character's task bar from
+monotonic elapsed time and persisted task/profile/rest state, using profile
+timing and splitting at rest exhaustion. Prediction SHALL be display-only: no
+simulation, writes, task completion, or changes to other values/actions. It
+SHALL re-anchor on reads, never rewind within a task, cap at task duration, and
+redraw the current whole-percent position without replay.
 
 #### Scenario: Advancing within a task
 
@@ -740,32 +620,12 @@ percentages it did not draw.
 
 ### Requirement: Live persisted-state refresh
 
-The dashboard SHALL refresh its displayed managed-character state, online
-profile metadata, and runtime status at bounded periodic intervals without
-requiring a manual refresh action. It MAY read persisted character/profile state
-and runtime service status on separate bounded schedules.
-
-While a live local runtime owns the character, the dashboard SHALL read
-character state and rested accounting from that runtime's published live
-state instead of the managed-character database. Otherwise, it SHALL read the
-last durably persisted state. Online profile metadata, compatibility, and
-service status SHALL continue to come from their persisted sources. Everywhere
-in this specification, "persisted state" read by the dashboard includes such
-live runtime state.
-
-When a predicted task position reaches the current task's duration, the
-dashboard SHALL wait a bounded settling interval before reading persisted
-character state, so that the local runtime has an opportunity to publish the
-completed task first. It SHALL separate successive reads triggered this way by
-at least that settling interval, and SHALL NOT delay such a read beyond its
-regular state-refresh interval.
-
-Except when executing an explicit motto or guild action, the dashboard SHALL
-only read persisted character/profile state, live runtime state, and service
-status; it SHALL NOT own the simulation lock, advance simulation, or write
-canonical simulation state or live runtime state. Explicit profile actions MAY
-write profile metadata through the online-profile interface while leaving
-simulation ownership unchanged.
+The dashboard SHALL refresh character/profile state and runtime status on
+bounded schedules. For an owned runtime, it SHALL read published live
+character/rested state; otherwise, durable state. A saturated predicted task
+bar SHALL trigger a bounded settling read no later than the regular refresh.
+The dashboard SHALL not own, advance, or write simulation except for explicit
+profile metadata actions, which leave simulation ownership unchanged.
 
 #### Scenario: Viewing an active runtime
 
@@ -824,13 +684,10 @@ simulation ownership unchanged.
 
 ### Requirement: Lifecycle controls
 
-The dashboard SHALL expose one contextual keyboard action through the existing
-user-service lifecycle interface. The action SHALL start an inactive selected
-character runtime, stop an active runtime, and recover a failed runtime by
-clearing its failed state before starting it. The dashboard SHALL NOT expose a
-separate recovery action. Before executing a lifecycle action, it SHALL request
-confirmation. It SHALL report successful actions and actionable
-service-manager or runtime failures in the dashboard without exiting.
+The dashboard SHALL provide one confirmed contextual lifecycle action through
+the existing user-service interface: start an inactive runtime, stop an active
+one, or clear a failed state and start it. It SHALL expose no separate recovery
+action and SHALL report success or actionable failure without exiting.
 
 #### Scenario: Starting an inactive runtime
 
@@ -881,16 +738,13 @@ interrupted lifecycle action.
 
 ### Requirement: Credential-safe local-only presentation
 
-The dashboard SHALL never display passkeys, account logins/passwords, raw save
-documents/properties, signed/authenticated endpoint URLs, raw responses, or
-unrecognized raw fields. It SHALL provide immediate manual brag and editable
-motto/guild actions for an eligible character through its approved official
-endpoint. Editors SHALL show current persisted values, accept printable
-non-control Unicode input, use Enter to submit, and Escape to cancel. Profile
-encoding restrictions SHALL be enforced before persistence or transport.
-Empty guild input SHALL request leaving; no separate leave action is needed.
-Only safe categorized outcomes SHALL be shown. Refresh, navigation, rendering,
-and lifecycle actions SHALL NOT independently issue HTTP requests.
+The dashboard SHALL not display credentials, raw saves/responses, signed URLs,
+or unknown fields. Eligible characters SHALL support manual brag and motto/
+guild editing through approved endpoints. Editors SHALL show current values,
+accept printable non-control Unicode, submit on Enter, cancel on Escape, and
+enforce encoding limits; empty guild input SHALL leave. Outcomes SHALL be
+safely categorized. Refresh, navigation, rendering, and lifecycle actions
+SHALL NOT issue requests.
 
 #### Scenario: Bragging from the dashboard
 
@@ -930,18 +784,11 @@ and lifecycle actions SHALL NOT independently issue HTTP requests.
 
 ### Requirement: Concise profile and timing details
 
-The full dashboard Details pane SHALL omit the Quest target line. It SHALL
-display the character identifier, Last task elapsed, and Realm. It SHALL
-display Motto and Guild lines independently only when the corresponding
-persisted value is non-empty.
-
-Last task elapsed SHALL be formatted as a compact decomposition into days,
-hours, minutes, and seconds rather than as one raw count of seconds. Leading
-zero units SHALL be omitted and a zero duration SHALL render as `0s`.
-
-Confirmed profile and lifecycle action outcomes SHALL remain visible across
-automatic refreshes for at least five seconds so an operator can read the
-result.
+Full-layout Details SHALL show character ID, elapsed task time, and Realm, but
+not Quest target. Non-empty Motto and Guild values SHALL appear independently.
+Elapsed time SHALL use compact days/hours/minutes/seconds, omit leading zero
+units, and render zero as `0s`. Confirmed profile and lifecycle outcomes SHALL
+remain visible across refreshes for at least five seconds.
 
 #### Scenario: Viewing online profile details
 
@@ -971,13 +818,12 @@ result.
 
 ### Requirement: Visible compatibility and eligibility
 
-The dashboard SHALL display the persisted continuation profile and safe
-online-operation eligibility, including the reason for classic conformance
-gating or local-only provenance and the fresh-import recovery instruction.
-It SHALL distinguish unavailable desktop history from counters measured since
-import. Profile selection SHALL come from persisted state, not display labels.
-Task-bar prediction SHALL NOT dispatch completion, create report eligibility,
-or replace a pending desktop full-bar state with an assumed next task.
+The dashboard SHALL show the persisted continuation profile and safe online
+eligibility, including gating/local-only reasons and fresh-import guidance. It
+SHALL distinguish unavailable desktop history from since-import counters and
+select profiles from persisted state. Prediction SHALL NOT dispatch completion,
+create report eligibility, or replace a pending desktop full bar with an
+assumed next task.
 
 #### Scenario: Viewing a desktop local-only fork
 
@@ -994,18 +840,13 @@ or replace a pending desktop full-bar state with an assumed next task.
 
 ### Requirement: Partial desktop operation availability
 
-The dashboard SHALL distinguish fully eligible, wholly ineligible, and partially
-eligible desktop characters. When some but not all operations are eligible, it
-SHALL show
-which automatic level, automatic act, manual brag, motto, and guild operations
-are available, with safe reasons for gated operations. Brag and profile editors
-SHALL be gated by their requested operation rather than an all-operations
-summary.
-
-Local-only provenance SHALL continue to disable every online action and show
-the fresh-official-import recovery instruction. Presentation SHALL NOT itself
-send requests, change provenance, or confer eligibility. Browser presentation
-and the concise uniform-state desktop summary SHALL remain unchanged.
+The dashboard SHALL distinguish full, partial, and no desktop eligibility.
+Partial status SHALL identify availability and safe gating reasons for
+automatic level/act, manual brag, motto, and guild; each explicit action SHALL
+be gated by its own eligibility. Local-only provenance disables all online
+actions and shows fresh-import guidance. Presentation SHALL not change
+eligibility, provenance, or state; browser and uniform desktop summaries
+remain unchanged.
 
 #### Scenario: Showing manual-only availability
 
@@ -1046,24 +887,13 @@ and the concise uniform-state desktop summary SHALL remain unchanged.
 
 ### Requirement: Scrolling overflowing dashboard content
 
-The dashboard SHALL allow users to read vertically overflowing content in
-expanded full-layout panes and in the compact layout's combined Character
-pane. In the full layout, Tab and Shift+Tab SHALL move keyboard scroll focus
-forward and backward among expanded panes, including a no-focus position
-between the last and first panes. No pane SHALL be focused initially. From
-the no-focus position, Tab SHALL select the first expanded pane and Shift+Tab
-SHALL select the last expanded pane. The
-focused pane SHALL be visibly distinguishable. Up and Down SHALL scroll the
-focused pane by one content row; PageUp and PageDown SHALL scroll it by one
-visible content page. Scrolling SHALL NOT alter character state or pane
-collapse state.
-
-When the user scrolls the mouse wheel over an expanded full-layout pane, the
-dashboard SHALL scroll that pane. In the compact layout, keyboard and mouse
-wheel scrolling SHALL apply to the combined Character pane.
-
-Scroll offsets SHALL be independent for each pane and SHALL be kept within the
-available content range as the terminal is resized or content changes.
+Users SHALL be able to scroll overflowing expanded full-layout panes and the
+compact Character pane by keyboard or mouse wheel. Tab/Shift+Tab SHALL cycle
+visible focus among expanded panes and a no-focus position; initially none is
+focused. Arrows scroll one row, PageUp/PageDown one page, and the pane under
+the pointer scrolls on wheel. Per-pane offsets SHALL remain independently
+clamped to content bounds. Scrolling SHALL not change character or collapse
+state.
 
 #### Scenario: Navigating keyboard scroll focus
 
@@ -1115,37 +945,13 @@ available content range as the terminal is resized or content changes.
 
 ### Requirement: Adventure update auto-scroll
 
-When a persisted refresh observes one or more completed tasks with newly added
-or changed inventory items or spells, the dashboard SHALL automatically reveal
-the first such entry in Adventure display order, provided Adventure is expanded
-in the full layout and its manual-scroll pause has expired. Inventory entries
-SHALL precede spells for target selection, retaining their existing display
-order. Removed entries SHALL NOT be reveal targets.
-
-The dashboard SHALL use the entry's rendered wrapped rows to bring it into
-view with the smallest necessary vertical movement. It SHALL keep an already
-fully visible target in place. If an entry exceeds the viewport height, it
-SHALL show the beginning of that entry. The scroll offset SHALL remain within
-the available content range.
-
-Every manual keyboard or mouse-wheel scroll directed at expanded full-layout
-Adventure SHALL pause Adventure auto-scroll for 30 seconds of monotonic elapsed
-time, including scroll attempts at a content boundary. Each further manual
-Adventure scroll SHALL restart that interval. Scrolling another pane, changing
-keyboard focus, or toggling a pane SHALL NOT restart the interval.
-
-Updates observed during the pause SHALL NOT be queued or replayed. Expiration
-alone SHALL NOT move the viewport; only a qualifying update observed at or
-after expiration SHALL trigger another automatic reveal. An initial snapshot,
-an unchanged refresh, or a redraw retaining an existing update highlight SHALL
-NOT trigger auto-scroll.
-
-Automatic reveals SHALL NOT change keyboard focus, pane collapse state, other
-pane offsets, or the compact Character offset. Updates observed while Adventure
-is collapsed or the dashboard is compact SHALL NOT be replayed on expansion or
-return to the full layout. Journal behavior SHALL remain unchanged. This
-behavior SHALL remain display-only and SHALL NOT advance simulation, persist
-character state, or issue network requests.
+After a persisted task completion changes inventory or spells, expanded
+full-layout Adventure SHALL reveal the first changed entry (inventory before
+spells), using the smallest scroll needed for its wrapped rows. Manual Adventure
+scrolling, including boundary attempts, pauses reveals for 30 seconds and
+restarts the pause; other-pane activity does not. Paused/hidden updates SHALL
+not replay. Auto-scroll SHALL not alter focus, other offsets, state, or network
+activity.
 
 #### Scenario: Revealing an off-screen new entry
 
@@ -1217,22 +1023,13 @@ character state, or issue network requests.
 
 ### Requirement: Dashboard autostart preference
 
-The dashboard SHALL display `Autostart: On`, `Autostart: Off`, or
-`Autostart: Unavailable` in both full and compact layouts, separately from
-runtime activity. It SHALL expose `a` as a documented autostart toggle, distinct
-from the existing contextual Start/Stop/Recover action. Before changing the
-preference it SHALL request confirmation naming the target setting and
-explaining that it does not start or stop the current worker. Enter SHALL
-confirm and Escape SHALL cancel without configuration changes.
-
-The dashboard SHALL use the same autostart interface as the CLI, refresh the
-preference on its bounded service-status schedule and after successful
-configuration, and reflect external enablement changes. It SHALL NOT guess a
-target setting when autostart is unavailable; it SHALL show the diagnostic
-instead. Action outcomes SHALL remain visible for at least five seconds,
-following existing action-message behavior. Errors SHALL preserve displayed
-character state and keep the dashboard open. Autostart actions SHALL NOT
-advance simulation, modify profile metadata, or send leaderboard requests.
+Both layouts SHALL show `Autostart: On/Off/Unavailable` apart from runtime and
+document `a` toggle. Confirmation SHALL name target and state worker activity
+is unchanged; Enter confirms, Escape cancels. The CLI interface SHALL
+be used; refresh periodically and on external changes. Unavailable state SHALL
+show diagnostics, not guesses. Outcomes SHALL remain visible for 5s. Errors
+SHALL keep the dashboard open/state unchanged. Toggle SHALL not advance
+simulation, edit profiles, or send requests.
 
 #### Scenario: Discovering autostart in either layout
 
