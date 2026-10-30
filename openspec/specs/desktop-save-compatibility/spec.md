@@ -10,17 +10,13 @@ desktop-6.4.4 compatibility contract rather than browser rules.
 
 ### Requirement: Bounded desktop save decoding
 
-The system SHALL recognize supported desktop save content independently of
-filename extension, including `.pq` and same-format `.bak` files. It SHALL
-decode the zlib container and concatenated Delphi component streams as data
-only, using explicit bounds on compressed input, inflated output, component
-nesting, strings, lists, and row counts. It SHALL reject malformed lengths,
-truncation, unsupported layouts, duplicate state-bearing components, missing
-required state, and unexplained trailing content with credential-safe errors.
-A single bounded Gyrognome metadata block after the last component is the
-only accepted trailing content. Inspection and registration SHALL NOT execute
-components, launch the original client, mutate source files, or contact a
-server.
+The system SHALL identify saves by content (`.pq` or same-format `.bak`) and
+parse zlib/Delphi streams as data. It SHALL bound compressed/inflated sizes,
+nesting, strings, lists, and rows; reject malformed lengths, truncation,
+unsupported layouts, duplicate/missing state, and unexplained trailing bytes
+with credential-safe errors. At most one bounded Gyrognome metadata block may
+trail. Neither operation SHALL execute components, launch the client, mutate
+source files, or contact servers.
 
 #### Scenario: Importing a supported backup
 
@@ -48,18 +44,13 @@ server.
 
 ### Requirement: Evidence-based desktop state interpretation
 
-The system SHALL import traits, attributes, equipment, ordered inventory and
-spell rows, quest and plot history, numeric progress bars, current activity,
-queued commands, quest markers/indexes, prized equipment, and game style from
-supported desktop layouts. It SHALL interpret omitted defaults only where
-desktop load semantics establish their value. Numeric state SHALL take
-precedence over stale visual hints. It SHALL validate ranks, indexes, commands,
-and numeric ranges before continuation, without normalizing desktop identities
-to browser table entries.
-
-The initial supported text subset SHALL be ASCII. Non-ASCII serialized text
-that would affect imported state or credentials SHALL produce a safe
-unsupported-encoding error, not lossy decoding or a guessed code page.
+The system SHALL import desktop traits, attributes, equipment,
+ordered inventory/spells, quests/plots, bars, activity, commands,
+markers/indexes, prized equipment, and style. It SHALL apply only evidenced
+load defaults, prefer numeric over visual state, validate ranks, indexes,
+commands, and ranges, and preserve desktop identities without browser mapping.
+Text support SHALL initially be ASCII; non-ASCII state/credential text SHALL
+fail safely without lossy decoding or code-page guesses.
 
 #### Scenario: Loading omitted default properties
 
